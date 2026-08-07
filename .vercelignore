@@ -1,0 +1,9 @@
+# Vercel build config for ChinaSuuq web (apps/web)
+# Ignore the Expo mobile app — it's not part of the Vercel web deployment.
+apps/mobile
+packages/*/node_modules
+**/node_modules
+**/.next
+**/out
+.DS_Store
+*.tsbuildinfo
