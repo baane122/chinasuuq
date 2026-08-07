@@ -44,7 +44,6 @@ coverage/
 
 # ── Vercel / Deploys ──────────────────────────────────────
 .vercel
-vercel.json
 
 # ── TypeScript ────────────────────────────────────────────
 *.tsbuildinfo
