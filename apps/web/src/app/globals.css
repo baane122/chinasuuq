@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-500: #FF5A0A;
+  --color-brand-600: #E84400;
+  --color-brand-400: #FB923C;
+  --color-dark-900: #111111;
+  --color-dark-800: #1C1917;
+  --color-warm-50: #FFFCF8;
+  --color-warm-100: #FFF8F0;
+  --color-warm-200: #FFF3E9;
+  --color-whatsapp: #25D366;
+  --color-success: #12B76A;
+  --color-error: #D92D20;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --radius-sm: 10px;
+  --radius-lg: 18px;
+  --radius-2xl: 28px;
+  --radius-pill: 999px;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-warm-50);
+    color: var(--color-dark-900);
+    line-height: 1.6;
+  }
+
+  ::selection {
+    background: rgba(255, 90, 10, 0.15);
+    color: var(--color-dark-900);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-[#FF5A0A] hover:bg-[#E84400] text-white font-semibold rounded-xl px-6 py-3 transition-all duration-200 active:scale-[0.98] shadow-md hover:shadow-lg;
+  }
+  
+  .btn-secondary {
+    @apply bg-[#111111] hover:bg-[#1C1917] text-white font-semibold rounded-xl px-6 py-3 transition-all duration-200 active:scale-[0.98];
+  }
+  
+  .btn-outline {
+    @apply border-2 border-[#111111] text-[#111111] hover:bg-[#111111] hover:text-white font-semibold rounded-xl px-6 py-3 transition-all duration-200;
+  }
+  
+  .btn-ghost {
+    @apply text-[#111111] hover:bg-gray-100 font-medium rounded-xl px-4 py-2 transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden;
+  }
+  
+  .card-elevated {
+    @apply bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden;
+  }
+
+  .section-padding {
+    @apply px-4 sm:px-6 lg:px-8 py-16 lg:py-24;
+  }
+
+  .container-main {
+    @apply max-w-[1280px] mx-auto w-full;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* WhatsApp floating button animation */
+@keyframes whatsappPulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.4); }
+  70% { box-shadow: 0 0 0 15px rgba(37, 211, 102, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0); }
+}
+
+.whatsapp-pulse {
+  animation: whatsappPulse 2s infinite;
+}

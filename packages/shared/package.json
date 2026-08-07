@@ -1,0 +1,32 @@
+{
+  "name": "@chinasuuq/shared",
+  "version": "1.0.0",
+  "description": "Shared types, constants, utilities, validation, error handling, and API client for ChinaSuuq web & mobile apps.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./types": "./types.ts",
+    "./constants": "./constants.ts",
+    "./utils": "./utils.ts",
+    "./validation": "./validation.ts",
+    "./errors": "./errors.ts",
+    "./api-client": "./api-client.ts",
+    "./hooks": "./hooks.ts"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "@supabase/supabase-js": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "@supabase/supabase-js": {
+      "optional": true
+    }
+  }
+}

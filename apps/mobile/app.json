@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "ChinaSuuq",
+    "slug": "chinasuuq-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FFFCF8",
+    "primaryColor": "#FF5A0A",
+    "description": "Order products from China to Somalia. Browse 1688, Taobao and YiwuGo with live translation, CNY-to-USD conversion, and a unified cart. Air or sea freight to Hargeisa, Mogadishu, Bosaso and more.",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#FFFCF8"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.chinasuuq.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "ChinaSuuq uses your photos to add product images when capturing items from Chinese marketplaces."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#FFFCF8"
+      },
+      "package": "com.chinasuuq.app",
+      "versionCode": 1,
+      "permissions": [
+        "INTERNET"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-asset"
+    ]
+  }
+}

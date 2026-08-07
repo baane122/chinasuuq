@@ -1,0 +1,107 @@
+{
+  "nav": {
+    "home": "Home",
+    "markets": "Markets",
+    "categories": "Categories",
+    "howItWorks": "How It Works",
+    "shipping": "Shipping",
+    "business": "Business",
+    "about": "About",
+    "help": "Help",
+    "trackOrder": "Track Order",
+    "signIn": "Sign In",
+    "downloadApp": "Download App"
+  },
+  "hero": {
+    "title": "Millions of Products from China, Delivered to Somalia",
+    "subtitle": "Browse 1688, Taobao, and Yiwugo in one place. See translated products and USD prices, pay with familiar Somali payment methods, and let ChinaSuuq handle purchasing, inspection, and delivery.",
+    "cta1": "Start Shopping",
+    "cta2": "Order on WhatsApp",
+    "secondary1": "How It Works",
+    "secondary2": "Paste Product Link",
+    "searchPlaceholder": "Search products or paste a 1688, Taobao, or Yiwugo link..."
+  },
+  "trust": {
+    "secure": "Secure Payments",
+    "inspection": "China Warehouse Inspection",
+    "airSea": "Air & Sea Shipping",
+    "support": "Local Support",
+    "prices": "Transparent Prices"
+  },
+  "categories": {
+    "title": "Browse by Category",
+    "subtitle": "Find exactly what you need from thousands of product categories",
+    "electronics": "Electronics",
+    "fashion": "Fashion",
+    "home": "Home & Kitchen",
+    "beauty": "Beauty",
+    "baby": "Baby & Toys",
+    "tools": "Tools & Hardware",
+    "shoes": "Shoes & Bags",
+    "automotive": "Automotive",
+    "machinery": "Machinery",
+    "construction": "Construction",
+    "packaging": "Packaging",
+    "business": "Business Supplies"
+  },
+  "markets": {
+    "title": "Browse by Marketplace",
+    "subtitle": "Compare and order from top Chinese platforms",
+    "1688": "Wholesale & Factories",
+    "taobao": "Retail & Trending",
+    "yiwugo": "Yiwu Small Commodities",
+    "deals": "Verified Ready-Stock"
+  },
+  "howItWorks": {
+    "title": "How ChinaSuuq Works",
+    "subtitle": "From search to delivery in 6 simple steps",
+    "step1": "Search or Paste Link",
+    "step1Desc": "Find products on 1688, Taobao, or Yiwugo",
+    "step2": "Select & Customize",
+    "step2Desc": "Choose variants, quantity, and shipping",
+    "step3": "We Purchase",
+    "step3Desc": "ChinaSuuq buys from verified suppliers",
+    "step4": "We Inspect",
+    "step4Desc": "Quality check at our China warehouse",
+    "step5": "We Ship",
+    "step5Desc": "Air or sea freight to Somalia",
+    "step6": "You Receive",
+    "step6Desc": "Collect or get door delivery"
+  },
+  "app": {
+    "title": "Download ChinaSuuq App",
+    "subtitle": "Shop millions of Chinese products with Somali prices and local support",
+    "googlePlay": "Get it on Google Play",
+    "appStore": "Download on App Store",
+    "comingSoon": "Coming Soon"
+  },
+  "footer": {
+    "company": "Company",
+    "services": "Services",
+    "support": "Support",
+    "legal": "Legal",
+    "about": "About Us",
+    "careers": "Careers",
+    "contact": "Contact",
+    "blog": "Blog",
+    "wholesale": "Wholesale",
+    "sourcing": "Sourcing Agent",
+    "inspection": "Inspection",
+    "shipping": "Shipping",
+    "tracking": "Order Tracking",
+    "help": "Help Center",
+    "faq": "FAQ",
+    "terms": "Terms & Conditions",
+    "privacy": "Privacy Policy",
+    "copyright": "© 2026 ChinaSuuq. All rights reserved."
+  },
+  "common": {
+    "learnMore": "Learn More",
+    "shopNow": "Shop Now",
+    "browseAll": "Browse All",
+    "viewDetails": "View Details",
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "retry": "Try Again"
+  }
+}

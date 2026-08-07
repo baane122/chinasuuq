@@ -1,0 +1,107 @@
+{
+  "nav": {
+    "home": "Bogga Hore",
+    "markets": "Suuradaha",
+    "categories": "Qaybaha",
+    "howItWorks": "Sida Uu U Shaqeeyo",
+    "shipping": "Rarka",
+    "business": "Ganacsiga",
+    "about": "Nagu Saabsan",
+    "help": "Caawimaad",
+    "trackOrder": "Raadi Dalabka",
+    "signIn": "Gal",
+    "downloadApp": "Soo Dejiso App-ka"
+  },
+  "hero": {
+    "title": "Malaayiin Alaabood oo Shiinaha ah, Laguugu Keeno Soomaaliya",
+    "subtitle": "Soo eeg 1688, Taobao, iyo Yiwugo hal meel. Arag alaabo la turjumay iyo qiimo USD, lacag ka bixi habab lacag-bixin oo Soomaaliya oo aad yaqaanaan, kana daa ChinaSuuq inuu iibsado, hubiyo, iyo keeno.",
+    "cta1": "Bilow Wax Iibsiga",
+    "cta2": "Dalbo WhatsApp",
+    "secondary1": "Sida Uu U Shaqeeyo",
+    "secondary2": "Ku Dhaqo Link Alaab",
+    "searchPlaceholder": "Raadi alaabo ama ku dhaqo link 1688, Taobao, ama Yiwugo..."
+  },
+  "trust": {
+    "secure": "Lacag-Bixin Ammaan ah",
+    "inspection": "Hubinta Goobta Shiinaha",
+    "airSea": "Diyaarad & Badda",
+    "support": "Taageero Maxalli ah",
+    "prices": "Qiimo Cad"
+  },
+  "categories": {
+    "title": "Soo Raadi Qaybaha",
+    "subtitle": "Hel waxaad raadineyso ka mid ah kun qaybood oo alaabo ah",
+    "electronics": "Elektiroonigga",
+    "fashion": "Fashanka",
+    "home": "Guriga & Mashiinka",
+    "beauty": "Quruxda",
+    "baby": "Carruurta & Ciyaaraha",
+    "tools": "Qalabka & Qalabka",
+    "shoes": "Kabo & Boorsooyin",
+    "automotive": "Gaadiidka",
+    "machinery": "Mashiinada",
+    "construction": "Dhismaha",
+    "packaging": "Dhaqida",
+    "business": "Alaabta Ganacsiga"
+  },
+  "markets": {
+    "title": "Soo Raadi Suuradaha",
+    "subtitle": "La barbaro oo ka dalbo suuradaha Shiinaha ee ugu sareeya",
+    "1688": "Jumlo & Warshadaha",
+    "taobao": "Qiimo Retail & Trending",
+    "yiwugo": "Yiwu Yaryar",
+    "deals": "Alaab Xaqiijisan"
+  },
+  "howItWorks": {
+    "title": "Sida ChinaSuuq U Shaqeeyo",
+    "subtitle": "Raadinta ilaa helida alaabta 6 tallaabo fudud",
+    "step1": "Raadi ama Ku Dhaqo Link",
+    "step1Desc": "Hel alaabo ka mid ah 1688, Taobao, ama Yiwugo",
+    "step2": "Dooro & Habayn",
+    "step2Desc": "Dooro noocyada, tirada, iyo rarka",
+    "step3": "Waan Iibsanaa",
+    "step3Desc": "ChinaSuuq wuxuu ka iibiyaa alaab-qeybiyeyaal la xaqiijiyay",
+    "step4": "Waan Hubinaa",
+    "step4Desc": "Hubinta tayada goobta wareysiga Shiinaha",
+    "step5": "Waan Dirtaa",
+    "step5Desc": "Diyaarad ama badda ilaa Soomaaliya",
+    "step6": "Waxaad Helaysaa",
+    "step6Desc": "Qaado ama hel daabulid guriga"
+  },
+  "app": {
+    "title": "Soo Dejiso App-ka ChinaSuuq",
+    "subtitle": "Wax iibso malaayiin alaab Shiineys ah oo leh qiimo Soomaaliyeed iyo taageero maxalli ah",
+    "googlePlay": "Ka hel Google Play",
+    "appStore": "Soo dejiso App Store",
+    "comingSoon": "Imanaya Dhawaan"
+  },
+  "footer": {
+    "company": "Shirkadda",
+    "services": "Adeegyada",
+    "support": "Taageerada",
+    "legal": "Sharciga",
+    "about": "Nagu Saabsan",
+    "careers": "Shaqooyinka",
+    "contact": "Xiriir",
+    "blog": "Bog",
+    "wholesale": "Jumlo",
+    "sourcing": "Wakiil Iibsiga",
+    "inspection": "Hubinta",
+    "shipping": "Rarka",
+    "tracking": "Raadinta Dalabka",
+    "help": "Xarunta Caawimaad",
+    "faq": "Su''aalaha",
+    "terms": "Shuruudaha & Xaaladaha",
+    "privacy": "Siyaasadda Arrimaha Gaarka",
+    "copyright": "© 2026 ChinaSuuq. Xuquuqda Dhammaan waxaa leh."
+  },
+  "common": {
+    "learnMore": "Waxbadan Baro",
+    "shopNow": "Hadda Wax Iibso",
+    "browseAll": "Dhammaan Eeg",
+    "viewDetails": "Arag Faahfaahin",
+    "loading": "Waa soo raraya...",
+    "error": "Wax qaldan ayaa dhacay",
+    "retry": "Mar Kale Isku Day"
+  }
+}
