@@ -72,6 +72,14 @@ export default function RootLayout() {
           <Stack.Screen name="orders/tracking" options={{ presentation: "card" }} />
           <Stack.Screen name="settings/index" options={{ presentation: "card" }} />
           <Stack.Screen name="support/index" options={{ presentation: "card" }} />
+          {/* Profile subscreens */}
+          <Stack.Screen name="profile/personal-info" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/addresses" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/add-address" options={{ presentation: "modal" }} />
+          <Stack.Screen name="profile/payment-methods" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/order-history" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/wishlist" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/referral" options={{ presentation: "card" }} />
           <Stack.Screen name="+not-found" />
         </Stack>
       </View>

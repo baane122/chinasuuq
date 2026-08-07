@@ -12,21 +12,22 @@ import {
   ChevronRight,
   Wifi,
   WifiOff,
-  Package,
   MapPin,
-  Truck,
+  Home,
+  Heart,
+  Gift,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { isBackendOnline, SHIPPING_METHODS } from "@/db/index";
-import type { ShippingMethod } from "@/types";
+import { isBackendOnline, getOrders } from "@/db/index";
 
 type MenuItem = {
   id: string;
   icon: React.ReactNode;
   label: string;
+  subtitle?: string;
   route?: string;
   textColor?: string;
   destructive?: boolean;
@@ -40,6 +41,7 @@ export default function AccountScreen() {
 
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [checkingBackend, setCheckingBackend] = useState(true);
+  const [orderCount, setOrderCount] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -51,6 +53,15 @@ export default function AccountScreen() {
       } finally {
         setCheckingBackend(false);
       }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const orders = await getOrders();
+        setOrderCount(orders?.length ?? 0);
+      } catch {}
     })();
   }, []);
 
@@ -89,37 +100,59 @@ export default function AccountScreen() {
 
   const menuItems: MenuItem[] = [
     {
+      id: "personal",
+      icon: <User size={20} color={COLORS.primary} />,
+      label: "Personal Information",
+      subtitle: "Name, phone & business details",
+      route: "/profile/personal-info",
+    },
+    {
+      id: "addresses",
+      icon: <Home size={20} color={COLORS.primary} />,
+      label: "Saved Addresses",
+      subtitle: "Delivery addresses in Somalia",
+      route: "/profile/addresses",
+    },
+    {
+      id: "payments",
+      icon: <CreditCard size={20} color={COLORS.primary} />,
+      label: "Payment Methods",
+      subtitle: "ZAAD, Edahab, EVC Plus & more",
+      route: "/profile/payment-methods",
+    },
+    {
       id: "orders",
       icon: <ShoppingBag size={20} color={COLORS.primary} />,
       label: t("profile.myOrders"),
-      route: "/(tabs)/orders",
+      subtitle: orderCount ? `${orderCount} order(s)` : "Track & manage orders",
+      route: "/profile/order-history",
     },
     {
-      id: "cart",
-      icon: <Package size={20} color={COLORS.primary} />,
-      label: "Cart",
-      route: "/cart/index",
+      id: "wishlist",
+      icon: <Heart size={20} color={COLORS.primary} />,
+      label: "Wishlist",
+      subtitle: "Products you've saved",
+      route: "/profile/wishlist",
     },
     {
-      id: "shipping",
-      icon: <Truck size={20} color={COLORS.primary} />,
-      label: "Shipping Preferences",
+      id: "referral",
+      icon: <Gift size={20} color={COLORS.primary} />,
+      label: "Refer & Earn",
+      subtitle: "Invite friends, get rewards",
+      route: "/profile/referral",
+    },
+    {
+      id: "settings",
+      icon: <Settings size={20} color={COLORS.primary} />,
+      label: t("profile.settings"),
+      subtitle: "Language & shipping preference",
       route: "/settings/index",
     },
-    ...(user
-      ? [
-          {
-            id: "settings" as const,
-            icon: <Settings size={20} color={COLORS.primary} />,
-            label: t("profile.settings"),
-            route: "/settings/index",
-          },
-        ]
-      : []),
     {
       id: "help",
       icon: <HelpCircle size={20} color={COLORS.primary} />,
       label: t("profile.help"),
+      subtitle: "FAQs & contact support",
       route: "/support/index",
     },
     {
@@ -203,33 +236,24 @@ export default function AccountScreen() {
                 android_ripple={{ color: COLORS.gray100 }}
               >
                 <View style={styles.menuIcon}>{item.icon}</View>
-                <Text
-                  style={[
-                    styles.menuLabel,
-                    item.textColor ? { color: item.textColor } : null,
-                  ]}
-                >
-                  {item.label}
-                </Text>
+                <View style={styles.menuTextBlock}>
+                  <Text
+                    style={[
+                      styles.menuLabel,
+                      item.textColor ? { color: item.textColor } : null,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                  {item.subtitle ? (
+                    <Text style={styles.menuSubtitle}>
+                      {item.subtitle}
+                    </Text>
+                  ) : null}
+                </View>
                 <ChevronRight size={18} color={COLORS.gray400} />
               </Pressable>
             </React.Fragment>
-          ))}
-        </View>
-
-        {/* Shipping Methods Info */}
-        <View style={styles.shippingInfo}>
-          <Text style={styles.shippingInfoTitle}>Shipping Methods</Text>
-          {SHIPPING_METHODS.map((method) => (
-            <View key={method.id} style={styles.shippingMethodRow}>
-              <View style={styles.shippingDot} />
-              <View style={styles.shippingTextBlock}>
-                <Text style={styles.shippingLabel}>{method.label}</Text>
-                <Text style={styles.shippingDesc}>
-                  {method.days} — {method.desc}
-                </Text>
-              </View>
-            </View>
           ))}
         </View>
 
@@ -351,52 +375,19 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.medium,
     color: COLORS.black,
   },
+  menuTextBlock: {
+    flex: 1,
+  },
+  menuSubtitle: {
+    fontSize: 12,
+    fontFamily: FONTS.regular,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
   menuDivider: {
     height: 1,
     backgroundColor: COLORS.border,
     marginLeft: SPACING.lg + 36 + SPACING.md,
-  },
-  shippingInfo: {
-    marginHorizontal: SPACING.lg,
-    marginTop: SPACING.lg,
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.lg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  shippingInfoTitle: {
-    fontSize: 14,
-    fontFamily: FONTS.semibold,
-    color: COLORS.black,
-    marginBottom: SPACING.sm,
-  },
-  shippingMethodRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: SPACING.sm,
-    paddingVertical: SPACING.xs,
-  },
-  shippingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.primary,
-    marginTop: 5,
-  },
-  shippingTextBlock: {
-    flex: 1,
-  },
-  shippingLabel: {
-    fontSize: 13,
-    fontFamily: FONTS.semibold,
-    color: COLORS.black,
-  },
-  shippingDesc: {
-    fontSize: 12,
-    fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
-    marginTop: 1,
   },
   footer: {
     alignItems: "center",

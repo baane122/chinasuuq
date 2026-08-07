@@ -29,7 +29,7 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { isBackendOnline, SHIPPING_METHODS } from "@/db/index";
+import { isBackendOnline, SHIPPING_METHODS, updateProfile } from "@/db/index";
 
 type ShippingMethodId = (typeof SHIPPING_METHODS)[number]["id"];
 
@@ -63,10 +63,17 @@ export default function SettingsScreen() {
   const handleSaveProfile = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSaving(true);
-    // Simulate save delay — in production this would persist to Supabase
-    await new Promise((r) => setTimeout(r, 600));
-    setSaving(false);
-    Alert.alert("Saved", "Profile updated successfully.");
+    try {
+      if (user?.id) {
+        // Persist to Supabase profiles table (local-first fallback in db layer)
+        await updateProfile(user.id, { full_name: fullName.trim(), phone: phone.trim() || null, city: city.trim() || null });
+      }
+      Alert.alert("Saved", "Profile updated successfully.");
+    } catch {
+      Alert.alert("Error", "Could not save. Your changes were kept on this device.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleLanguageChange = async (lang: "en" | "so") => {
