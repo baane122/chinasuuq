@@ -72,3 +72,4 @@ pnpm-debug.log*
 supabase/.temp
 supabase/.branches
 supabase/.status
+.env*
