@@ -1,6 +1,7 @@
 {
   "name": "chinasuuq",
   "private": true,
+  "packageManager": "npm@10.9.0",
   "workspaces": [
     "apps/web",
     "packages/*"
@@ -8,6 +9,7 @@
   "scripts": {
     "dev:web": "cd apps/web && npm run dev",
     "dev:mobile": "cd apps/mobile && npx expo start",
+    "build": "cd apps/web && npm run build",
     "build:web": "cd apps/web && npm run build",
     "lint": "turbo lint",
     "clean": "turbo clean"
