@@ -10,8 +10,6 @@ import {
   LogOut,
   User,
   ChevronRight,
-  Wifi,
-  WifiOff,
   MapPin,
   Home,
   Heart,
@@ -34,7 +32,7 @@ type MenuItem = {
 };
 
 export default function AccountScreen() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
@@ -170,24 +168,51 @@ export default function AccountScreen() {
         style={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Profile Card */}
+        {/* Dark Profile Card — matching reference */}
         <View style={styles.profileCard}>
-          <View style={styles.avatarContainer}>
+          <View style={styles.profileRow}>
             <View style={styles.avatar}>
-              <User size={28} color={COLORS.primary} />
+              <User size={28} color={COLORS.white} />
+            </View>
+            <View style={styles.profileInfo}>
+              <Text style={styles.displayName}>{displayName}</Text>
+              {displayEmail ? (
+                <Text style={styles.displayEmail}>{displayEmail}</Text>
+              ) : null}
+              <View style={styles.locationRow}>
+                <MapPin size={12} color="rgba(255,255,255,0.6)" />
+                <Text style={styles.displayLocation}>{displayLocation}</Text>
+              </View>
             </View>
           </View>
-          <Text style={styles.displayName}>{displayName}</Text>
-          {displayEmail ? (
-            <Text style={styles.displayEmail}>{displayEmail}</Text>
-          ) : null}
-          <View style={styles.locationRow}>
-            <MapPin size={14} color={COLORS.textSecondary} />
-            <Text style={styles.displayLocation}>{displayLocation}</Text>
+
+          {/* Gold Buyer Badge */}
+          <View style={styles.badgeRow}>
+            <View style={styles.goldBadge}>
+              <Text style={styles.goldBadgeText}>🏅 {locale === "en" ? "Gold Buyer" : "Iibiye Dahab"}</Text>
+            </View>
+          </View>
+
+          {/* Stats Row */}
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>{orderCount}</Text>
+              <Text style={styles.statLabel}>{locale === "en" ? "Orders" : "Dalab"}</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>0</Text>
+              <Text style={styles.statLabel}>{locale === "en" ? "Saved" : "Kaydka"}</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>24/7</Text>
+              <Text style={styles.statLabel}>{locale === "en" ? "Support" : "Taageero"}</Text>
+            </View>
           </View>
         </View>
 
-        {/* Backend Status Card */}
+        {/* Backend Status */}
         <View
           style={[
             styles.backendCard,
@@ -201,28 +226,10 @@ export default function AccountScreen() {
           {checkingBackend ? (
             <ActivityIndicator size="small" color={COLORS.textSecondary} />
           ) : backendOnline ? (
-            <Wifi size={18} color={COLORS.success} />
+            <Text style={{ color: COLORS.success, fontSize: 12, fontFamily: FONTS.medium }}>✓ Online</Text>
           ) : (
-            <WifiOff size={18} color={COLORS.error} />
+            <Text style={{ color: COLORS.error, fontSize: 12, fontFamily: FONTS.medium }}>✕ Offline</Text>
           )}
-          <Text
-            style={[
-              styles.backendText,
-              {
-                color: checkingBackend
-                  ? COLORS.textSecondary
-                  : backendOnline
-                  ? COLORS.success
-                  : COLORS.error,
-              },
-            ]}
-          >
-            {checkingBackend
-              ? "Checking connection..."
-              : backendOnline
-              ? "Backend Online"
-              : "Backend Offline — using local data"}
-          </Text>
         </View>
 
         {/* Menu List */}
@@ -276,38 +283,45 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+
+  // Dark profile card — matching reference design
   profileCard: {
-    alignItems: "center",
-    paddingTop: SPACING.xl,
-    paddingBottom: SPACING.lg,
     marginHorizontal: SPACING.lg,
     marginTop: SPACING.sm,
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    backgroundColor: COLORS.darkSurface,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.xl,
+    shadowColor: COLORS.black,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
-  avatarContainer: {
+  profileRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
     marginBottom: SPACING.md,
   },
   avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: COLORS.softOrange,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "rgba(255,255,255,0.12)",
     alignItems: "center",
     justifyContent: "center",
   },
+  profileInfo: { flex: 1 },
   displayName: {
-    fontSize: 20,
+    fontSize: 18,
     fontFamily: FONTS.bold,
-    color: COLORS.black,
+    color: COLORS.white,
     marginBottom: 4,
   },
   displayEmail: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
+    color: "rgba(255,255,255,0.6)",
     marginBottom: 4,
   },
   locationRow: {
@@ -316,14 +330,42 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   displayLocation: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
+    color: "rgba(255,255,255,0.6)",
   },
+
+  // Gold badge
+  badgeRow: { marginBottom: SPACING.md },
+  goldBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(218,165,32,0.2)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+    gap: 6,
+  },
+  goldBadgeText: { fontSize: 12, fontFamily: FONTS.semibold, color: "#DAA520" },
+
+  // Stats row
+  statsRow: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: RADIUS.md,
+    paddingVertical: 14,
+  },
+  statItem: { flex: 1, alignItems: "center" },
+  statValue: { fontSize: 20, fontFamily: FONTS.bold, color: COLORS.white, marginBottom: 2 },
+  statLabel: { fontSize: 11, color: "rgba(255,255,255,0.55)" },
+  statDivider: { width: 1, height: 28, backgroundColor: "rgba(255,255,255,0.12)", alignSelf: "center" },
+
+  // Backend status
   backendCard: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SPACING.sm,
+    justifyContent: "center",
     marginHorizontal: SPACING.lg,
     marginTop: SPACING.md,
     paddingVertical: SPACING.sm,
@@ -331,19 +373,11 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     alignSelf: "center",
   },
-  backendOnline: {
-    backgroundColor: "#ECFDF5",
-  },
-  backendOffline: {
-    backgroundColor: "#FEF2F2",
-  },
-  backendChecking: {
-    backgroundColor: COLORS.gray100,
-  },
-  backendText: {
-    fontSize: 12,
-    fontFamily: FONTS.medium,
-  },
+  backendOnline: { backgroundColor: "#ECFDF5" },
+  backendOffline: { backgroundColor: "#FEF2F2" },
+  backendChecking: { backgroundColor: COLORS.gray100 },
+
+  // Menu
   menuCard: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.lg,
@@ -375,9 +409,7 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.medium,
     color: COLORS.black,
   },
-  menuTextBlock: {
-    flex: 1,
-  },
+  menuTextBlock: { flex: 1 },
   menuSubtitle: {
     fontSize: 12,
     fontFamily: FONTS.regular,

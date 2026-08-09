@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,9 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
+  Image,
+  Dimensions,
+  Animated,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -15,13 +18,14 @@ import {
   Truck,
   BadgePercent,
   Headphones,
+  ChevronRight,
+  MessageCircle,
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useAuthStore } from "@/store/auth";
 import { useI18n } from "@/lib/i18n";
-import { HeroBanner } from "@/components/home/HeroBanner";
 import { ProductCard } from "@/components/home/ProductCard";
 import { CategoryChips } from "@/components/home/CategoryChips";
 import { WhatsAppCard } from "@/components/home/WhatsAppCard";
@@ -31,18 +35,68 @@ import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
 import { getProducts } from "@/db";
 import type { Product } from "@/types";
 
-// ─── Marketing / merchandising data ────────────────
+// Real brand logo
+const LOGO = require("../../assets/images/logo.jpg");
+
+const { width: SCREEN_W } = Dimensions.get("window");
+
+// ─── Real marketplace data with generated icon assets ───
 const MARKETPLACES = [
-  { id: "1688", name: "1688", desc: "Wholesale prices", color: COLORS.primaryDark },
-  { id: "taobao", name: "Taobao", desc: "Millions of products", color: COLORS.primary },
-  { id: "yiwugo", name: "YiwuGo", desc: "Direct trade access", color: COLORS.info },
-  { id: "deals", name: "Deals", desc: "Verified products", color: COLORS.success },
+  {
+    id: "1688",
+    name: "1688",
+    desc_en: "Wholesale prices",
+    desc_so: "Qiimo jumlo",
+    icon: require("../../assets/marketplaces/1688.png"),
+  },
+  {
+    id: "taobao",
+    name: "Taobao",
+    desc_en: "Millions of products",
+    desc_so: "Malaayiin alaab",
+    icon: require("../../assets/marketplaces/taobao.png"),
+  },
+  {
+    id: "yiwugo",
+    name: "YiwuGo",
+    desc_en: "Direct trade access",
+    desc_so: "Ganacsi toos ah",
+    icon: require("../../assets/marketplaces/yiwugo.png"),
+  },
+];
+
+// ─── Hero banner data with generated images ───
+const HERO_BANNERS = [
+  {
+    id: "1",
+    title_en: "Order from China\nto Somalia",
+    title_so: "Ka Dalbo Shiinaha\nilaa Soomaaliya",
+    subtitle_en: "1688 · Taobao · YiwuGo",
+    subtitle_so: "1688 · Taobao · YiwuGo",
+    image: require("../../assets/hero/hero1.png"),
+  },
+  {
+    id: "2",
+    title_en: "Shop the Whole App\nBattle, Compare, Order",
+    title_so: "Iibso Abka Oo Dhan\nTixgeli, Barbar dhig, Dalbo",
+    subtitle_en: "Real browsing, in-app",
+    subtitle_so: "Dhabtii ka dalbo, abka gudihiisa",
+    image: require("../../assets/hero/hero2.png"),
+  },
+  {
+    id: "3",
+    title_en: "Pay with Zaad, EVC & more",
+    title_so: "Ku bixi Zaad, EVC & kale",
+    subtitle_en: "Across every Somali city",
+    subtitle_so: "Magaalo kasta oo Soomaali",
+    image: require("../../assets/hero/hero3.png"),
+  },
 ];
 
 const SERVICES = [
-  { id: "247", icon: Headphones, label: "24/7 Ordering" },
-  { id: "low", icon: BadgePercent, label: "Low Prices" },
-  { id: "fast", icon: Truck, label: "Fast Delivery" },
+  { id: "247", icon: Headphones, label_en: "24/7 Ordering", label_so: "24/7 Dalab" },
+  { id: "low", icon: BadgePercent, label_en: "Low Prices", label_so: "Qiimo Jaban" },
+  { id: "fast", icon: Truck, label_en: "Fast Delivery", label_so: "Bixi Dhaqso" },
 ];
 
 // ─── Service Badge Component ─────────────────────────
@@ -57,12 +111,62 @@ function ServiceBadge({ icon: Icon, label }: { icon: any; label: string }) {
   );
 }
 
+// ─── Hero Banner Component ─────────────────────────
+function HeroBannerCarousel() {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
+  const { locale } = useI18n();
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveIndex((prev) => {
+        const next = (prev + 1) % HERO_BANNERS.length;
+        scrollRef.current?.scrollTo({ x: next * (SCREEN_W - 40), animated: true });
+        return next;
+      });
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <View style={styles.heroWrap}>
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={(e) => {
+          const idx = Math.round(e.nativeEvent.contentOffset.x / (SCREEN_W - 40));
+          setActiveIndex(idx);
+        }}
+      >
+        {HERO_BANNERS.map((b) => (
+          <View key={b.id} style={[styles.heroSlide, { width: SCREEN_W - 40 }]}>
+            <Image source={b.image} style={styles.heroImg} resizeMode="cover" />
+            <View style={styles.heroOverlay}>
+              <Text style={styles.heroTitle} numberOfLines={2}>
+                {locale === "en" ? b.title_en : b.title_so}
+              </Text>
+              <Text style={styles.heroSub}>{locale === "en" ? b.subtitle_en : b.subtitle_so}</Text>
+            </View>
+          </View>
+        ))}
+      </ScrollView>
+      <View style={styles.heroDots}>
+        {HERO_BANNERS.map((_, i) => (
+          <View key={i} style={[styles.heroDot, i === activeIndex && styles.heroDotActive]} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // ─── Home Tab ────────────────────────────────────────
 export default function HomeTab() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [notifCount] = useState(3);
   const [refreshing, setRefreshing] = useState(false);
@@ -93,7 +197,6 @@ export default function HomeTab() {
     setRefreshing(false);
   }, [loadProducts]);
 
-  // "Trending" = top sellers from real catalog, fall back to everything.
   const trending = products
     .filter((p) => selectedCategory === "all" || p.category === selectedCategory)
     .slice()
@@ -117,14 +220,9 @@ export default function HomeTab() {
           />
         }
       >
-        {/* ── Header ── */}
+        {/* ── Header with real logo ── */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>
-              {t("home.greeting")}, {user?.full_name || "there"} 👋
-            </Text>
-            <Text style={styles.title}>{t("home.title")}</Text>
-          </View>
+          <Image source={LOGO} style={styles.headerLogo} resizeMode="contain" />
           <TouchableOpacity
             style={styles.notifButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -147,22 +245,24 @@ export default function HomeTab() {
         >
           <SearchIcon size={18} color={COLORS.gray400} />
           <Text style={styles.searchPlaceholder}>
-            {t("home.searchPlaceholder")}
+            {locale === "en" ? "Search products or paste a link" : "Raadi alaab ama Geli link"}
           </Text>
           <View style={styles.micIcon}>
             <Mic size={16} color={COLORS.primary} />
           </View>
         </TouchableOpacity>
 
-        {/* ── Hero Banner ── */}
-        <HeroBanner />
+        {/* ── Hero Banner Carousel ── */}
+        <HeroBannerCarousel />
 
         {/* ── Marketplace Shortcuts ── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{t("home.subtitle")}</Text>
+            <Text style={styles.sectionTitle}>
+              {locale === "en" ? "Browse Marketplaces" : "Eeg Suuqyada"}
+            </Text>
             <TouchableOpacity onPress={() => router.push("/(tabs)/markets")}>
-              <Text style={styles.seeAll}>{t("home.seeAll")}</Text>
+              <Text style={styles.seeAll}>{locale === "en" ? "View all" : "Eeg dhammaan"}</Text>
             </TouchableOpacity>
           </View>
           <ScrollView
@@ -177,25 +277,16 @@ export default function HomeTab() {
                 activeOpacity={0.7}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  if (m.id === "deals") {
-                    router.push("/search");
-                  } else {
-                    // 1688 / Taobao / YiwuGo open the real marketplace browser
-                    router.push({
-                      pathname: "/marketplace/[marketplace]",
-                      params: { marketplace: m.id },
-                    });
-                  }
+                  router.push({
+                    pathname: "/marketplace/[marketplace]",
+                    params: { marketplace: m.id },
+                  });
                 }}
               >
-                <View style={[styles.marketIcon, { backgroundColor: m.color }]}>
-                  <Text style={styles.marketIconText}>
-                    {m.name.charAt(0)}
-                  </Text>
-                </View>
+                <Image source={m.icon} style={styles.marketIconImg} resizeMode="contain" />
                 <Text style={styles.marketName}>{m.name}</Text>
                 <Text style={styles.marketDesc} numberOfLines={1}>
-                  {m.desc}
+                  {locale === "en" ? m.desc_en : m.desc_so}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -205,7 +296,11 @@ export default function HomeTab() {
         {/* ── Service Badges ── */}
         <View style={styles.serviceRow}>
           {SERVICES.map((s) => (
-            <ServiceBadge key={s.id} icon={s.icon} label={s.label} />
+            <ServiceBadge
+              key={s.id}
+              icon={s.icon}
+              label={locale === "en" ? s.label_en : s.label_so}
+            />
           ))}
         </View>
 
@@ -293,20 +388,13 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
     paddingHorizontal: SPACING.lg,
     marginBottom: SPACING.lg,
   },
-  greeting: {
-    fontSize: 14,
-    fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
-    marginBottom: SPACING.xs,
-  },
-  title: {
-    fontSize: 22,
-    fontFamily: FONTS.bold,
-    color: COLORS.black,
+  headerLogo: {
+    width: 140,
+    height: 48,
   },
   notifButton: {
     width: 44,
@@ -365,6 +453,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // Hero Banner
+  heroWrap: { marginBottom: SPACING.xl },
+  heroSlide: {
+    height: 170,
+    borderRadius: RADIUS.xl,
+    overflow: "hidden",
+    position: "relative",
+  },
+  heroImg: { width: "100%", height: "100%", position: "absolute" },
+  heroOverlay: {
+    position: "absolute",
+    left: 0, right: 0, bottom: 0,
+    padding: SPACING.lg,
+    backgroundColor: "rgba(16,24,40,0.55)",
+    borderBottomLeftRadius: RADIUS.xl,
+    borderBottomRightRadius: RADIUS.xl,
+  },
+  heroTitle: { fontSize: 16, fontFamily: FONTS.bold, color: "#fff", lineHeight: 21, marginBottom: 4 },
+  heroSub: { fontSize: 12, fontFamily: FONTS.semibold, color: "rgba(255,255,255,0.85)" },
+  heroDots: { flexDirection: "row", justifyContent: "center", marginTop: 10, gap: 6 },
+  heroDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "rgba(255,90,10,0.25)" },
+  heroDotActive: { width: 20, backgroundColor: COLORS.primary },
   // Sections
   section: {
     marginBottom: SPACING.xxl,
@@ -386,13 +496,13 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.medium,
     color: COLORS.primary,
   },
-  // Marketplace shortcuts
+  // Marketplace shortcuts — real icons
   marketRow: {
     paddingHorizontal: SPACING.lg,
     gap: SPACING.sm,
   },
   marketCard: {
-    width: 100,
+    width: 110,
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
     padding: SPACING.md,
@@ -403,18 +513,11 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 1,
   },
-  marketIcon: {
-    width: 44,
-    height: 44,
+  marketIconImg: {
+    width: 56,
+    height: 56,
     borderRadius: RADIUS.md,
-    alignItems: "center",
-    justifyContent: "center",
     marginBottom: SPACING.sm,
-  },
-  marketIconText: {
-    fontSize: 18,
-    fontFamily: FONTS.bold,
-    color: COLORS.white,
   },
   marketName: {
     fontSize: 13,

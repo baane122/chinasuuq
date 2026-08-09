@@ -61,6 +61,7 @@ export default function RootLayout() {
         <StatusBar style="dark" />
         <AuthRedirect />
         <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="onboarding" options={{ presentation: "card" }} />
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="(auth)" options={{ presentation: "modal" }} />
           <Stack.Screen name="product/[id]" options={{ presentation: "card" }} />

@@ -56,9 +56,9 @@ export default function AppDownload() {
               </p>
             </div>
 
-            {/* Right - Phone mockups */}
+            {/* Right - Phone mockups with real assets */}
             <div className="flex justify-center items-end gap-4">
-              {/* Phone 1 */}
+              {/* Phone 1 - Onboarding slide */}
               <motion.div
                 initial={{ opacity: 0, y: 40, rotate: -6 }}
                 whileInView={{ opacity: 1, y: 0, rotate: -6 }}
@@ -67,17 +67,13 @@ export default function AppDownload() {
                 className="relative w-[180px] sm:w-[200px]"
               >
                 <div className="bg-dark-900 rounded-[2rem] p-2 shadow-2xl">
-                  <div className="bg-gradient-to-b from-brand-400/30 to-warm-200 rounded-[1.6rem] aspect-[9/19] flex items-center justify-center">
-                    <div className="text-center px-4">
-                      <div className="text-3xl mb-2">📱</div>
-                      <div className="text-[10px] font-semibold text-dark-900/60">ChinaSuuq</div>
-                      <div className="text-[8px] text-dark-900/30 mt-1">Coming Soon</div>
-                    </div>
+                  <div className="bg-gradient-to-b from-brand-400/30 to-warm-200 rounded-[1.6rem] aspect-[9/19] flex items-center justify-center overflow-hidden">
+                    <img src="/images/onboarding/slide1.png" alt="Shop China" className="w-full h-full object-cover" />
                   </div>
                 </div>
               </motion.div>
 
-              {/* Phone 2 */}
+              {/* Phone 2 - Onboarding slide */}
               <motion.div
                 initial={{ opacity: 0, y: 40, rotate: 6 }}
                 whileInView={{ opacity: 1, y: 0, rotate: 6 }}
@@ -86,12 +82,8 @@ export default function AppDownload() {
                 className="relative w-[180px] sm:w-[200px]"
               >
                 <div className="bg-dark-900 rounded-[2rem] p-2 shadow-2xl">
-                  <div className="bg-gradient-to-b from-brand-500/20 to-warm-200 rounded-[1.6rem] aspect-[9/19] flex items-center justify-center">
-                    <div className="text-center px-4">
-                      <div className="text-3xl mb-2">🛒</div>
-                      <div className="text-[10px] font-semibold text-dark-900/60">Browse & Shop</div>
-                      <div className="text-[8px] text-dark-900/30 mt-1">Millions of Products</div>
-                    </div>
+                  <div className="bg-gradient-to-b from-brand-500/20 to-warm-200 rounded-[1.6rem] aspect-[9/19] flex items-center justify-center overflow-hidden">
+                    <img src="/images/onboarding/slide2.png" alt="Browse and Shop" className="w-full h-full object-cover" />
                   </div>
                 </div>
               </motion.div>
