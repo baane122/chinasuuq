@@ -33,6 +33,9 @@ const platformChips = [
   { name: "1688", img: "/images/marketplaces/1688.png" },
   { name: "Taobao", img: "/images/marketplaces/taobao.png" },
   { name: "YiwuGo", img: "/images/marketplaces/yiwugo.png" },
+  { name: "Alibaba", img: "/images/marketplaces/alibaba.png" },
+  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.png" },
+  { name: "JD", img: "/images/marketplaces/jd.png" },
 ];
 
 export default function Hero() {
@@ -93,8 +96,8 @@ export default function Hero() {
               className="text-base sm:text-lg text-dark-900/60 leading-relaxed mb-8 max-w-xl"
             >
               {locale === "en"
-                ? "Browse 1688, Taobao, and YiwuGo in one place. See translated products and USD prices, pay with familiar Somali payment methods, and let ChinaSuuq handle purchasing, inspection, and delivery."
-                : "Eeg 1688, Taobao, iyo YiwuGo hal meel. Arag alaab la turjumay iyo qiimaha USD, ku bixi hab-yada Soomaaliyeed, oo u daa ChinaSuuq inay maariso iibinta, hubinta, iyo gaarsiinta."}
+                ? "Browse 1688, Taobao, YiwuGo, Alibaba, ChinaGoods and JD in one place. See translated products and USD prices, pay with familiar Somali payment methods, and let ChinaSuuq handle purchasing, inspection, and delivery."
+                : "Eeg 1688, Taobao, YiwuGo, Alibaba, ChinaGoods iyo JD hal meel. Arag alaab la turjumay iyo qiimaha USD, ku bixi hab-yada Soomaaliyeed, oo u daa ChinaSuuq inay maariso iibinta, hubinta, iyo gaarsiinta."}
             </motion.p>
 
             {/* CTAs */}
@@ -201,11 +204,11 @@ export default function Hero() {
               </div>
 
               {/* Floating platform chips */}
-              <div className="absolute -top-5 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/90 backdrop-blur rounded-full p-2 shadow-lg shadow-dark-900/10 border border-dark-900/5">
+              <div className="absolute -top-5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-white/90 backdrop-blur rounded-full p-2 shadow-lg shadow-dark-900/10 border border-dark-900/5 max-w-[92%] overflow-x-auto">
                 {platformChips.map((p) => (
-                  <div key={p.name} className="flex items-center gap-1.5 pl-1 pr-3 py-1 rounded-full bg-warm-200/60">
+                  <div key={p.name} className="flex items-center gap-1 pl-1 pr-3 py-1 rounded-full bg-warm-200/60 shrink-0">
                     <img src={p.img} alt={p.name} className="w-6 h-6 rounded-md object-cover" />
-                    <span className="text-xs font-semibold text-dark-900">{p.name}</span>
+                    <span className="text-[11px] font-semibold text-dark-900">{p.name}</span>
                   </div>
                 ))}
               </div>
@@ -225,7 +228,7 @@ export default function Hero() {
                       <div className="text-sm font-bold text-dark-900">50M+ Products</div>
                       <div className="flex items-center gap-1 text-[11px] text-dark-900/50">
                         <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
-                        {locale === "en" ? "Across 1688·Taobao·YiwuGo" : "Siinaha oo dhan"}
+                        {locale === "en" ? "Across 6 top platforms" : "6 suuq oo koowaad"}
                       </div>
                     </div>
                   </div>

@@ -1,6 +1,6 @@
 export interface Product {
   id: string;
-  marketplace: "1688" | "taobao" | "yiwugo" | "chinasuuq";
+  marketplace: "1688" | "taobao" | "yiwugo" | "alibaba" | "chinagoods" | "jd" | "chinasuuq";
   source_product_id: string;
   source_url: string;
   title_original: string;

@@ -1,7 +1,7 @@
 // Self-contained types for the mobile app
 // (inlined from @chinasuuq/shared/types for monorepo independence)
 
-export type Marketplace = "1688" | "taobao" | "yiwugo" | "chinasuuq";
+export type Marketplace = "1688" | "taobao" | "yiwugo" | "alibaba" | "chinagoods" | "jd" | "chinasuuq";
 export type Locale = "en" | "so";
 export type ShippingMethod = "air" | "sea" | "land";
 export type PaymentStatus = "pending" | "confirmed" | "failed" | "refunded";

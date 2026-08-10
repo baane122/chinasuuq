@@ -42,7 +42,28 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const MARKETPLACES: Record<string, { name: string; home: string; loginWalled: boolean }> = {
   "1688": { name: "1688.com", home: "https://m.1688.com", loginWalled: false },
   taobao: { name: "Taobao", home: "https://m.taobao.com", loginWalled: true },
-  yiwugo: { name: "YiwuGo (Trademanager)", home: "https://m.yiwugo.com", loginWalled: true },
+  yiwugo: { name: "YiwuGo", home: "https://www.yiwugo.com", loginWalled: false },
+  alibaba: { name: "Alibaba.com", home: "https://m.alibaba.com", loginWalled: false },
+  chinagoods: { name: "ChinaGoods", home: "https://www.chinagoods.com", loginWalled: false },
+  jd: { name: "JD.com", home: "https://m.jd.com", loginWalled: false },
+};
+
+// Brand colors + short marks for blocked-state logos
+const PLATFORM_BRAND_COLOR: Record<string, string> = {
+  "1688": "#FF5000",
+  taobao: "#FF6A00",
+  yiwugo: "#1A8CFF",
+  alibaba: "#FF6A00",
+  chinagoods: "#E60012",
+  jd: "#E1251B",
+};
+const PLATFORM_MARK: Record<string, string> = {
+  "1688": "1688",
+  taobao: "淘",
+  yiwugo: "YWG",
+  alibaba: "A",
+  chinagoods: "CG",
+  jd: "JD",
 };
 
 const TL_KEY = "chinasuuq-webview-translate";
@@ -284,9 +305,9 @@ export default function MarketplaceBrowser() {
               <TouchableOpacity onPress={() => setBlocked(false)} style={styles.blockedClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <X size={16} color={COLORS.gray500} />
               </TouchableOpacity>
-              <View style={[styles.blockedLogo, { backgroundColor: meta.home.includes("yiwugo") ? "#1A8CFF" : "#FF5000" }]}>
+              <View style={[styles.blockedLogo, { backgroundColor: PLATFORM_BRAND_COLOR[marketplace ?? "1688"] || "#FF5000" }]}>
                 <Text style={styles.blockedLogoText}>
-                  {meta.name.startsWith("YiwuGo") ? "YWG" : "淘"}
+                  {PLATFORM_MARK[marketplace ?? "1688"] || "CS"}
                 </Text>
               </View>
               <Text style={styles.blockedTitle}>

@@ -10,9 +10,9 @@ import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
 
-const marketplaceFilters = ["All", "1688", "Taobao", "Yiwugo", "ChinaSuuq"] as const;
+const marketplaceFilters = ["All", "1688", "Taobao", "Yiwugo", "Alibaba", "ChinaGoods", "JD", "ChinaSuuq"] as const;
 
-const marketplaces = ["1688", "taobao", "yiwugo", "chinasuuq"] as const;
+const marketplaces = ["1688", "taobao", "yiwugo", "alibaba", "chinagoods", "jd", "chinasuuq"] as const;
 
 const stockStatusOptions = ["in_stock", "low_stock", "out_of_stock"] as const;
 
@@ -26,6 +26,9 @@ const marketplaceColors: Record<string, string> = {
   "1688": "bg-orange-50 text-orange-600",
   taobao: "bg-red-50 text-red-600",
   yiwugo: "bg-blue-50 text-blue-600",
+  alibaba: "bg-yellow-50 text-yellow-600",
+  chinagoods: "bg-rose-50 text-rose-600",
+  jd: "bg-red-50 text-red-700",
   chinasuuq: "bg-brand-50 text-brand-500",
 };
 

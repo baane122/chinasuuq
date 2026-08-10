@@ -63,6 +63,27 @@ const MARKETPLACES = [
     desc_so: "Ganacsi toos ah",
     icon: require("../../assets/marketplaces/yiwugo.png"),
   },
+  {
+    id: "alibaba",
+    name: "Alibaba",
+    desc_en: "Global B2B trade",
+    desc_so: "Ganacsi B2B",
+    icon: require("../../assets/marketplaces/alibaba.png"),
+  },
+  {
+    id: "jd",
+    name: "JD.com",
+    desc_en: "Quality electronics",
+    desc_so: "Elektiroonik",
+    icon: require("../../assets/marketplaces/jd.png"),
+  },
+  {
+    id: "chinagoods",
+    name: "ChinaGoods",
+    desc_en: "Yiwu commodities",
+    desc_so: "Alaabta Yiwu",
+    icon: require("../../assets/marketplaces/chinagoods.png"),
+  },
 ];
 
 // ─── Hero banner data with generated images ───

@@ -27,6 +27,16 @@ import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
+// Platform accent colors for arrow buttons
+const PLATFORM_COLORS: Record<string, string> = {
+  "1688": "#FF5000",
+  taobao: "#FF6A00",
+  yiwugo: "#1A8CFF",
+  alibaba: "#FF6A00",
+  chinagoods: "#E60012",
+  jd: "#E1251B",
+};
+
 // Real marketplace data with generated icons
 const MARKETPLACES = [
   {
@@ -58,6 +68,36 @@ const MARKETPLACES = [
     desc_so: "Suuqa yaryar ee ugu weyn",
     icon: require("../../assets/marketplaces/yiwugo.png"),
     stat: { en: "5M+ items", so: "5M+ alaab" },
+  },
+  {
+    id: "alibaba",
+    name: "Alibaba",
+    tagline_en: "Global B2B trade platform",
+    tagline_so: "Suuqa ganacsiga B2B",
+    desc_en: "Factories & suppliers for wholesale orders",
+    desc_so: "Warshado & iibiyeyaal jumlada",
+    icon: require("../../assets/marketplaces/alibaba.png"),
+    stat: { en: "200M+ items", so: "200M+ alaab" },
+  },
+  {
+    id: "chinagoods",
+    name: "ChinaGoods",
+    tagline_en: "Yiwu market online",
+    tagline_so: "Suuqa Yiwu online",
+    desc_en: "Yiwu small commodities at factory prices",
+    desc_so: "Alaab yaryar oo qiimo warshadeed ah",
+    icon: require("../../assets/marketplaces/chinagoods.png"),
+    stat: { en: "2M+ items", so: "2M+ alaab" },
+  },
+  {
+    id: "jd",
+    name: "JD.com",
+    tagline_en: "Quality electronics & tech",
+    tagline_so: "Elektiroonigga & teknooloji",
+    desc_en: "Genuine branded goods with fast delivery",
+    desc_so: "Alaab dhab ah oo si degdeg ah loo geeyo",
+    icon: require("../../assets/marketplaces/jd.png"),
+    stat: { en: "400M+ items", so: "400M+ alaab" },
   },
 ];
 
@@ -167,7 +207,7 @@ export default function MarketsTab() {
               </View>
 
               {/* Arrow */}
-              <View style={[styles.arrowWrap, i === 1 && styles.arrowWrapDark]}>
+              <View style={[styles.arrowWrap, { backgroundColor: PLATFORM_COLORS[m.id] || COLORS.primary }]}>
                 <ChevronRight size={20} color={COLORS.white} strokeWidth={3} />
               </View>
             </TouchableOpacity>
