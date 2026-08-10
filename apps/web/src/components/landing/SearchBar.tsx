@@ -2,18 +2,25 @@
 
 import { useState, type FormEvent } from "react";
 import { useI18n } from "@/lib/i18n";
-import { useRouter } from "next/navigation";
 import { Search, Link2, Camera } from "lucide-react";
+
+const WHATSAPP_NUMBER = "8615277074143";
 
 export default function SearchBar() {
   const { t } = useI18n();
-  const router = useRouter();
   const [query, setQuery] = useState("");
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
-    router.push(`/categories?q=${encodeURIComponent(query.trim())}`);
+    // Route product searches to our WhatsApp ordering flow so a real
+    // ChinaSuuq sourcing agent can find and quote the product.
+    const message = `Hello ChinaSuuq, I am looking for: ${query.trim()}`;
+    window.open(
+      `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
   };
 
   return (
