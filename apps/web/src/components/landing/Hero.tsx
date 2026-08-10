@@ -105,7 +105,7 @@ export default function Hero() {
               className="flex flex-wrap gap-3 mb-8"
             >
               <a
-                href="#categories"
+                href="#download"
                 className="inline-flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-7 py-3.5 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-md shadow-brand-500/20 hover:shadow-lg hover:shadow-brand-500/30"
               >
                 {locale === "en" ? "Start Shopping" : "Bilow Iibsiga"}

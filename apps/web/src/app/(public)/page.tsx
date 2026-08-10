@@ -11,14 +11,6 @@ import Footer from "@/components/landing/Footer";
 // Below-the-fold heavy sections are code-split so the initial JS bundle
 // (framer-motion, lucide icons) is much smaller on first load. Each loads
 // on demand and renders a branded skeleton fallback to avoid blank flashes.
-const MarketplaceCards = dynamic(
-  () => import("@/components/landing/MarketplaceCards"),
-  { ssr: false, loading: () => <SectionSkeleton lines={4} /> }
-);
-const CategoryGrid = dynamic(
-  () => import("@/components/landing/CategoryGrid"),
-  { ssr: false, loading: () => <SectionSkeleton lines={12} /> }
-);
 const TrustBar = dynamic(() => import("@/components/landing/TrustBar"), {
   ssr: false,
   loading: () => <SectionSkeleton lines={1} />,
@@ -63,8 +55,6 @@ export default function LandingPage() {
       <Header />
       <main>
         <Hero />
-        <MarketplaceCards />
-        <CategoryGrid />
         <TrustBar />
         <HowItWorks />
         <AppDownload />
