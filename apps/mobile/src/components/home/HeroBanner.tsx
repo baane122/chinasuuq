@@ -36,7 +36,7 @@ const HERO_BANNERS = [
 export function HeroBanner() {
   const [activeIndex, setActiveIndex] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
-  const { lang } = useI18n();
+  const { locale } = useI18n();
 
   useEffect(() => {
     const interval = setInterval(() => {

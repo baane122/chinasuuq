@@ -44,7 +44,7 @@ function mapStatus(s: string): "pending" | "processing" | "warehouse" | "shippin
 
 // ─── Order Tracking Route Visualization ─────────────
 function OrderTrackingRoute() {
-  const { lang } = useI18n();
+  const { locale } = useI18n();
   const steps = [
     { icon: Clock, label_en: "Processing", label_so: "Waxaa la qabanaayo" },
     { icon: Package, label_en: "Warehouse", label_so: "Bakhaar" },

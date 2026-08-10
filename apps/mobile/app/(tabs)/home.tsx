@@ -35,8 +35,8 @@ import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
 import { getProducts } from "@/db";
 import type { Product } from "@/types";
 
-// Real brand logo
-const LOGO = require("../../assets/images/logo.jpg");
+// Brand assets — clean circular app icon (NOT the busy promo image)
+const LOGO = require("../../assets/images/icon.png");
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -220,9 +220,20 @@ export default function HomeTab() {
           />
         }
       >
-        {/* ── Header with real logo ── */}
+        {/* ── Clean App Header ── */}
         <View style={styles.header}>
-          <Image source={LOGO} style={styles.headerLogo} resizeMode="contain" />
+          <View style={styles.headerLeft}>
+            <Image source={LOGO} style={styles.headerLogo} resizeMode="contain" />
+            <View>
+              <Text style={styles.greeting}>
+                {locale === "en" ? "Good day" : "Maalin wanaagsan"} 👋
+              </Text>
+              <View style={styles.brandRow}>
+                <Text style={styles.brandChina}>China</Text>
+                <Text style={styles.brandSuuq}>Suuq</Text>
+              </View>
+            </View>
+          </View>
           <TouchableOpacity
             style={styles.notifButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -392,10 +403,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     marginBottom: SPACING.lg,
   },
-  headerLogo: {
-    width: 140,
-    height: 48,
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
   },
+  headerLogo: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+  },
+  greeting: {
+    fontSize: 13,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    marginBottom: 1,
+  },
+  brandRow: { flexDirection: "row", alignItems: "baseline" },
+  brandChina: { fontSize: 22, fontFamily: FONTS.bold, color: COLORS.black, letterSpacing: -0.5 },
+  brandSuuq: { fontSize: 22, fontFamily: FONTS.bold, color: COLORS.primary, letterSpacing: -0.5 },
   notifButton: {
     width: 44,
     height: 44,
@@ -456,7 +482,7 @@ const styles = StyleSheet.create({
   // Hero Banner
   heroWrap: { marginBottom: SPACING.xl },
   heroSlide: {
-    height: 170,
+    height: 180,
     borderRadius: RADIUS.xl,
     overflow: "hidden",
     position: "relative",
@@ -466,11 +492,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0, right: 0, bottom: 0,
     padding: SPACING.lg,
-    backgroundColor: "rgba(16,24,40,0.55)",
+    backgroundColor: "rgba(13,17,23,0.62)",
+    borderTopLeftRadius: 24,
     borderBottomLeftRadius: RADIUS.xl,
     borderBottomRightRadius: RADIUS.xl,
   },
-  heroTitle: { fontSize: 16, fontFamily: FONTS.bold, color: "#fff", lineHeight: 21, marginBottom: 4 },
+  heroTitle: { fontSize: 17, fontFamily: FONTS.bold, color: "#fff", lineHeight: 22, marginBottom: 4, letterSpacing: -0.2 },
   heroSub: { fontSize: 12, fontFamily: FONTS.semibold, color: "rgba(255,255,255,0.85)" },
   heroDots: { flexDirection: "row", justifyContent: "center", marginTop: 10, gap: 6 },
   heroDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "rgba(255,90,10,0.25)" },
