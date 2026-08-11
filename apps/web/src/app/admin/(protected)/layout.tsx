@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/admin/customers", label: "Customers", icon: Users },
   { href: "/admin/products", label: "Products", icon: Package },
   { href: "/admin/orders", label: "Orders", icon: ShoppingBag },
+  { href: "/admin/marketplaces", label: "Marketplaces", icon: Globe },
   { href: "/admin/payments", label: "Payments", icon: CreditCard },
   { href: "/admin/rates", label: "Exchange Rates", icon: Globe },
   { href: "/admin/sourcing", label: "Sourcing", icon: ClipboardList },
