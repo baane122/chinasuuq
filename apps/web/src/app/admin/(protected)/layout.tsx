@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { hasAdminFallbackSession } from "@/lib/adminSession";
 import Link from "next/link";
 import { Loader2, LayoutDashboard, Users, Package, ShoppingBag, CreditCard, Ship, Boxes, Settings, Globe, ClipboardList, BadgeDollarSign, UserCog, LogOut, Menu, X, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,8 +32,21 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
+    const handleUnauthorized = () => {
+      if (hasAdminFallbackSession()) {
+        setIsAuthenticated(true);
+        return;
+      }
+      router.replace("/admin/login");
+    };
     const checkAuth = async () => {
       try {
+        // Recovery fallback: allow access if a recovery session is active
+        // (used when the Supabase Auth service is having schema issues).
+        if (hasAdminFallbackSession()) {
+          setIsAuthenticated(true);
+          return;
+        }
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
           router.replace("/admin/login");
@@ -40,12 +54,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         }
         setIsAuthenticated(true);
       } catch {
-        router.replace("/admin/login");
+        handleUnauthorized();
       }
     };
     checkAuth();
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (!session) router.replace("/admin/login");
+      if (!session && !hasAdminFallbackSession()) router.replace("/admin/login");
     });
     return () => subscription.unsubscribe();
   }, [router]);

@@ -42,6 +42,15 @@
     "plugins": [
       "expo-router",
       "expo-asset"
-    ]
+    ],
+    "extra": {
+      "supabaseUrl": "https://athkmrvsaijwgsyvwrbp.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF0aGttcnZzYWlqd2dzeXZ3cmJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NjM4NDQsImV4cCI6MjEwMTIzOTg0NH0.QAT0gZBJl-ELFG8221MRZoZoTj0La9_TOXFXx-HiKbY",
+      "router": {},
+      "eas": {
+        "projectId": "72d3fa8c-07ac-4469-89d6-df7546a3facd"
+      }
+    },
+    "owner": "baane123"
   }
 }

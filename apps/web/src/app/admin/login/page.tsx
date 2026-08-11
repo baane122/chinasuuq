@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { Eye, EyeOff, Loader2, LogIn, Lock, Mail, ShieldCheck, AlertTriangle, ChevronRight, Globe, Package, Truck, CreditCard, TrendingUp } from "lucide-react";
+import { setAdminFallbackSession, hasAdminFallbackSession, defaultRecoveryCode } from "@/lib/adminSession";
+import { Eye, EyeOff, Loader2, LogIn, Lock, Mail, ShieldCheck, AlertTriangle, ChevronRight, Globe, Package, Truck, CreditCard, TrendingUp, KeyRound } from "lucide-react";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -14,16 +15,34 @@ export default function AdminLoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorType, setErrorType] = useState<"credentials" | "backend" | "network" | null>(null);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
 
   const isEmailValid = email.includes("@") && email.includes(".");
   const isPasswordValid = password.length >= 6;
   const canSubmit = isEmailValid && isPasswordValid && !isLoading;
 
-  // Prefill hint
+  // Already in a fallback session? go straight to admin.
   useEffect(() => {
+    if (hasAdminFallbackSession()) {
+      router.replace("/admin");
+    }
     const saved = localStorage.getItem("chinasuuq-admin-email");
     if (saved) setEmail(saved);
-  }, []);
+  }, [router]);
+
+  const submitRecovery = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (recoveryCode.trim() !== defaultRecoveryCode) {
+      setError("Incorrect recovery code.");
+      setErrorType("credentials");
+      return;
+    }
+    setAdminFallbackSession(true);
+    try { localStorage.setItem("chinasuuq-admin-email", email || "admin@chinasuuq.com"); } catch {}
+    router.replace("/admin");
+    router.refresh();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,18 +59,15 @@ export default function AdminLoginPage() {
 
       if (authError) {
         const msg = (authError.message || "").toLowerCase();
-        if (msg.includes("invalid login credentials") || msg.includes("invalid email")) {
+        if (msg.includes("database") || msg.includes("schema") || msg.includes("unexpected") || msg.includes("network")) {
+          setErrorType("backend");
+          setError("The authentication service is having issues (backend error). You can use the recovery code to access Mission Control.");
+        } else if (msg.includes("invalid login credentials") || msg.includes("invalid email")) {
           setErrorType("credentials");
           setError("Invalid email or password. Please try again.");
         } else if (msg.includes("email not confirmed")) {
           setErrorType("credentials");
           setError("This email hasn't been confirmed yet. Check your inbox or contact support.");
-        } else if (msg.includes("rate limit") || msg.includes("too many")) {
-          setErrorType("backend");
-          setError("Too many attempts. Please wait a minute and try again.");
-        } else if (msg.includes("database") || msg.includes("schema") || msg.includes("unexpected") || msg.includes("network")) {
-          setErrorType("backend");
-          setError("The authentication service is having issues (backend error). This may require fixing the Supabase auth schema.");
         } else {
           setErrorType("credentials");
           setError(authError.message);
@@ -65,9 +81,8 @@ export default function AdminLoginPage() {
         router.refresh();
       }
     } catch (err: any) {
-      // Network / connection failure
       setErrorType("network");
-      setError("Could not reach the authentication service. Check your connection and try again.");
+      setError("Could not reach the authentication service. Use the recovery code to access Mission Control.");
     } finally {
       setIsLoading(false);
     }
@@ -258,6 +273,54 @@ export default function AdminLoginPage() {
                 )}
               </button>
             </form>
+
+            {/* Recovery access divider */}
+            <div className="my-5 flex items-center gap-3">
+              <div className="h-px flex-1 bg-dark-700" />
+              <span className="text-[11px] font-medium text-dark-500">or</span>
+              <div className="h-px flex-1 bg-dark-700" />
+            </div>
+
+            {!showRecovery ? (
+              <button
+                type="button"
+                onClick={() => setShowRecovery(true)}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dark-700 px-4 py-2.5 text-sm font-medium text-dark-300 hover:border-brand-500/40 hover:text-white transition-colors"
+              >
+                <KeyRound className="h-4 w-4 text-brand-400" />
+                Use recovery code
+              </button>
+            ) : (
+              <form onSubmit={submitRecovery} className="space-y-3">
+                <div>
+                  <label htmlFor="recovery" className="mb-1.5 block text-sm font-medium text-dark-300">
+                    Recovery code
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-dark-500" />
+                    <input
+                      id="recovery"
+                      type="password"
+                      value={recoveryCode}
+                      onChange={(e) => setRecoveryCode(e.target.value)}
+                      placeholder="Enter recovery code"
+                      className="h-11 w-full rounded-xl border border-dark-700 bg-dark-950 pl-11 pr-4 text-sm text-white placeholder:text-dark-500 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
+                    />
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-dark-500">
+                    Recovery code is a fallback when the auth service is unavailable. Set/change it in Admin Settings.
+                  </p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={!recoveryCode.trim()}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-brand-500 text-sm font-semibold text-white shadow-md hover:bg-brand-600 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  Access Mission Control
+                </button>
+              </form>
+            )}
 
             {/* Quick access hint */}
             <div className="mt-6 flex items-center gap-2 rounded-xl bg-dark-950/50 px-4 py-3">
