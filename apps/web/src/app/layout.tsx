@@ -15,6 +15,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
+  viewportFit: "cover", // iOS notch / safe-area support
+  interactiveWidget: "resizes-content", // Android keyboard
 };
 
 // Strict Content Security Policy — applied via <meta http-equiv> so it works
@@ -47,7 +49,7 @@ export const metadata: Metadata = {
     template: "%s | ChinaSuuq",
   },
   description: "Browse millions of products from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD. Shop Chinese products with Somali prices and local delivery.",
-  keywords: ["China", "Somalia", "marketplace", "1688", "Taobao", "Yiwugo", "Alibaba", "ChinaGoods", "JD", "sourcing", "import", "delivery", "Mogadishu"],
+  keywords: ["China", "Somalia", "Somaliland", "Hargeisa", "Mogadishu", "marketplace", "1688", "Taobao", "Yiwugo", "Alibaba", "ChinaGoods", "JD", "sourcing", "import", "delivery", "East Africa"],
   authors: [{ name: "ChinaSuuq" }],
   creator: "ChinaSuuq",
   publisher: "ChinaSuuq",
@@ -99,6 +101,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta httpEquiv="X-Frame-Options" content="DENY" />
         <meta httpEquiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
         <meta httpEquiv="Permissions-Policy" content="accelerometer=(), autoplay=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=(), interest-cohort=()" />
+        {/* Performance: preconnect to Supabase so the auth/REST/WS connections
+            start during HTML parse instead of waiting for React hydration.
+            No-cost hint that the browser will use these origins shortly. */}
+        <link rel="preconnect" href="https://athkmrvsaijwgsyvwrbp.supabase.co" crossOrigin="" />
+        <link rel="dns-prefetch" href="https://athkmrvsaijwgsyvwrbp.supabase.co" />
       </head>
       <body className="antialiased">
         <WwwRedirect />

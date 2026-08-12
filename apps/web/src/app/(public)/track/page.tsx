@@ -89,7 +89,7 @@ export default function TrackPage() {
                 </div>
                 <div>
                   <p className="text-sm text-[#667085]">Destination</p>
-                  <p className="font-semibold text-[#111111]">Mogadishu, Somalia</p>
+                  <p className="font-semibold text-[#111111]">Hargeisa, Somaliland</p>
                 </div>
               </div>
             </div>

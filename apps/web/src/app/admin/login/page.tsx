@@ -146,7 +146,7 @@ export default function AdminLoginPage() {
           </div>
         </div>
 
-        <p className="relative text-xs text-white/50">© 2026 ChinaSuuq · Mogadishu → China</p>
+        <p className="relative text-xs text-white/50">© 2026 ChinaSuuq · Hargeisa → China</p>
       </div>
 
       {/* ── Right login form ── */}

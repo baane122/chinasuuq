@@ -57,7 +57,7 @@ export default function Hero() {
         />
       </div>
 
-      <div className="relative mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8 w-full pt-28 pb-16 lg:pt-32 lg:pb-24">
+      <div className="relative mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8 w-full pt-24 pb-12 sm:pt-28 sm:pb-16 lg:pt-32 lg:pb-24">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           {/* ── Left - Content ── */}
           <div className="max-w-2xl">
@@ -207,7 +207,16 @@ export default function Hero() {
               <div className="absolute -top-5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-white/90 backdrop-blur rounded-full p-2 shadow-lg shadow-dark-900/10 border border-dark-900/5 max-w-[92%] overflow-x-auto">
                 {platformChips.map((p) => (
                   <div key={p.name} className="flex items-center gap-1 pl-1 pr-3 py-1 rounded-full bg-warm-200/60 shrink-0">
-                    <img src={p.img} alt={p.name} className="w-6 h-6 rounded-md object-cover" />
+                    <img
+                      src={p.img}
+                      alt={p.name}
+                      width={24}
+                      height={24}
+                      loading="lazy"
+                      decoding="async"
+                      fetchPriority="low"
+                      className="w-6 h-6 rounded-md object-cover"
+                    />
                     <span className="text-[11px] font-semibold text-dark-900">{p.name}</span>
                   </div>
                 ))}

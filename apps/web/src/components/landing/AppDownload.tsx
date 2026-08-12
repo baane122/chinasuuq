@@ -68,7 +68,15 @@ export default function AppDownload() {
               >
                 <div className="bg-dark-900 rounded-[2rem] p-2 shadow-2xl">
                   <div className="bg-gradient-to-b from-brand-400/30 to-warm-200 rounded-[1.6rem] aspect-[9/19] flex items-center justify-center overflow-hidden">
-                    <img src="/images/onboarding/slide1.png" alt="Shop China" className="w-full h-full object-cover" />
+                    <img
+                      src="/images/onboarding/slide1.png"
+                      alt="Shop China"
+                      width={600}
+                      height={1267}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                 </div>
               </motion.div>
@@ -83,7 +91,15 @@ export default function AppDownload() {
               >
                 <div className="bg-dark-900 rounded-[2rem] p-2 shadow-2xl">
                   <div className="bg-gradient-to-b from-brand-500/20 to-warm-200 rounded-[1.6rem] aspect-[9/19] flex items-center justify-center overflow-hidden">
-                    <img src="/images/onboarding/slide2.png" alt="Browse and Shop" className="w-full h-full object-cover" />
+                    <img
+                      src="/images/onboarding/slide2.png"
+                      alt="Browse and Shop"
+                      width={600}
+                      height={1267}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                 </div>
               </motion.div>

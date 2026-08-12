@@ -102,3 +102,62 @@
 .whatsapp-pulse {
   animation: whatsappPulse 2s infinite;
 }
+
+/* ─── Performance & accessibility ─── */
+
+/* Respect user motion preferences — kill all animations for users who
+   set prefers-reduced-motion. Crucial for performance perceived on
+   low-end devices and an accessibility win. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Hide content for screen readers but keep available to AT */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Improve touch target sizes for very small screens (44px minimum) */
+@media (max-width: 640px) {
+  button,
+  a[href],
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+  }
+}
+
+/* Mobile text rendering optimization: prevent iOS long-word overflow */
+html, body {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent horizontal scroll on small screens (common with framer-motion absolute elements) */
+body {
+  overflow-x: hidden;
+}
+
+/* Optimize font rendering on Android Chrome */
+@supports (font-variant-ligatures: common-ligatures) {
+  body {
+    font-variant-ligatures: common-ligatures;
+  }
+}

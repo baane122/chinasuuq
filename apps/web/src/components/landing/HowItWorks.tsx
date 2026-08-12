@@ -65,8 +65,11 @@ export default function HowItWorks() {
                 <img
                   src={step.img}
                   alt={locale === "en" ? step.en : step.so}
-                  className="w-full h-28 object-cover rounded-2xl mb-4 group-hover:scale-[1.02] transition-transform duration-500"
+                  width={600}
+                  height={448}
                   loading="lazy"
+                  decoding="async"
+                  className="w-full h-28 object-cover rounded-2xl mb-4 group-hover:scale-[1.02] transition-transform duration-500"
                 />
 
                 <h3 className="text-base font-bold text-dark-900 mb-1">

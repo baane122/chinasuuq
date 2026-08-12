@@ -62,7 +62,7 @@ export function Footer() {
               </div>
               <div className="flex items-center gap-2.5 text-sm text-white/50">
                 <MapPin className="w-4 h-4 text-brand-500/60" />
-                Mogadishu, Somalia
+                Hargeisa, Somaliland
               </div>
             </div>
 
