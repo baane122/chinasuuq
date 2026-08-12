@@ -85,14 +85,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   return (
     <ToastProvider>
-      {/*
-        Noindex/nofollow for the entire admin section. Rendered inside body
-        because the (protected) layout is "use client" and can't export
-        metadata. Search engines honor this; the head.tsx version would
-        also work but is overridden by the root layout's metadata.robots.
-      */}
-      <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
-      <meta name="googlebot" content="noindex, nofollow" />
       <div className="flex min-h-screen bg-dark-50">
         {/* Mobile sidebar toggle */}
         <button
