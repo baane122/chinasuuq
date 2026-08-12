@@ -67,11 +67,8 @@ export const metadata: Metadata = {
     type: "website",
     url: "https://chinasuuq.com",
   },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: { index: true, follow: true, "max-image-preview": "large" },
-  },
+  // No global robots meta here — let the route (e.g. /admin) set its own.
+  // Public pages default to index/follow, which is what we want.
   icons: {
     icon: "/favicon.ico",
     shortcut: "/favicon.ico",
