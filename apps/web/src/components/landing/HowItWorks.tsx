@@ -8,37 +8,37 @@ import Image from "next/image";
 const STEPS = [
   {
     key: "step1",
-    img: "/images/how/01-browse.png",
+    img: "/images/how-v2/01-browse.png",
     iconBg: "from-brand-500 to-brand-600",
     accent: "bg-brand-500",
   },
   {
     key: "step2",
-    img: "/images/how/02-capture.png",
+    img: "/images/how-v2/02-capture.png",
     iconBg: "from-brand-400 to-brand-500",
     accent: "bg-brand-400",
   },
   {
     key: "step3",
-    img: "/images/how/03-customize.png",
+    img: "/images/how-v2/03-customize.png",
     iconBg: "from-dark-900 to-dark-800",
     accent: "bg-dark-900",
   },
   {
     key: "step4",
-    img: "/images/how/04-pay.png",
+    img: "/images/how-v2/04-pay.png",
     iconBg: "from-emerald-500 to-emerald-600",
     accent: "bg-emerald-500",
   },
   {
     key: "step5",
-    img: "/images/how/05-track.png",
+    img: "/images/how-v2/05-track.png",
     iconBg: "from-brand-500 to-brand-600",
     accent: "bg-brand-500",
   },
   {
     key: "step6",
-    img: "/images/how/06-receive.png",
+    img: "/images/how-v2/06-receive.png",
     iconBg: "from-warm-200 to-warm-100",
     accent: "bg-warm-200",
   },
