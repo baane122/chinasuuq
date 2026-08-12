@@ -1,12 +1,27 @@
 "use client";
 
+import { useState } from "react";
 import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { useI18n } from "@/lib/i18n";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { ArrowRight, Clock3, Package, Plane, Ship, Sparkles, Weight, MapPin, ShieldCheck, MessageCircle } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clock3,
+  MapPin,
+  MessageCircle,
+  Package,
+  Plane,
+  Search,
+  Ship,
+  ShieldCheck,
+  Sparkles,
+  Truck,
+  Weight,
+} from "lucide-react";
 
 const FREIGHT = [
   { key: "air", icon: Plane, color: "from-brand-500 to-brand-600" },
@@ -14,13 +29,22 @@ const FREIGHT = [
 ] as const;
 
 const CHECKPOINTS = ["step1", "step2", "step3", "step4", "step5", "step6", "step7"] as const;
+const EVENT_KEYS = Array.from({ length: 11 }, (_, i) => `event${i + 1}`);
 
 export default function ShippingPage() {
   const { t } = useI18n();
+  const [trackingId, setTrackingId] = useState("");
+  const [showTracking, setShowTracking] = useState(false);
+
+  const handleTrack = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (trackingId.trim()) setShowTracking(true);
+  };
 
   return (
     <main className="min-h-screen bg-warm-50">
       <Header />
+
       <section className="relative overflow-hidden pt-28 pb-12 lg:pt-36 lg:pb-16">
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute -top-40 right-[-10%] h-[560px] w-[560px] rounded-full bg-brand-500/[0.07] blur-3xl" />
@@ -41,8 +65,8 @@ export default function ShippingPage() {
               <a href="#shipping-options" className="inline-flex items-center gap-2 rounded-2xl bg-brand-500 px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition hover:bg-brand-600">
                 {t("shipping.compare")} <ArrowRight className="h-4 w-4" />
               </a>
-              <a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20ask%20about%20shipping" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border border-dark-900/10 bg-white px-5 py-3.5 text-sm font-semibold text-dark-900 transition hover:border-brand-500/30 hover:text-brand-600">
-                <MessageCircle className="h-4 w-4" /> {t("shipping.whatsapp")}
+              <a href="#tracking" className="inline-flex items-center gap-2 rounded-2xl border border-dark-900/10 bg-white px-5 py-3.5 text-sm font-semibold text-dark-900 transition hover:border-brand-500/30 hover:text-brand-600">
+                <Search className="h-4 w-4" /> {t("track.button")}
               </a>
             </div>
           </div>
@@ -73,8 +97,8 @@ export default function ShippingPage() {
                   <h3 className="mt-6 text-2xl font-bold text-dark-900">{t(`shipping.${option.key}`)}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-dark-900/55">{t(`shipping.${option.key}Desc`)}</p>
                   <div className="mt-6 grid gap-3 border-t border-dark-900/5 pt-5 sm:grid-cols-2">
-                    <div className="flex gap-2.5"><Clock3 className="mt-0.5 h-4 w-4 text-brand-500" /><div><p className="text-xs font-semibold text-dark-900">{t(`shipping.${option.key}Time`)}</p><p className="text-xs text-dark-900/45">Transit window</p></div></div>
-                    <div className="flex gap-2.5"><Weight className="mt-0.5 h-4 w-4 text-brand-500" /><div><p className="text-xs font-semibold text-dark-900">{t(`shipping.${option.key}Best`)}</p><p className="text-xs text-dark-900/45">Recommended for</p></div></div>
+                    <div className="flex gap-2.5"><Clock3 className="mt-0.5 h-4 w-4 text-brand-500" /><div><p className="text-xs font-semibold text-dark-900">{t(`shipping.${option.key}Time`)}</p><p className="text-xs text-dark-900/45">{t("shipping.transitWindow")}</p></div></div>
+                    <div className="flex gap-2.5"><Weight className="mt-0.5 h-4 w-4 text-brand-500" /><div><p className="text-xs font-semibold text-dark-900">{t(`shipping.${option.key}Best`)}</p><p className="text-xs text-dark-900/45">{t("shipping.recommendedFor")}</p></div></div>
                   </div>
                 </motion.article>
               );
@@ -83,22 +107,33 @@ export default function ShippingPage() {
         </div>
       </section>
 
-      <section className="px-4 py-10 sm:px-6 lg:px-8 lg:py-16">
-        <div className="mx-auto grid max-w-[1100px] gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
-          <div className="rounded-3xl bg-dark-900 p-7 text-white sm:p-9">
-            <ShieldCheck className="h-8 w-8 text-brand-400" />
-            <h2 className="mt-5 text-2xl font-bold">{t("shipping.trackTitle")}</h2>
-            <p className="mt-3 text-sm leading-relaxed text-white/60">{t("shipping.trackDesc")}</p>
-            <a href="/track/" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-600">{t("shipping.cta")} <ArrowRight className="h-4 w-4" /></a>
-          </div>
-          <div className="rounded-3xl border border-dark-900/5 bg-white p-6 shadow-sm sm:p-8">
-            <div className="mb-6 flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-brand-600">{t("shipping.trackTitle")}</p><h2 className="mt-1 text-2xl font-bold text-dark-900">China → Hargeisa</h2></div><Package className="h-6 w-6 text-brand-500" /></div>
-            <div className="space-y-5">
-              {CHECKPOINTS.map((key, i) => <div key={key} className="flex gap-3.5"><div className="flex flex-col items-center"><div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${i < 3 ? "bg-brand-500 text-white" : "bg-warm-100 text-dark-900/50"}`}>{i + 1}</div>{i < CHECKPOINTS.length - 1 && <div className={`mt-1 h-8 w-px ${i < 2 ? "bg-brand-300" : "bg-dark-900/10"}`} />}</div><div className="pb-2"><p className={`text-sm font-semibold ${i < 3 ? "text-dark-900" : "text-dark-900/50"}`}>{t(`shipping.${key}`)}</p><p className="mt-0.5 text-xs text-dark-900/45">{t(`shipping.${key}Desc`)}</p></div></div>)}
+      <section id="tracking" className="scroll-mt-24 px-4 py-10 sm:px-6 lg:px-8 lg:py-16">
+        <div className="mx-auto max-w-[1100px]">
+          <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
+            <div className="rounded-3xl bg-dark-900 p-7 text-white sm:p-9">
+              <ShieldCheck className="h-8 w-8 text-brand-400" />
+              <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-brand-300">{t("track.eyebrow")}</p>
+              <h2 className="mt-2 text-2xl font-bold">{t("track.title")}</h2>
+              <p className="mt-3 text-sm leading-relaxed text-white/60">{t("track.subtitle")}</p>
+              <form onSubmit={handleTrack} className="mt-6 space-y-3">
+                <label htmlFor="tracking-id" className="sr-only">{t("track.placeholder")}</label>
+                <input id="tracking-id" value={trackingId} onChange={(event) => setTrackingId(event.target.value)} placeholder={t("track.placeholder")} className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-white placeholder:text-white/35 outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10" />
+                <button type="submit" className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand-500 px-4 text-sm font-semibold text-white transition hover:bg-brand-600">{t("track.button")} <ArrowRight className="h-4 w-4" /></button>
+              </form>
+            </div>
+            <div className="rounded-3xl border border-dark-900/5 bg-white p-6 shadow-sm sm:p-8">
+              <div className="mb-6 flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-brand-600">{t("shipping.trackTitle")}</p><h2 className="mt-1 text-2xl font-bold text-dark-900">China → Hargeisa</h2></div><Package className="h-6 w-6 text-brand-500" /></div>
+              <div className="grid grid-cols-2 gap-4 border-b border-dark-900/5 pb-6 sm:grid-cols-4"><div><p className="text-xs text-dark-900/45">{t("track.origin")}</p><p className="mt-1 text-sm font-semibold">{t("track.originVal")}</p></div><div><p className="text-xs text-dark-900/45">{t("track.destination")}</p><p className="mt-1 text-sm font-semibold">{t("track.destVal")}</p></div><div><p className="text-xs text-dark-900/45">{t("track.mode")}</p><p className="mt-1 text-sm font-semibold">{t("track.modeVal")}</p></div><div><p className="text-xs text-dark-900/45">{t("track.packages")}</p><p className="mt-1 text-sm font-semibold">{t("track.packagesVal")}</p></div></div>
+              <div className="mt-6 flex items-center gap-3 rounded-2xl bg-warm-50 p-4"><MapPin className="h-5 w-5 text-brand-500" /><div><p className="text-sm font-semibold text-dark-900">{t("track.eta")}: {t("track.etaVal")}</p><p className="mt-1 text-xs text-dark-900/45">{t("track.etaSub")}</p></div></div>
+              <div className="mt-6 space-y-4"><div className="mb-3 flex items-center justify-between"><h3 className="text-lg font-bold text-dark-900">{t("track.timelineTitle")}</h3><span className="rounded-full bg-brand-500/10 px-3 py-1 text-xs font-semibold text-brand-600">{showTracking ? trackingId : t("track.statusInTransit")}</span></div>
+                {EVENT_KEYS.map((key, i) => <div key={key} className="flex gap-3.5"><div className="flex flex-col items-center"><div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${i < 6 ? "bg-brand-500 text-white" : "bg-warm-100 text-dark-900/45"}`}>{i < 6 ? <CheckCircle2 className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}</div>{i < EVENT_KEYS.length - 1 && <div className={`mt-1 h-7 w-px ${i < 5 ? "bg-brand-300" : "bg-dark-900/10"}`} />}</div><div className="pb-1"><p className={`text-sm font-semibold ${i < 6 ? "text-dark-900" : "text-dark-900/50"}`}>{t(`track.${key}`)}</p><p className="mt-0.5 text-xs text-dark-900/45">{i < 6 ? t("track.completed") : t("track.upcoming")} · {t(`track.${key}Desc`)}</p></div></div>)}
+              </div>
             </div>
           </div>
         </div>
       </section>
+
+      <section className="px-4 pb-12 sm:px-6 lg:px-8"><div className="mx-auto flex max-w-[1100px] flex-col items-center justify-between gap-4 rounded-3xl bg-brand-500 px-6 py-6 text-center text-white sm:flex-row sm:text-left"><div><p className="text-lg font-bold">{t("shipping.trackTitle")}</p><p className="mt-1 text-sm text-white/75">{t("shipping.trackDesc")}</p></div><a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20ask%20about%20shipping" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-brand-600"><MessageCircle className="h-4 w-4" />{t("shipping.whatsapp")}</a></div></section>
       <Footer /><WhatsAppFAB />
     </main>
   );
