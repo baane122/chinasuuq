@@ -4,121 +4,102 @@ import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { useI18n } from "@/lib/i18n";
-import { Plane, Ship, Clock, Weight, Package, MapPin } from "lucide-react";
+import { motion } from "framer-motion";
+import Image from "next/image";
+import { ArrowRight, Clock3, Package, Plane, Ship, Sparkles, Weight, MapPin, ShieldCheck, MessageCircle } from "lucide-react";
+
+const FREIGHT = [
+  { key: "air", icon: Plane, color: "from-brand-500 to-brand-600" },
+  { key: "sea", icon: Ship, color: "from-sky-500 to-blue-600" },
+] as const;
+
+const CHECKPOINTS = ["step1", "step2", "step3", "step4", "step5", "step6", "step7"] as const;
 
 export default function ShippingPage() {
   const { t } = useI18n();
 
   return (
-    <main className="min-h-screen bg-[#FFFCF8]">
+    <main className="min-h-screen bg-warm-50">
       <Header />
-      
-      <section className="pt-32 pb-16 px-4">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-16">
-            <h1 className="text-3xl md:text-5xl font-bold text-[#111111] mb-4">Shipping & Delivery</h1>
-            <p className="text-lg text-[#667085] max-w-2xl mx-auto">
-              Reliable air and sea freight from China to Somalia
+      <section className="relative overflow-hidden pt-28 pb-12 lg:pt-36 lg:pb-16">
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -top-40 right-[-10%] h-[560px] w-[560px] rounded-full bg-brand-500/[0.07] blur-3xl" />
+          <div className="absolute left-[-15%] top-40 h-[460px] w-[460px] rounded-full bg-sky-500/[0.05] blur-3xl" />
+        </div>
+        <div className="relative mx-auto grid max-w-[1280px] items-center gap-10 px-4 sm:px-6 lg:grid-cols-2 lg:gap-16 lg:px-8">
+          <div>
+            <span className="mb-5 inline-flex items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-brand-600">
+              <Sparkles className="h-3.5 w-3.5" /> {t("shipping.eyebrow")}
+            </span>
+            <h1 className="max-w-2xl text-4xl font-bold leading-[1.05] text-dark-900 sm:text-5xl lg:text-6xl">
+              {t("shipping.title")}
+            </h1>
+            <p className="mt-5 max-w-xl text-base leading-relaxed text-dark-900/60 sm:text-lg">
+              {t("shipping.subtitle")}
             </p>
-          </div>
-
-          {/* Comparison */}
-          <div className="grid md:grid-cols-2 gap-6 mb-16">
-            <div className="bg-white rounded-2xl shadow-card border border-[#E9E5E1]/50 p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-12 h-12 rounded-xl bg-[#FF5A0A] flex items-center justify-center">
-                  <Plane className="w-6 h-6 text-white" />
-                </div>
-                <h2 className="text-2xl font-bold text-[#111111]">Air Freight</h2>
-              </div>
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <Clock className="w-5 h-5 text-[#FF5A0A]" />
-                  <div>
-                    <p className="font-semibold text-[#111111]">Transit Time</p>
-                    <p className="text-sm text-[#667085]">7-14 business days</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Weight className="w-5 h-5 text-[#FF5A0A]" />
-                  <div>
-                    <p className="font-semibold text-[#111111]">Best For</p>
-                    <p className="text-sm text-[#667085]">Small, urgent, high-value items</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Package className="w-5 h-5 text-[#FF5A0A]" />
-                  <div>
-                    <p className="font-semibold text-[#111111]">Charging</p>
-                    <p className="text-sm text-[#667085]">By actual or volumetric weight</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-card border border-[#E9E5E1]/50 p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-12 h-12 rounded-xl bg-[#2970FF] flex items-center justify-center">
-                  <Ship className="w-6 h-6 text-white" />
-                </div>
-                <h2 className="text-2xl font-bold text-[#111111]">Sea Freight</h2>
-              </div>
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <Clock className="w-5 h-5 text-[#2970FF]" />
-                  <div>
-                    <p className="font-semibold text-[#111111]">Transit Time</p>
-                    <p className="text-sm text-[#667085]">25-40 business days</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Weight className="w-5 h-5 text-[#2970FF]" />
-                  <div>
-                    <p className="font-semibold text-[#111111]">Best For</p>
-                    <p className="text-sm text-[#667085]">Heavy, bulk, non-urgent orders</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Package className="w-5 h-5 text-[#2970FF]" />
-                  <div>
-                    <p className="font-semibold text-[#111111]">Charging</p>
-                    <p className="text-sm text-[#667085]">By CBM or weight, whichever greater</p>
-                  </div>
-                </div>
-              </div>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <a href="#shipping-options" className="inline-flex items-center gap-2 rounded-2xl bg-brand-500 px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition hover:bg-brand-600">
+                {t("shipping.compare")} <ArrowRight className="h-4 w-4" />
+              </a>
+              <a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20ask%20about%20shipping" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-2xl border border-dark-900/10 bg-white px-5 py-3.5 text-sm font-semibold text-dark-900 transition hover:border-brand-500/30 hover:text-brand-600">
+                <MessageCircle className="h-4 w-4" /> {t("shipping.whatsapp")}
+              </a>
             </div>
           </div>
-
-          {/* Process */}
-          <div className="bg-white rounded-2xl shadow-card border border-[#E9E5E1]/50 p-8 md:p-12">
-            <h2 className="text-2xl font-bold text-[#111111] mb-6">Shipping Process</h2>
-            <div className="space-y-6">
-              {[
-                { step: "1", title: "Order Confirmed", desc: "Payment verified and order confirmed" },
-                { step: "2", title: "Purchased & Received", desc: "Supplier ships to our China warehouse" },
-                { step: "3", title: "Inspected & Consolidated", desc: "Quality check and package consolidation" },
-                { step: "4", title: "Shipped from China", desc: "Loaded and departed from port/airport" },
-                { step: "5", title: "In Transit", desc: "On the way to Somalia" },
-                { step: "6", title: "Arrived Somalia", desc: "Customs clearance and local processing" },
-                { step: "7", title: "Ready for Collection", desc: "Pick up at branch or receive delivery" },
-              ].map((item, i) => (
-                <div key={i} className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-full bg-[#FF5A0A] text-white flex items-center justify-center font-bold shrink-0">
-                    {item.step}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-[#111111]">{item.title}</p>
-                    <p className="text-sm text-[#667085]">{item.desc}</p>
-                  </div>
-                </div>
-              ))}
+          <div className="relative mx-auto w-full max-w-[560px]">
+            <div className="absolute inset-6 rounded-[3rem] bg-brand-500/20 blur-3xl" />
+            <div className="relative overflow-hidden rounded-[2.5rem] border border-white/60 bg-gradient-to-br from-dark-900 to-dark-800 p-4 shadow-2xl">
+              <Image src="/images/pages/shipping-route.png" alt="China to Hargeisa shipping route" width={1024} height={1024} priority className="aspect-square w-full rounded-[2rem] object-cover" />
             </div>
           </div>
         </div>
       </section>
 
-      <Footer />
-      <WhatsAppFAB />
+      <section id="shipping-options" className="px-4 py-10 sm:px-6 lg:px-8 lg:py-16">
+        <div className="mx-auto max-w-[1100px]">
+          <div className="mb-8 text-center">
+            <p className="text-xs font-semibold uppercase tracking-wider text-brand-600">{t("shipping.compare")}</p>
+            <h2 className="mt-2 text-2xl font-bold text-dark-900 sm:text-3xl">{t("shipping.from")} <span className="text-brand-500">→</span> {t("shipping.to")}</h2>
+          </div>
+          <div className="grid gap-5 md:grid-cols-2">
+            {FREIGHT.map((option, i) => {
+              const Icon = option.icon;
+              return (
+                <motion.article key={option.key} initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }} className="group rounded-3xl border border-dark-900/5 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-xl sm:p-8">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className={`flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br ${option.color} text-white shadow-lg`}><Icon className="h-7 w-7" /></div>
+                    <span className="rounded-full bg-warm-100 px-3 py-1 text-xs font-semibold text-dark-900/60">{t(`shipping.${option.key}Time`)}</span>
+                  </div>
+                  <h3 className="mt-6 text-2xl font-bold text-dark-900">{t(`shipping.${option.key}`)}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-dark-900/55">{t(`shipping.${option.key}Desc`)}</p>
+                  <div className="mt-6 grid gap-3 border-t border-dark-900/5 pt-5 sm:grid-cols-2">
+                    <div className="flex gap-2.5"><Clock3 className="mt-0.5 h-4 w-4 text-brand-500" /><div><p className="text-xs font-semibold text-dark-900">{t(`shipping.${option.key}Time`)}</p><p className="text-xs text-dark-900/45">Transit window</p></div></div>
+                    <div className="flex gap-2.5"><Weight className="mt-0.5 h-4 w-4 text-brand-500" /><div><p className="text-xs font-semibold text-dark-900">{t(`shipping.${option.key}Best`)}</p><p className="text-xs text-dark-900/45">Recommended for</p></div></div>
+                  </div>
+                </motion.article>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 py-10 sm:px-6 lg:px-8 lg:py-16">
+        <div className="mx-auto grid max-w-[1100px] gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
+          <div className="rounded-3xl bg-dark-900 p-7 text-white sm:p-9">
+            <ShieldCheck className="h-8 w-8 text-brand-400" />
+            <h2 className="mt-5 text-2xl font-bold">{t("shipping.trackTitle")}</h2>
+            <p className="mt-3 text-sm leading-relaxed text-white/60">{t("shipping.trackDesc")}</p>
+            <a href="/track/" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-600">{t("shipping.cta")} <ArrowRight className="h-4 w-4" /></a>
+          </div>
+          <div className="rounded-3xl border border-dark-900/5 bg-white p-6 shadow-sm sm:p-8">
+            <div className="mb-6 flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-brand-600">{t("shipping.trackTitle")}</p><h2 className="mt-1 text-2xl font-bold text-dark-900">China → Hargeisa</h2></div><Package className="h-6 w-6 text-brand-500" /></div>
+            <div className="space-y-5">
+              {CHECKPOINTS.map((key, i) => <div key={key} className="flex gap-3.5"><div className="flex flex-col items-center"><div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${i < 3 ? "bg-brand-500 text-white" : "bg-warm-100 text-dark-900/50"}`}>{i + 1}</div>{i < CHECKPOINTS.length - 1 && <div className={`mt-1 h-8 w-px ${i < 2 ? "bg-brand-300" : "bg-dark-900/10"}`} />}</div><div className="pb-2"><p className={`text-sm font-semibold ${i < 3 ? "text-dark-900" : "text-dark-900/50"}`}>{t(`shipping.${key}`)}</p><p className="mt-0.5 text-xs text-dark-900/45">{t(`shipping.${key}Desc`)}</p></div></div>)}
+            </div>
+          </div>
+        </div>
+      </section>
+      <Footer /><WhatsAppFAB />
     </main>
   );
 }

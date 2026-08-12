@@ -1,78 +1,22 @@
 "use client";
-
 import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { useI18n } from "@/lib/i18n";
-import { Target, Users, Globe, Shield, Heart, Award } from "lucide-react";
+import { motion } from "framer-motion";
+import Image from "next/image";
+import { ArrowRight, Globe2, HeartHandshake, ShieldCheck, Sparkles, Target, Users } from "lucide-react";
 
+const VALUES = [
+  { icon: Globe2, key: "value1" }, { icon: ShieldCheck, key: "value2" },
+  { icon: Users, key: "value3" }, { icon: HeartHandshake, key: "value4" },
+] as const;
 export default function AboutPage() {
-  const { t } = useI18n();
-
-  return (
-    <main className="min-h-screen bg-[#FFFCF8]">
-      <Header />
-      
-      <section className="pt-32 pb-16 px-4">
-        <div className="max-w-4xl mx-auto">
-          {/* Hero */}
-          <div className="text-center mb-16">
-            <h1 className="text-3xl md:text-5xl font-bold text-[#111111] mb-4">
-              About ChinaSuuq
-            </h1>
-            <p className="text-lg text-[#667085] max-w-2xl mx-auto">
-              Bridging China and Somalia through technology, trust, and seamless commerce
-            </p>
-          </div>
-
-          {/* Mission */}
-          <div className="bg-white rounded-2xl shadow-card border border-[#E9E5E1]/50 p-8 md:p-12 mb-12">
-            <h2 className="text-2xl font-bold text-[#111111] mb-4">Our Mission</h2>
-            <p className="text-[#667085] leading-relaxed text-lg">
-              ChinaSuuq exists to make Chinese products accessible to every Somali customer. We handle the complexity of international sourcing, purchasing, quality inspection, and logistics so you can focus on what matters — finding the right products at the right price.
-            </p>
-          </div>
-
-          {/* Values */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
-            {[
-              { icon: Shield, title: "Trust & Transparency", desc: "Every transaction is clear. Real prices, real photos, real tracking." },
-              { icon: Target, title: "Quality First", desc: "Mandatory inspection at our China warehouse before any shipment leaves." },
-              { icon: Globe, title: "Global Access", desc: "Connecting Somali customers to 1688, Taobao, and Yiwu markets." },
-              { icon: Users, title: "Local Support", desc: "Somali-speaking support team available via WhatsApp and phone." },
-              { icon: Heart, title: "Customer Focus", desc: "Your satisfaction drives every decision we make." },
-              { icon: Award, title: "Competitive Pricing", desc: "Direct sourcing eliminates middlemen and reduces costs." },
-            ].map((v, i) => (
-              <div key={i} className="bg-white rounded-2xl shadow-card border border-[#E9E5E1]/50 p-6">
-                <div className="w-12 h-12 rounded-xl bg-[#FFF3E9] flex items-center justify-center mb-4">
-                  <v.icon className="w-6 h-6 text-[#FF5A0A]" />
-                </div>
-                <h3 className="font-bold text-[#111111] mb-2">{v.title}</h3>
-                <p className="text-sm text-[#667085] leading-relaxed">{v.desc}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Story */}
-          <div className="bg-white rounded-2xl shadow-card border border-[#E9E5E1]/50 p-8 md:p-12">
-            <h2 className="text-2xl font-bold text-[#111111] mb-4">Our Story</h2>
-            <div className="space-y-4 text-[#667085] leading-relaxed">
-              <p>
-                ChinaSuuq was born from a simple observation: Somali customers want access to the vast product selection of Chinese marketplaces, but language barriers, payment challenges, and logistics complexity make direct purchasing nearly impossible.
-              </p>
-              <p>
-                Our team combines expertise in Chinese commerce, Somali market needs, and modern technology to create a platform that handles everything from product discovery to final delivery.
-              </p>
-              <p>
-                With warehouse operations in Yiwu and delivery networks across Somalia, ChinaSuuq is building the infrastructure for seamless China-to-Somalia commerce.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <Footer />
-      <WhatsAppFAB />
-    </main>
-  );
+ const { t, locale } = useI18n();
+ return <main className="min-h-screen bg-warm-50"><Header />
+  <section className="relative overflow-hidden pt-28 pb-12 lg:pt-36 lg:pb-20"><div className="pointer-events-none absolute inset-0"><div className="absolute -top-40 right-[-10%] h-[600px] w-[600px] rounded-full bg-brand-500/[0.07] blur-3xl"/></div><div className="relative mx-auto grid max-w-[1280px] items-center gap-10 px-4 sm:px-6 lg:grid-cols-2 lg:gap-16 lg:px-8"><div><span className="inline-flex items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-brand-600"><Sparkles className="h-3.5 w-3.5"/>{t("about.eyebrow")}</span><h1 className="mt-5 max-w-2xl text-4xl font-bold leading-[1.05] text-dark-900 sm:text-5xl lg:text-6xl">{t("about.title")}</h1><p className="mt-5 max-w-xl text-base leading-relaxed text-dark-900/60 sm:text-lg">{t("about.subtitle")}</p><a href="/how-it-works/" className="mt-7 inline-flex items-center gap-2 rounded-2xl bg-brand-500 px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition hover:bg-brand-600">{t("about.cta")}<ArrowRight className="h-4 w-4"/></a></div><div className="relative mx-auto w-full max-w-[560px]"><div className="absolute inset-6 rounded-[3rem] bg-brand-500/20 blur-3xl"/><div className="relative overflow-hidden rounded-[2.5rem] bg-dark-900 p-4 shadow-2xl"><Image src="/images/pages/about-warehouse.png" alt="ChinaSuuq warehouse operations" width={1024} height={1024} priority className="aspect-square w-full rounded-[2rem] object-cover"/></div></div></div></section>
+  <section className="px-4 py-10 sm:px-6 lg:px-8 lg:py-16"><div className="mx-auto grid max-w-[1100px] gap-6 lg:grid-cols-2"><div className="rounded-3xl bg-dark-900 p-8 text-white sm:p-10"><Target className="h-8 w-8 text-brand-400"/><h2 className="mt-5 text-2xl font-bold">{t("about.missionTitle")}</h2><p className="mt-4 text-sm leading-relaxed text-white/65 sm:text-base">{t("about.missionDesc")}</p></div><div className="rounded-3xl border border-dark-900/5 bg-white p-8 shadow-sm sm:p-10"><h2 className="text-2xl font-bold text-dark-900">{t("about.warehouseTitle")}</h2><p className="mt-4 text-sm leading-relaxed text-dark-900/60 sm:text-base">{t("about.warehouseDesc")}</p><div className="mt-6 flex flex-wrap gap-2"><span className="rounded-full bg-warm-100 px-3 py-1.5 text-xs font-semibold text-dark-900/65">Yiwu warehouse</span><span className="rounded-full bg-warm-100 px-3 py-1.5 text-xs font-semibold text-dark-900/65">Somali support</span><span className="rounded-full bg-warm-100 px-3 py-1.5 text-xs font-semibold text-dark-900/65">Hargeisa delivery</span></div></div></div></section>
+  <section className="px-4 py-10 sm:px-6 lg:px-8 lg:py-16"><div className="mx-auto max-w-[1100px]"><div className="mb-8"><p className="text-xs font-semibold uppercase tracking-wider text-brand-600">{t("about.trustTitle")}</p><h2 className="mt-2 text-3xl font-bold text-dark-900">{locale === "en" ? "Commerce with a human layer" : "Ganacsi leh taageero bini'aadan"}</h2></div><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{VALUES.map(({icon:Icon,key},i)=><motion.div key={key} initial={{opacity:0,y:20}} whileInView={{opacity:1,y:0}} viewport={{once:true}} transition={{delay:i*.08}} className="rounded-3xl border border-dark-900/5 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-warm-100 text-brand-500"><Icon className="h-6 w-6"/></div><h3 className="mt-5 font-bold text-dark-900">{t(`about.${key}`)}</h3><p className="mt-2 text-sm leading-relaxed text-dark-900/55">{t(`about.${key}Desc`)}</p></motion.div>)}</div></div></section>
+  <section className="px-4 py-10 sm:px-6 lg:px-8 lg:py-16"><div className="mx-auto max-w-[1100px] rounded-3xl bg-gradient-to-br from-brand-500 to-brand-600 p-8 text-white shadow-xl shadow-brand-500/20 sm:p-12"><h2 className="max-w-2xl text-3xl font-bold sm:text-4xl">{t("about.storyTitle")}</h2><p className="mt-4 max-w-2xl text-sm leading-relaxed text-white/80 sm:text-base">{t("about.storyDesc")}</p></div></section>
+  <Footer/><WhatsAppFAB/></main>;
 }
