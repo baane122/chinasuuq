@@ -1,719 +1,203 @@
 "use client";
+import { useState, useMemo } from "react";
+import { useAdminData } from "@/lib/admin/store";
+import { DataTable, Column } from "@/components/admin/DataTable";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, ChevronRight, Package, CreditCard, MapPin, Clock3 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { AdminOrder } from "@/lib/admin/types";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
-import { cn, formatUSD, formatDate } from "@/lib/utils";
-import {
-  Search,
-  ShoppingCart,
-  Loader2,
-  Plus,
-  Pencil,
-  Trash2,
-} from "lucide-react";
-import type { Order, OrderStatus } from "@/types";
-import Modal from "@/components/admin/Modal";
-import ConfirmDialog from "@/components/admin/ConfirmDialog";
-import FormInput from "@/components/admin/FormInput";
-import { useToast } from "@/components/admin/Toast";
-
-// ─── Extended type to include customer_id from DB ────────────────────────────
-interface OrderRow extends Order {
-  customer_id?: string;
-}
-
-// ─── All 17 pipeline statuses ────────────────────────────────────────────────
-const ORDER_STATUSES: OrderStatus[] = [
-  "pending",
-  "confirmed",
-  "purchasing",
-  "purchased",
-  "in_transit_china",
-  "warehouse",
-  "inspection",
-  "consolidated",
-  "shipped",
-  "in_transit",
-  "arrived_somalia",
-  "customs",
-  "ready_for_pickup",
-  "out_for_delivery",
-  "delivered",
-  "cancelled",
-];
-
-const statusColors: Record<string, string> = {
-  pending: "bg-amber-50 text-amber-600",
-  confirmed: "bg-blue-50 text-blue-600",
-  purchasing: "bg-indigo-50 text-indigo-600",
-  purchased: "bg-indigo-50 text-indigo-600",
-  in_transit_china: "bg-orange-50 text-orange-600",
-  warehouse: "bg-purple-50 text-purple-600",
-  inspection: "bg-purple-50 text-purple-600",
-  consolidated: "bg-purple-50 text-purple-600",
-  shipped: "bg-green-50 text-green-600",
-  in_transit: "bg-cyan-50 text-cyan-600",
-  arrived_somalia: "bg-teal-50 text-teal-600",
-  customs: "bg-amber-50 text-amber-600",
-  ready_for_pickup: "bg-blue-50 text-blue-600",
-  out_for_delivery: "bg-indigo-50 text-indigo-600",
-  delivered: "bg-green-50 text-green-600",
-  cancelled: "bg-red-50 text-red-600",
-};
-
-const statusTabs = [
-  "All",
-  "Pending",
-  "Processing",
-  "Shipped",
-  "Delivered",
-] as const;
-
-function getStatusGroup(status: string): string {
-  if (["pending", "confirmed"].includes(status)) return "Pending";
-  if (
-    [
-      "purchasing",
-      "purchased",
-      "in_transit_china",
-      "warehouse",
-      "inspection",
-      "consolidated",
-    ].includes(status)
-  )
-    return "Processing";
-  if (["shipped", "in_transit", "arrived_somalia", "customs"].includes(status))
-    return "Shipped";
-  if (
-    ["ready_for_pickup", "out_for_delivery", "delivered"].includes(status)
-  )
-    return "Delivered";
-  return "Pending";
-}
-
-function statusLabel(s: OrderStatus): string {
-  return s.replace(/_/g, " ");
-}
-
-// ─── Create form initial state ───────────────────────────────────────────────
-interface CreateFormData {
-  reference: string;
-  customer_id: string;
-  shipping_method: string;
-  currency: string;
-  total_usd: string;
-}
-
-const emptyCreate: CreateFormData = {
-  reference: "",
-  customer_id: "",
-  shipping_method: "air",
-  currency: "USD",
-  total_usd: "",
-};
-
-// ─── Edit form initial state ─────────────────────────────────────────────────
-interface EditFormData {
-  reference: string;
-  shipping_method: string;
-  currency: string;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 export default function OrdersPage() {
-  const { success, error: toastError } = useToast();
+  const { orders, updateOrderStatus } = useAdminData();
+  const [selected, setSelected] = useState<AdminOrder | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<string>("All");
+  const filtered = useMemo(() => {
+    if (statusFilter === "all") return orders;
+    return orders.filter((o) => o.status === statusFilter);
+  }, [orders, statusFilter]);
 
-  // ── Create modal state ───────────────────────────────────────────────────
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState<CreateFormData>(emptyCreate);
-  const [createLoading, setCreateLoading] = useState(false);
+  const columns: Column<AdminOrder>[] = [
+    { key: "reference", label: "Order", sortable: true, render: (r) => <span className="font-semibold text-dark-900">{r.reference}</span> },
+    { key: "customer_name", label: "Customer", sortable: true, render: (r) => (
+      <div>
+        <p className="font-medium text-dark-900">{r.customer_name}</p>
+        <p className="text-xs text-dark-900/45">{r.city}</p>
+      </div>
+    )},
+    { key: "items", label: "Items", sortable: false, className: "hidden lg:table-cell", render: (r) => <span className="text-dark-900/60">{r.items.length} items</span> },
+    { key: "total_usd", label: "Total", sortable: true, render: (r) => <span className="font-semibold text-dark-900">${r.total_usd.toLocaleString()}</span> },
+    { key: "status", label: "Status", sortable: true, render: (r) => <StatusBadge status={r.status} /> },
+    { key: "payment_status", label: "Payment", sortable: true, className: "hidden lg:table-cell", render: (r) => <StatusBadge status={r.payment_status} /> },
+    { key: "shipping_method", label: "Mode", sortable: true, className: "hidden lg:table-cell", render: (r) => <StatusBadge status={r.shipping_method} /> },
+    { key: "updated_at", label: "Updated", sortable: true, className: "hidden xl:table-cell", render: (r) => <span className="text-dark-900/50">{new Date(r.updated_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span> },
+  ];
 
-  // ── Edit modal state ─────────────────────────────────────────────────────
-  const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
-  const [editForm, setEditForm] = useState<EditFormData>({
-    reference: "",
-    shipping_method: "air",
-    currency: "USD",
-  });
-  const [editLoading, setEditLoading] = useState(false);
-
-  // ── Delete confirm state ─────────────────────────────────────────────────
-  const [deleteTarget, setDeleteTarget] = useState<OrderRow | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
-
-  // ── Fetch ────────────────────────────────────────────────────────────────
-  const fetchOrders = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      const { data, error: fetchError } = await supabase
-        .from("orders")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (fetchError) throw fetchError;
-      setOrders((data as OrderRow[]) || []);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load orders"
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
-
-  // ── Filters ──────────────────────────────────────────────────────────────
-  const filteredOrders = useMemo(() => {
-    return orders.filter((order) => {
-      const matchesSearch =
-        search === "" ||
-        order.reference.toLowerCase().includes(search.toLowerCase()) ||
-        order.id.toLowerCase().includes(search.toLowerCase());
-      const matchesTab =
-        activeTab === "All" || getStatusGroup(order.status) === activeTab;
-      return matchesSearch && matchesTab;
-    });
-  }, [orders, search, activeTab]);
-
-  const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = { All: orders.length };
-    orders.forEach((order) => {
-      const group = getStatusGroup(order.status);
-      counts[group] = (counts[group] || 0) + 1;
-    });
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: orders.length };
+    orders.forEach((o) => { counts[o.status] = (counts[o.status] || 0) + 1; });
     return counts;
   }, [orders]);
 
-  // ── CREATE ───────────────────────────────────────────────────────────────
-  const handleCreate = async () => {
-    if (!createForm.reference.trim()) {
-      toastError("Reference is required");
-      return;
-    }
-    try {
-      setCreateLoading(true);
-      const { error: insertError } = await supabase.from("orders").insert({
-        reference: createForm.reference.trim(),
-        customer_id: createForm.customer_id.trim() || null,
-        shipping_method: createForm.shipping_method,
-        currency: createForm.currency.trim() || "USD",
-        total_usd: createForm.total_usd ? Number(createForm.total_usd) : 0,
-        status: "pending" as OrderStatus,
-        payment_status: "pending",
-      });
-
-      if (insertError) throw insertError;
-
-      success("Order created successfully");
-      setShowCreateModal(false);
-      setCreateForm(emptyCreate);
-      fetchOrders();
-    } catch (err) {
-      toastError(
-        err instanceof Error ? err.message : "Failed to create order"
-      );
-    } finally {
-      setCreateLoading(false);
-    }
-  };
-
-  // ── STATUS UPDATE (inline pipeline) ──────────────────────────────────────
-  const handleStatusChange = async (
-    orderId: string,
-    newStatus: string
-  ) => {
-    try {
-      const { error: updateError } = await supabase
-        .from("orders")
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
-        .eq("id", orderId);
-
-      if (updateError) throw updateError;
-
-      setOrders((prev) =>
-        prev.map((o) =>
-          o.id === orderId
-            ? { ...o, status: newStatus as OrderStatus }
-            : o
-        )
-      );
-      success(`Status updated to ${statusLabel(newStatus as OrderStatus)}`);
-    } catch (err) {
-      toastError(
-        err instanceof Error ? err.message : "Failed to update status"
-      );
-    }
-  };
-
-  // ── EDIT ─────────────────────────────────────────────────────────────────
-  const openEdit = (order: OrderRow) => {
-    setEditOrder(order);
-    setEditForm({
-      reference: order.reference,
-      shipping_method: order.shipping_method,
-      currency: order.currency,
-    });
-  };
-
-  const handleEdit = async () => {
-    if (!editOrder || !editForm.reference.trim()) {
-      toastError("Reference is required");
-      return;
-    }
-    try {
-      setEditLoading(true);
-      const { error: updateError } = await supabase
-        .from("orders")
-        .update({
-          reference: editForm.reference.trim(),
-          shipping_method: editForm.shipping_method,
-          currency: editForm.currency.trim() || "USD",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", editOrder.id);
-
-      if (updateError) throw updateError;
-
-      success("Order updated successfully");
-      setEditOrder(null);
-      fetchOrders();
-    } catch (err) {
-      toastError(
-        err instanceof Error ? err.message : "Failed to update order"
-      );
-    } finally {
-      setEditLoading(false);
-    }
-  };
-
-  // ── DELETE ───────────────────────────────────────────────────────────────
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      setDeleteLoading(true);
-      const { error: deleteError } = await supabase
-        .from("orders")
-        .delete()
-        .eq("id", deleteTarget.id);
-
-      if (deleteError) throw deleteError;
-
-      success("Order deleted successfully");
-      setDeleteTarget(null);
-      fetchOrders();
-    } catch (err) {
-      toastError(
-        err instanceof Error ? err.message : "Failed to delete order"
-      );
-    } finally {
-      setDeleteLoading(false);
-    }
-  };
-
-  // ── Loading / Error states ───────────────────────────────────────────────
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading orders...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{error}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="mt-3 text-sm font-medium text-brand-500 hover:underline"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      {/* ── Page header ─────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Orders</h1>
-          <p className="text-sm text-dark-400">
-            Track and manage all customer orders
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Create Order
-        </button>
+      <div>
+        <h1 className="text-2xl font-bold text-dark-900">Orders</h1>
+        <p className="text-sm text-dark-900/50">Track and manage customer orders</p>
       </div>
 
-      {/* ── Search ──────────────────────────────────────────────────────── */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-        <input
-          type="text"
-          placeholder="Search by order reference..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-        />
-      </div>
-
-      {/* ── Status tabs ─────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 rounded-xl bg-dark-50 p-1 overflow-x-auto">
-        {statusTabs.map((tab) => (
+      {/* Status filter tabs */}
+      <div className="flex flex-wrap gap-2">
+        {["all", "awaiting_payment", "paid", "purchasing", "in_warehouse", "in_transit", "customs", "out_for_delivery", "delivered", "refunded"].map((s) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
+            key={s}
+            onClick={() => setStatusFilter(s)}
             className={cn(
-              "whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-all",
-              activeTab === tab
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-400 hover:text-dark-600"
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition",
+              statusFilter === s ? "border-brand-500 bg-brand-500 text-white" : "border-dark-900/10 bg-white text-dark-900/60 hover:border-brand-500/30"
             )}
           >
-            {tab}
-            <span
-              className={cn(
-                "ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs",
-                activeTab === tab
-                  ? "bg-brand-500 text-white"
-                  : "bg-dark-200/50 text-dark-500"
-              )}
-            >
-              {tabCounts[tab] || 0}
-            </span>
+            {s === "all" ? "All" : s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+            {statusCounts[s] !== undefined && (
+              <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", statusFilter === s ? "bg-white/20" : "bg-dark-900/5")}>{statusCounts[s]}</span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* ── Orders table ────────────────────────────────────────────────── */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Reference
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Customer
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Total
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Payment
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Shipping
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Date
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center">
-                    <ShoppingCart className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search || activeTab !== "All"
-                        ? "No orders match your filters"
-                        : "No orders yet"}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                filteredOrders.map((order) => (
-                  <tr
-                    key={order.id}
-                    className="hover:bg-dark-50/50 transition-colors"
-                  >
-                    {/* Reference */}
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-brand-500">
-                        {order.reference}
-                      </span>
-                    </td>
-
-                    {/* Customer ID */}
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-500 font-mono text-xs">
-                        {order.customer_id
-                          ? order.customer_id.slice(0, 8) + "..."
-                          : "—"}
-                      </span>
-                    </td>
-
-                    {/* Total */}
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-dark-900">
-                        {formatUSD(order.total_usd)}
-                      </span>
-                    </td>
-
-                    {/* Status — inline <select> for pipeline updates */}
-                    <td className="px-6 py-3.5">
-                      <div className="relative">
-                        <select
-                          value={order.status}
-                          onChange={(e) =>
-                            handleStatusChange(order.id, e.target.value)
-                          }
-                          className={cn(
-                            "appearance-none cursor-pointer rounded-full px-2.5 py-1 pr-6 text-xs font-medium capitalize border-0 focus:outline-none focus:ring-2 focus:ring-brand-500/30",
-                            statusColors[order.status] ||
-                              "bg-dark-50 text-dark-500"
-                          )}
-                          style={{
-                            backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
-                            backgroundPosition: "right 4px center",
-                            backgroundRepeat: "no-repeat",
-                            backgroundSize: "14px 14px",
-                          }}
-                        >
-                          {ORDER_STATUSES.map((s) => (
-                            <option key={s} value={s}>
-                              {statusLabel(s)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </td>
-
-                    {/* Payment status */}
-                    <td className="px-6 py-3.5">
-                      <span
-                        className={cn(
-                          "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize",
-                          order.payment_status === "confirmed"
-                            ? "bg-green-50 text-green-600"
-                            : order.payment_status === "pending"
-                            ? "bg-amber-50 text-amber-600"
-                            : "bg-red-50 text-red-600"
-                        )}
-                      >
-                        {order.payment_status}
-                      </span>
-                    </td>
-
-                    {/* Shipping method */}
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-500 capitalize">
-                        {order.shipping_method}
-                      </span>
-                    </td>
-
-                    {/* Date */}
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-400">
-                        {formatDate(
-                          order.created_at ?? new Date().toISOString()
-                        )}
-                      </span>
-                    </td>
-
-                    {/* Actions: Edit + Delete */}
-                    <td className="px-6 py-3.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => openEdit(order)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-blue-50 hover:text-blue-500 transition-all"
-                          title="Edit order"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget(order)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-red-50 hover:text-red-500 transition-all"
-                          title="Delete order"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ═════════════════════════════════════════════════════════════════════
-          CREATE ORDER MODAL
-          ═══════════════════════════════════════════════════════════════════ */}
-      <Modal
-        open={showCreateModal}
-        onClose={() => {
-          setShowCreateModal(false);
-          setCreateForm(emptyCreate);
-        }}
-        title="Create Order"
-        onConfirm={handleCreate}
-        confirmText="Create Order"
-        confirmLoading={createLoading}
-      >
-        <div className="space-y-4">
-          <FormInput
-            label="Order Reference"
-            name="reference"
-            value={createForm.reference}
-            onChange={(v) =>
-              setCreateForm((p) => ({ ...p, reference: v }))
-            }
-            placeholder="e.g. CS-2026-00001"
-            required
-          />
-          <FormInput
-            label="Customer ID"
-            name="customer_id"
-            value={createForm.customer_id}
-            onChange={(v) =>
-              setCreateForm((p) => ({ ...p, customer_id: v }))
-            }
-            placeholder="UUID of customer"
-          />
-
-          {/* Shipping method select — matching project styling */}
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-dark-700">
-              Shipping Method <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={createForm.shipping_method}
-              onChange={(e) =>
-                setCreateForm((p) => ({
-                  ...p,
-                  shipping_method: e.target.value,
-                }))
-              }
-              className="w-full rounded-xl border border-dark-200 bg-white px-3.5 py-2.5 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-            >
-              <option value="air">Air</option>
-              <option value="sea">Sea</option>
-              <option value="land">Land</option>
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <FormInput
-              label="Currency"
-              name="currency"
-              value={createForm.currency}
-              onChange={(v) =>
-                setCreateForm((p) => ({ ...p, currency: v }))
-              }
-              placeholder="USD"
-            />
-            <FormInput
-              label="Total (USD)"
-              name="total_usd"
-              type="number"
-              value={createForm.total_usd}
-              onChange={(v) =>
-                setCreateForm((p) => ({ ...p, total_usd: v }))
-              }
-              placeholder="0.00"
-              min={0}
-              step={0.01}
-            />
-          </div>
-        </div>
-      </Modal>
-
-      {/* ═════════════════════════════════════════════════════════════════════
-          EDIT ORDER MODAL
-          ═══════════════════════════════════════════════════════════════════ */}
-      <Modal
-        open={!!editOrder}
-        onClose={() => setEditOrder(null)}
-        title="Edit Order"
-        onConfirm={handleEdit}
-        confirmText="Save Changes"
-        confirmLoading={editLoading}
-      >
-        <div className="space-y-4">
-          <FormInput
-            label="Order Reference"
-            name="reference"
-            value={editForm.reference}
-            onChange={(v) =>
-              setEditForm((p) => ({ ...p, reference: v }))
-            }
-            required
-          />
-
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium text-dark-700">
-              Shipping Method
-            </label>
-            <select
-              value={editForm.shipping_method}
-              onChange={(e) =>
-                setEditForm((p) => ({
-                  ...p,
-                  shipping_method: e.target.value,
-                }))
-              }
-              className="w-full rounded-xl border border-dark-200 bg-white px-3.5 py-2.5 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-            >
-              <option value="air">Air</option>
-              <option value="sea">Sea</option>
-              <option value="land">Land</option>
-            </select>
-          </div>
-
-          <FormInput
-            label="Currency"
-            name="currency"
-            value={editForm.currency}
-            onChange={(v) =>
-              setEditForm((p) => ({ ...p, currency: v }))
-            }
-          />
-        </div>
-      </Modal>
-
-      {/* ═════════════════════════════════════════════════════════════════════
-          DELETE CONFIRM DIALOG
-          ═══════════════════════════════════════════════════════════════════ */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="Delete Order"
-        message={`Are you sure you want to delete order "${deleteTarget?.reference}"? This action cannot be undone.`}
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={handleDelete}
-        confirmText="Delete"
-        loading={deleteLoading}
-        danger
+      <DataTable
+        columns={columns}
+        data={filtered}
+        searchKeys={["reference", "customer_name", "city", "notes"]}
+        onRowClick={setSelected}
       />
+
+      {/* Order detail drawer */}
+      <AnimatePresence>
+        {selected && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40 bg-black/40" onClick={() => setSelected(null)} />
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="fixed right-0 top-0 z-50 flex h-full w-full max-w-lg flex-col overflow-y-auto bg-white shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-dark-900/5 px-6 py-4">
+                <h2 className="text-lg font-bold text-dark-900">{selected.reference}</h2>
+                <button onClick={() => setSelected(null)} className="rounded-lg p-1.5 text-dark-900/50 hover:bg-dark-50"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="flex-1 space-y-5 p-6">
+                {/* Status & Actions */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge status={selected.status} />
+                  <StatusBadge status={selected.payment_status} />
+                  <StatusBadge status={selected.shipping_method} />
+                </div>
+                <div className="flex gap-2">
+                  {(["paid", "purchasing", "in_warehouse", "in_transit", "customs", "out_for_delivery", "delivered"] as const).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => { updateOrderStatus(selected.id, s); setSelected({ ...selected, status: s }); }}
+                      className={cn(
+                        "rounded-lg border px-3 py-1.5 text-xs font-semibold transition",
+                        selected.status === s ? "border-brand-500 bg-brand-500 text-white" : "border-dark-900/10 text-dark-900/60 hover:border-brand-500/30"
+                      )}
+                    >
+                      {s.replace(/_/g, " ")}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Details */}
+                <div className="rounded-2xl bg-dark-50 p-4 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10 text-brand-600"><Package className="h-5 w-5" /></div>
+                    <div>
+                      <p className="text-xs text-dark-900/45">Customer</p>
+                      <p className="text-sm font-semibold">{selected.customer_name}</p>
+                      <p className="text-xs text-dark-900/45">{selected.customer_phone} · {selected.city}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600"><CreditCard className="h-5 w-5" /></div>
+                    <div>
+                      <p className="text-xs text-dark-900/45">Total</p>
+                      <p className="text-sm font-semibold">${selected.total_usd.toLocaleString()}</p>
+                      <p className="text-xs text-dark-900/45">Shipping: ${selected.shipping_usd} · Weight: {selected.weight_kg}kg</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600"><MapPin className="h-5 w-5" /></div>
+                    <div>
+                      <p className="text-xs text-dark-900/45">Shipping</p>
+                      <p className="text-sm font-semibold">{selected.shipping_method === "air" ? "Air Freight" : "Sea Freight"}</p>
+                      <p className="text-xs text-dark-900/45">{selected.eta ? `ETA: ${new Date(selected.eta).toLocaleDateString("en-GB")}` : "No ETA set"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Items */}
+                {selected.items.length > 0 && (
+                  <div>
+                    <h3 className="mb-2 text-sm font-semibold text-dark-900">Items ({selected.items.length})</h3>
+                    <div className="space-y-2">
+                      {selected.items.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between rounded-xl bg-dark-50 p-3">
+                          <div>
+                            <p className="text-sm font-medium text-dark-900">{item.product_title}</p>
+                            {item.variant && <p className="text-xs text-dark-900/45">{item.variant}</p>}
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-semibold">${item.total_usd}</p>
+                            <p className="text-xs text-dark-900/45">×{item.quantity}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tracking */}
+                {selected.tracking && selected.tracking.length > 0 && (() => {
+                  const tracking = selected.tracking!;
+                  return (
+                    <div>
+                      <h3 className="mb-2 text-sm font-semibold text-dark-900">Tracking Timeline</h3>
+                      <div className="space-y-0">
+                        {tracking.map((event, i) => (
+                          <div key={i} className="flex gap-3">
+                            <div className="flex flex-col items-center">
+                              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-500 text-white">
+                                <Clock3 className="h-3.5 w-3.5" />
+                              </div>
+                              {i < tracking.length - 1 && <div className="mt-1 h-6 w-px bg-brand-200" />}
+                            </div>
+                            <div className="pb-4">
+                              <p className="text-sm font-medium text-dark-900">{event.status}</p>
+                              <p className="text-xs text-dark-900/45">{event.location} · {new Date(event.time).toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Notes */}
+                {selected.notes && (
+                  <div className="rounded-2xl bg-amber-50 p-4">
+                    <p className="text-xs font-semibold text-amber-700">Notes</p>
+                    <p className="mt-1 text-sm text-amber-800">{selected.notes}</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
