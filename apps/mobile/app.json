@@ -22,7 +22,8 @@
       "bundleIdentifier": "com.chinasuuq.app",
       "buildNumber": "1",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "ChinaSuuq uses your photos to add product images when capturing items from Chinese marketplaces."
+        "NSPhotoLibraryUsageDescription": "ChinaSuuq uses your photos to add product images when capturing items from Chinese marketplaces.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
