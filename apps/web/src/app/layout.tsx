@@ -77,15 +77,11 @@ export const metadata: Metadata = {
     shortcut: "/favicon.ico",
     apple: "/favicon.ico",
   },
-  // Security meta tags — emitted as <meta http-equiv> in the HTML head.
-  // For static export, this is the reliable way to ship CSP, X-Frame-Options,
-  // X-Content-Type-Options, Referrer-Policy and Permissions-Policy to every
-  // page (Vercel's edge headers don't apply to output: "export").
+  // Security meta tags — Next.js's `other` shape is name="..." (regular meta
+  // names); for actual <meta http-equiv> directives (which the browser
+  // interprets as response headers, e.g. Content-Security-Policy), we render
+  // them directly via <head> in the layout component.
   other: {
-    "http-equiv Content-Security-Policy": CSP,
-    "http-equiv X-Content-Type-Options": "nosniff",
-    "http-equiv X-Frame-Options": "DENY",
-    "http-equiv Referrer-Policy": "strict-origin-when-cross-origin",
     "X-DNS-Prefetch-Control": "off",
     "Permissions-Policy": "accelerometer=(), autoplay=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=(), interest-cohort=()",
   },
@@ -94,6 +90,19 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <head>
+        {/*
+          Real <meta http-equiv> security directives. Next.js's metadata
+          `other` field emits them as `name=...` which the browser ignores
+          for CSP/X-Frame-Options. So we render the directives here as
+          actual http-equiv meta tags.
+        */}
+        <meta httpEquiv="Content-Security-Policy" content={CSP} />
+        <meta httpEquiv="X-Content-Type-Options" content="nosniff" />
+        <meta httpEquiv="X-Frame-Options" content="DENY" />
+        <meta httpEquiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+        <meta httpEquiv="Permissions-Policy" content="accelerometer=(), autoplay=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=(), interest-cohort=()" />
+      </head>
       <body className="antialiased">
         <WwwRedirect />
         <Providers>{children}</Providers>
