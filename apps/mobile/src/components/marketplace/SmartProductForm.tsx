@@ -8,7 +8,6 @@ import {
   ScrollView,
   Alert,
 } from "react-native";
-import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { BottomSheet } from "@/components/BottomSheet";
@@ -109,6 +108,7 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
     addItem(product, qty, specs, {
       estimated_kg: parseFloat(estKg) || undefined,
       estimated_cbm: parseFloat(estCbm) || undefined,
+      exchange_rate: rate || undefined,
     });
     Alert.alert("Added to ChinaSuuq Cart", `${listing.title.slice(0, 60)} (×${qty})\n\nFully translated & converted — continue in your cart.`, [
       { text: "Noted" },
@@ -121,20 +121,6 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Captured preview */}
         <View style={styles.previewRow}>
-          {listing.image ? (
-            <Image
-              source={{ uri: listing.image }}
-              style={styles.thumb}
-              contentFit="cover"
-              transition={150}
-              cachePolicy="memory-disk"
-              recyclingKey={listing.image}
-            />
-          ) : (
-            <View style={[styles.thumb, styles.thumbFallback]}>
-              <Text style={styles.thumbFallbackText}>{listing.title.slice(0, 1).toUpperCase()}</Text>
-            </View>
-          )}
           <View style={styles.previewInfo}>
             <Text style={styles.previewTitle} numberOfLines={2}>{listing.title}</Text>
             <Text style={styles.priceLine}>
@@ -144,6 +130,27 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
               <Text style={styles.rateHint}>  @ 1:{rate.toFixed(2)}</Text>
             </Text>
             <Text style={styles.sourceTag}>{listing.platform.toUpperCase()}</Text>
+          </View>
+          <View style={styles.priceEditWrap}>
+            <Text style={styles.priceEditLabel}>Price (CNY)</Text>
+            <View style={styles.priceEditRow}>
+              <Text style={styles.priceEditPrefix}>¥</Text>
+              <TextInput
+                style={styles.priceEditInput}
+                value={priceCny ? String(priceCny) : ""}
+                onChangeText={(t) => {
+                  const v = parseFloat(t.replace(/[^\d.]/g, "")) || 0;
+                  setPriceCny(v);
+                  setUsd(v > 0 ? v / rate : 0);
+                }}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                placeholderTextColor={COLORS.gray400}
+              />
+            </View>
+            <Text style={styles.priceEditHint}>
+              {priceCny > 0 ? `≈ $${(priceCny / rate).toFixed(2)} USD` : "Enter price if auto-detect missed it"}
+            </Text>
           </View>
         </View>
 
@@ -282,6 +289,13 @@ const styles = StyleSheet.create({
   priceUsd: { fontSize: 15, fontFamily: FONTS.bold, color: COLORS.primary },
   rateHint: { fontSize: 11, color: COLORS.textMuted },
   sourceTag: { marginTop: 6, alignSelf: "flex-start", backgroundColor: COLORS.softOrange, paddingHorizontal: SPACING.sm, paddingVertical: 2, borderRadius: RADIUS.pill },
+  // price edit
+  priceEditWrap: { justifyContent: "center", alignItems: "flex-end", marginLeft: SPACING.sm },
+  priceEditLabel: { fontSize: 10, fontFamily: FONTS.semibold, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: 0.5 },
+  priceEditRow: { flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md, paddingHorizontal: SPACING.sm, height: 38, marginTop: 4, backgroundColor: COLORS.gray50 },
+  priceEditPrefix: { fontSize: 14, fontFamily: FONTS.bold, color: COLORS.textSecondary, marginRight: 2 },
+  priceEditInput: { fontSize: 15, fontFamily: FONTS.bold, color: COLORS.primary, minWidth: 70, padding: 0 },
+  priceEditHint: { fontSize: 10, color: COLORS.textMuted, marginTop: 3 },
   // block
   block: { paddingVertical: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border, marginBottom: SPACING.sm },
   blockLabel: { fontSize: 13, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: SPACING.sm },

@@ -8,6 +8,8 @@ import {
   Linking,
   Alert,
   TextInput,
+  FlatList,
+  Image,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -24,6 +26,10 @@ import {
   Plus,
   X,
   TrendingUp,
+  Minimize2,
+  Maximize2,
+  Wifi,
+  WifiOff,
 } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { whatsappOrderLink } from "@/lib/utils";
@@ -34,15 +40,19 @@ import {
   PRODUCT_CAPTURE_SCRIPT,
   LOGIN_WALL_SCRIPT,
   BLANK_PAGE_SCRIPT,
+  HIDE_MARKET_NAV_SCRIPT,
 } from "@/lib/webviewScripts";
 import { getCnyPerUsd } from "@/lib/exchange";
+import { getMarketplaceProducts } from "@/db";
+import type { Product } from "@/types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getMarketplaceAccount, cookieInjectScript } from "@/lib/supabase";
 
 // Real marketplace base URLs
 const MARKETPLACES: Record<string, { name: string; home: string; loginWalled: boolean }> = {
   "1688": { name: "1688.com", home: "https://m.1688.com", loginWalled: false },
   taobao: { name: "Taobao", home: "https://m.taobao.com", loginWalled: true },
-  yiwugo: { name: "YiwuGo", home: "https://www.yiwugo.com", loginWalled: false },
+  yiwugo: { name: "YiwuGo", home: "https://www.yiwugo.com", loginWalled: true },
   alibaba: { name: "Alibaba.com", home: "https://m.alibaba.com", loginWalled: false },
   chinagoods: { name: "ChinaGoods", home: "https://www.chinagoods.com", loginWalled: false },
   jd: { name: "JD.com", home: "https://m.jd.com", loginWalled: false },
@@ -86,6 +96,11 @@ export default function MarketplaceBrowser() {
   const [blocked, setBlocked] = useState(false);
   const [cnylist, setCnylist] = useState<number[]>([]);
   const [captureFormVisible, setCaptureFormVisible] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [accountCookieScript, setAccountCookieScript] = useState("");
+  const [curatedProducts, setCuratedProducts] = useState<Product[]>([]);
+  const [curatedLoading, setCuratedLoading] = useState(false);
+  const [showCurated, setShowCurated] = useState(false);
   const webRef = useRef<any>(null);
 
   // restore translation pref
@@ -99,25 +114,51 @@ export default function MarketplaceBrowser() {
     })();
   }, []);
 
-  // re-run scripts on navigation completes
+  // Fetch shared marketplace account & curated products on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        // 1. Try to get shared cookies for auto-fill
+        const account = await getMarketplaceAccount(marketplace || "1688");
+        if (account?.cookies) {
+          setAccountCookieScript(cookieInjectScript(account.cookies));
+        }
+
+        // 2. Fetch curated products as a fallback catalog
+        setCuratedLoading(true);
+        const products = await getMarketplaceProducts(marketplace || "1688");
+        setCuratedProducts(products);
+      } catch {
+        // silent — curated products will be empty, WebView still works
+      } finally {
+        setCuratedLoading(false);
+      }
+    })();
+  }, [marketplace]);
+
+  // re-run scripts on navigation completes (bundled into one bridge call for perf)
   const runPerPageScripts = useCallback(
     (webview: any) => {
       const post = () => {
         try {
-          webview?.injectJavaScript?.(LOGIN_WALL_SCRIPT);
-          webview?.injectJavaScript?.(BLANK_PAGE_SCRIPT);
-          webview?.injectJavaScript?.(PRODUCT_CAPTURE_SCRIPT);
+          // Build one combined script so the WebView only makes 1 round-trip
+          const parts: string[] = [];
+          if (accountCookieScript) parts.push(accountCookieScript);
+          parts.push(LOGIN_WALL_SCRIPT);
+          parts.push(BLANK_PAGE_SCRIPT);
+          parts.push(PRODUCT_CAPTURE_SCRIPT);
+          parts.push(HIDE_MARKET_NAV_SCRIPT);
           if (translateLang) {
-            webview?.injectJavaScript?.(
-              `window.__CS_TL=${JSON.stringify(translateLang)};${TRANSLATE_SCRIPT}`
-            );
+            parts.push(`window.__CS_TL=${JSON.stringify(translateLang)};${TRANSLATE_SCRIPT}`);
           }
+          const combined = `(function(){${parts.join("\n")}})();true;`;
+          webview?.injectJavaScript?.(combined);
         } catch {}
       };
       // slight delay so SPA content settles
       setTimeout(post, 1200);
     },
-    [translateLang]
+    [translateLang, accountCookieScript]
   );
 
   const onMessage = useCallback(
@@ -125,22 +166,33 @@ export default function MarketplaceBrowser() {
       try {
         const { type, payload } = JSON.parse(event.nativeEvent.data);
         if (type === "LOGIN_WALL") {
-          if (meta.loginWalled && !loginWall) setLoginWall(true);
+          if (meta.loginWalled && !loginWall) {
+            setLoginWall(true);
+            // Auto-show curated catalog if we have products
+            if (curatedProducts.length > 0) setShowCurated(true);
+          }
         } else if (type === "BLANK") {
           // page rendered no content — likely blocked (Taobao/YiwuGo guests)
-          if (meta.loginWalled) setBlocked(true);
+          if (meta.loginWalled) {
+            setBlocked(true);
+            // Auto-show curated catalog if we have products
+            if (curatedProducts.length > 0) setShowCurated(true);
+          }
         } else if (type === "CAPTURE") {
           setCaptureBusy(false);
           setBlocked(false);
+          setShowCurated(false);
           const p = payload || {};
-          setCnylist((prev) => (p.price ? [...prev.slice(-4), p.price] : prev));
+          // Always push the detected price (even 0) so an incomplete capture
+          // still shows the editable price field instead of a stale one.
+          setCnylist((prev) => [...prev.slice(-4), Number(p.price) || 0]);
           const srcId =
             (p.url || "").match(/id[/=]([\d]+)/)?.[1] ||
             (p.url || "").match(/[\d]{5,}/)?.[0] ||
             `${Date.now()}`;
           setCurrentListing({
             title: p.title || "Detected product",
-            price: p.price || 0,
+            price: Number(p.price) || 0,
             image: p.image || "",
             url: p.url || url,
             brand: p.brand || "",
@@ -150,7 +202,7 @@ export default function MarketplaceBrowser() {
         }
       } catch {}
     },
-    [marketplace, url, meta.loginWalled, loginWall]
+    [marketplace, url, meta.loginWalled, loginWall, curatedProducts.length]
   );
 
   const goBack = useCallback(() => webRef.current?.goBack(), []);
@@ -200,6 +252,7 @@ export default function MarketplaceBrowser() {
       <SafeAreaView style={styles.container} edges={["top"]}>
         {/* Header */}
         <View style={styles.header}>
+          <View style={styles.headerAccent} />
           <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <ArrowLeft size={22} color={COLORS.black} />
           </TouchableOpacity>
@@ -217,7 +270,7 @@ export default function MarketplaceBrowser() {
         </View>
 
         {/* URL bar */}
-        <View style={styles.urlBar}>
+        {controlsVisible && <View style={styles.urlBar}>
           <View style={styles.urlInputWrap}>
             <TextInput
               style={styles.urlInput}
@@ -255,17 +308,17 @@ export default function MarketplaceBrowser() {
               {translateLang ? TL_LABEL[translateLang] : "EN/SO"}
             </Text>
           </TouchableOpacity>
-        </View>
+        </View>}
 
         {/* Live currency + rate strip */}
-        <View style={styles.usdStrip}>
+        {controlsVisible && <View style={styles.usdStrip}>
           <TrendingUp size={14} color={COLORS.primaryDark} />
           <Text style={styles.usdText}>
             {localListing.price > 0
               ? `Detected ¥${localListing.price.toFixed(2)} ≈ $${(localListing.price / rateUsd).toFixed(2)} USD (live rate). Tap + to add with full specs.`
               : "Prices on this page start in CNY. Tap the + button below to detect & convert the item you're viewing."}
           </Text>
-        </View>
+        </View>}
 
         {/* WebView */}
         <View style={styles.webWrap}>
@@ -279,6 +332,18 @@ export default function MarketplaceBrowser() {
               setCanGoBack(nav.canGoBack);
               setCanGoForward(nav.canGoForward);
             }}
+            onShouldStartLoadWithRequest={(req) => {
+              // Open external schemes outside the WebView
+              const u = req.url || "";
+              if (/^(intent|itms|itms-apps|market|fb|messenger|whatsapp|tg|mailto|tel):/i.test(u)) {
+                Linking.openURL(u).catch(() => {});
+                return false;
+              }
+              if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("chinasuuq://")) {
+                return true;
+              }
+              return false;
+            }}
             onLoadStart={() => { setLoading(true); setCurrentListing(null); setCnylist([]); setLoginWall(false); setBlocked(false); }}
             onLoadEnd={() => { setLoading(false); if (webRef.current) runPerPageScripts(webRef.current); }}
             onError={() => {
@@ -287,22 +352,33 @@ export default function MarketplaceBrowser() {
             startInLoadingState
             javaScriptEnabled
             domStorageEnabled
+            cacheEnabled
             setSupportMultipleWindows={false}
+            javaScriptCanOpenWindowsAutomatically={false}
             allowsInlineMediaPlayback
+            allowsBackForwardNavigationGestures
             mixedContentMode="compatibility"
-            originWhitelist={["*"]}
-            allowFileAccess
+            // cookies are set per-host via injectedJavaScriptBeforeContentLoaded
+            injectedJavaScriptBeforeContentLoaded={accountCookieScript || undefined}
+            enableZoomControls={false}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            overScrollMode="never"
+            keyboardDisplayRequiresUserAction={false}
           />
           {loading && (
             <View style={styles.loading} pointerEvents="none">
-              <ActivityIndicator size="large" color={COLORS.primary} />
+              <View style={styles.loadingCard}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+                <Text style={styles.loadingText}>Loading {meta.name}...</Text>
+              </View>
             </View>
           )}
 
-          {/* Branded blocked-state (Taobao / YiwuGo require login; happy path for 1688 is a real page) */}
-          {blocked && (
+          {/* Branded blocked-state → curated catalog fallback */}
+          {(blocked || showCurated) && (
             <View style={styles.blockedOverlay}>
-              <TouchableOpacity onPress={() => setBlocked(false)} style={styles.blockedClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity onPress={() => { setBlocked(false); setShowCurated(false); }} style={styles.blockedClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <X size={16} color={COLORS.gray500} />
               </TouchableOpacity>
               <View style={[styles.blockedLogo, { backgroundColor: PLATFORM_BRAND_COLOR[marketplace ?? "1688"] || "#FF5000" }]}>
@@ -311,38 +387,84 @@ export default function MarketplaceBrowser() {
                 </Text>
               </View>
               <Text style={styles.blockedTitle}>
-                {meta.name} needs a sign-in
+                {meta.name} {blocked ? "needs a sign-in" : "— curated picks"}
               </Text>
               <Text style={styles.blockedBody}>
-                {meta.name} blocks in-app browsing unless you're logged in. Tap below to sign in once in your browser, then come back and capture anything you find.
+                {blocked
+                  ? `${meta.name} blocks in-app browsing for guests. Below are verified products from ${meta.name} you can add to your cart right away.`
+                  : `Verified products sourced from ${meta.name} — tap to view details and add to cart.`}
               </Text>
-              <TouchableOpacity style={styles.blockedPrimaryBtn} onPress={openExternal} activeOpacity={0.85}>
-                <ExternalLink size={18} color={COLORS.white} />
-                <Text style={styles.blockedPrimaryText}>Sign in / open {meta.name}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.blockedSecondaryBtn} onPress={() => router.push("/(tabs)/home")} activeOpacity={0.7}>
-                <ShoppingCart size={16} color={COLORS.primary} />
-                <Text style={styles.blockedSecondaryText}>Browse ChinaSuuq Deals instead</Text>
-              </TouchableOpacity>
-              <Text style={styles.blockedHint}>Tip: after signing in, paste any product link into the bar above.</Text>
+
+              {/* Curated product grid */}
+              {curatedLoading ? (
+                <View style={styles.curatedLoader}>
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                  <Text style={styles.curatedLoaderText}>Loading deals...</Text>
+                </View>
+              ) : curatedProducts.length > 0 ? (
+                <FlatList
+                  data={curatedProducts}
+                  keyExtractor={(item) => item.id}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.curatedList}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.curatedCard}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push({ pathname: "/product/[id]", params: { id: item.id } });
+                      }}
+                    >
+                      {item.images?.[0] ? (
+                        <Image source={{ uri: item.images[0] }} style={styles.curatedImg} resizeMode="cover" />
+                      ) : (
+                        <View style={[styles.curatedImg, styles.curatedImgFallback]}>
+                          <Text style={styles.curatedImgFallbackText}>{item.title_english.slice(0, 1)}</Text>
+                        </View>
+                      )}
+                      <Text style={styles.curatedName} numberOfLines={2}>{item.title_english}</Text>
+                      <Text style={styles.curatedPrice}>${item.price_usd_estimated.toFixed(2)}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              ) : (
+                <Text style={styles.curatedEmpty}>No curated products yet for {meta.name}.</Text>
+              )}
+
+              {/* Action buttons */}
+              <View style={styles.blockedActions}>
+                {blocked && (
+                  <TouchableOpacity style={styles.blockedPrimaryBtn} onPress={openExternal} activeOpacity={0.85}>
+                    <ExternalLink size={18} color={COLORS.white} />
+                    <Text style={styles.blockedPrimaryText}>Sign in / open {meta.name}</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity style={styles.blockedSecondaryBtn} onPress={() => router.push("/(tabs)/home")} activeOpacity={0.7}>
+                  <ShoppingCart size={16} color={COLORS.primary} />
+                  <Text style={styles.blockedSecondaryText}>Browse ChinaSuuq Deals</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.blockedHint}>Tip: paste any product link into the URL bar above to capture it.</Text>
             </View>
           )}
 
           {/* Login wall banner (Taobao / YiwuGo) */}
-          {loginWall && (
+          {loginWall && !showCurated && (
             <View style={styles.loginBanner}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.loginBannerTitle}>Login required on {meta.name}</Text>
                 <Text style={styles.loginBannerBody}>
-                  {meta.name} blocks embedded browsing for guests. Open it in your browser to sign in once, or browse ChinaSuuq's verified Deals instead.
+                  {meta.name} blocks embedded browsing for guests. Browse curated ChinaSuuq Deals from {meta.name} below, or open in your browser to sign in.
                 </Text>
                 <View style={styles.loginBannerBtns}>
                   <TouchableOpacity style={styles.bannerExternalBtn} onPress={openExternal}>
                     <ExternalLink size={14} color={COLORS.primary} />
                     <Text style={styles.bannerExternalText}>Open in browser</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.bannerDealsBtn} onPress={() => router.push("/(tabs)/home")}>
-                    <Text style={styles.bannerDealsText}>ChinaSuuq Deals</Text>
+                  <TouchableOpacity style={styles.bannerDealsBtn} onPress={() => setShowCurated(true)}>
+                    <Text style={styles.bannerDealsText}>Show Curated Picks</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -353,8 +475,17 @@ export default function MarketplaceBrowser() {
           )}
         </View>
 
-        {/* Sticky "Add to ChinaSuuq" dock — always visible, matches app design */}
+        {/* Compact controls: keep the web page dominant without destroying navigation. */}
         <TouchableOpacity
+          style={styles.floatingToggle}
+          onPress={() => setControlsVisible((visible) => !visible)}
+          activeOpacity={0.85}
+        >
+          {controlsVisible ? <Minimize2 size={17} color={COLORS.white} /> : <Maximize2 size={17} color={COLORS.white} />}
+        </TouchableOpacity>
+
+        {/* Sticky "Add to ChinaSuuq" dock — always visible, matches app design */}
+        {controlsVisible && <TouchableOpacity
           style={styles.captureDock}
           activeOpacity={0.85}
           onPress={() => {
@@ -369,10 +500,10 @@ export default function MarketplaceBrowser() {
             <Text style={styles.captureDockTitle}>Add to ChinaSuuq cart</Text>
             <Text style={styles.captureDockSub}>Smart-capture this product → convert & configure specs</Text>
           </View>
-        </TouchableOpacity>
+        </TouchableOpacity>}
 
         {/* Bottom action bar */}
-        <View style={styles.actionBar}>
+        {controlsVisible && <View style={styles.actionBar}>
           <TouchableOpacity style={styles.navBtn} onPress={goBack} disabled={!canGoBack} activeOpacity={0.7}>
             <Undo2 size={20} color={canGoBack ? COLORS.black : COLORS.gray300} />
           </TouchableOpacity>
@@ -397,7 +528,7 @@ export default function MarketplaceBrowser() {
           >
             <Text style={styles.whatsappText}>WhatsApp</Text>
           </TouchableOpacity>
-        </View>
+        </View>}
 
         {/* Smart capture form */}
         <SmartProductForm
@@ -411,7 +542,7 @@ export default function MarketplaceBrowser() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.white, paddingBottom: 90 },
+  container: { flex: 1, backgroundColor: COLORS.white },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -420,7 +551,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
   },
+  headerAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: COLORS.primary },
   headerBtn: { minWidth: 40, minHeight: 44, justifyContent: "center", alignItems: "center" },
+  floatingToggle: { position: "absolute", top: SPACING.md, right: SPACING.md, width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(25,25,25,0.82)", alignItems: "center", justifyContent: "center", zIndex: 30, shadowColor: COLORS.black, shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 6 },
   headerBtnDisabled: { opacity: 0.5 },
   headerTitleWrap: { flex: 1, alignItems: "center" },
   headerTitle: { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.black },
@@ -472,6 +605,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.85)",
   },
+  loadingCard: { flexDirection: "row", alignItems: "center", gap: SPACING.sm, backgroundColor: COLORS.white, borderRadius: RADIUS.pill, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.black, shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 4 },
+  loadingText: { fontSize: 13, fontFamily: FONTS.semibold, color: COLORS.textSecondary },
   // login wall banner
   loginBanner: {
     position: "absolute",
@@ -554,13 +689,14 @@ const styles = StyleSheet.create({
   },
   whatsappText: { color: COLORS.white, fontSize: 13, fontFamily: FONTS.bold },
 
-  // blocked-state overlay
+  // blocked-state overlay / curated catalog
   blockedOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: COLORS.warmWhite,
     alignItems: "center",
-    justifyContent: "center",
     paddingHorizontal: SPACING.xxxl,
+    paddingTop: 80,
+    paddingBottom: 80,
     zIndex: 5,
   },
   blockedClose: {
@@ -621,4 +757,24 @@ const styles = StyleSheet.create({
   },
   blockedSecondaryText: { color: COLORS.primary, fontSize: 14, fontFamily: FONTS.semibold },
   blockedHint: { fontSize: 12, color: COLORS.textMuted, textAlign: "center", marginTop: SPACING.lg },
+  blockedActions: { width: "100%", marginTop: SPACING.md },
+  // curated products grid
+  curatedList: { paddingVertical: SPACING.md, paddingHorizontal: SPACING.xs },
+  curatedCard: {
+    width: 140,
+    marginRight: SPACING.md,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.sm,
+  },
+  curatedImg: { width: 124, height: 124, borderRadius: RADIUS.md, backgroundColor: COLORS.gray100 },
+  curatedImgFallback: { alignItems: "center", justifyContent: "center" },
+  curatedImgFallbackText: { fontSize: 28, fontFamily: FONTS.bold, color: COLORS.primary },
+  curatedName: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.black, marginTop: SPACING.sm, lineHeight: 16 },
+  curatedPrice: { fontSize: 14, fontFamily: FONTS.bold, color: COLORS.primary, marginTop: 4 },
+  curatedLoader: { flexDirection: "row", alignItems: "center", gap: SPACING.sm, paddingVertical: SPACING.lg },
+  curatedLoaderText: { fontSize: 13, color: COLORS.textSecondary, fontFamily: FONTS.medium },
+  curatedEmpty: { fontSize: 13, color: COLORS.textMuted, textAlign: "center", paddingVertical: SPACING.lg },
 });
