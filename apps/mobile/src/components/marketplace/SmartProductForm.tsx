@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
 } from "react-native";
+import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { BottomSheet } from "@/components/BottomSheet";
@@ -121,6 +122,9 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Captured preview */}
         <View style={styles.previewRow}>
+          {listing.image ? (
+            <Image source={{ uri: listing.image }} style={styles.thumb} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+          ) : null}
           <View style={styles.previewInfo}>
             <Text style={styles.previewTitle} numberOfLines={2}>{listing.title}</Text>
             <Text style={styles.priceLine}>

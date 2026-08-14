@@ -282,12 +282,51 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
     }
     out.price = best;
 
-    // IMAGE
+    // IMAGE — broad selectors to cover all marketplaces, not just 1688/Taobao
     var og = document.querySelector("meta[property='og:image']");
     out.image = og ? og.content : "";
     if (!out.image) {
-      var img = document.querySelector("#J_ImgBooth, .tb-booth img, img[class*='mainpic' i], .detail-main img, img[src*='alicdn'], img[src*='taobaocdn']");
-      if (img && img.src) out.image = img.src;
+      // Try the largest image on the page that looks like a product photo.
+      // 1) Known marketplace selectors (1688/Taobao/JD/YiwuGo/ChinaGoods/Alibaba)
+      var imgSelectors = [
+        // 1688
+        "#J_ImgBooth", ".tb-booth img", "img[class*='mainpic' i]",
+        // Taobao detail
+        ".detail-main img", ".PicGallery--mainImage--3CiGq5P img",
+        // JD product page
+        "#spec-img", ".product-img img", ".main-img img",
+        // Alibaba.com
+        ".detail-gallery-img img", ".gallery-img img",
+        // YiwuGo
+        ".product-gallery img", ".goods-pic img",
+        // ChinaGoods
+        ".product-image img", ".goods-img img", ".item-img img",
+        // Generic patterns
+        "article img", ".product img", "[class*='product'] img",
+        "[class*='goods'] img", "[class*='detail'] img"
+      ];
+      for (var si = 0; si < imgSelectors.length; si++) {
+        var el = document.querySelector(imgSelectors[si]);
+        if (el && el.src && el.src.indexOf("data:") !== 0) { out.image = el.src; break; }
+      }
+      // 2) CDN-specific src patterns (covers any marketplace using Alibaba CDN, JD CDN, etc.)
+      if (!out.image) {
+        var cdnImg = document.querySelector("img[src*='alicdn'], img[src*='taobaocdn'], img[src*='jd.com'], img[src*='chinagoods'], img[src*='yiwugo'], img[src*='cbu01.alicdn'], img[src*='img.alicdn']");
+        if (cdnImg && cdnImg.src) out.image = cdnImg.src;
+      }
+      // 3) Last resort: find the largest visible image on the page
+      if (!out.image) {
+        var allImgs = document.querySelectorAll("img");
+        var bestArea = 0;
+        for (var ai = 0; ai < allImgs.length; ai++) {
+          var im = allImgs[ai];
+          if (!im.src || im.src.indexOf("data:") === 0) continue;
+          if (im.naturalWidth && im.naturalHeight && im.naturalWidth >= 100 && im.naturalHeight >= 100) {
+            var area = im.naturalWidth * im.naturalHeight;
+            if (area > bestArea) { bestArea = area; out.image = im.src; }
+          }
+        }
+      }
     }
     if (!out.title || !out.price) {
       try {
