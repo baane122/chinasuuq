@@ -10,6 +10,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
+import { adaptOrder, unadaptOrder, mapMobileStatusToDb, adaptSourcing, unadaptAddress, adaptAddress, adaptFavorite } from "@/lib/supabase-adapter";
 
 // ---- safe AsyncStorage helpers (never crash the app) ----
 const safeGet = async (k: string) => {
@@ -114,35 +115,39 @@ export async function getOrderById(id: string): Promise<LocalOrder | null> {
   return all.find((o) => o.id === id || o.reference === id) || null;
 }
 
-/** Fetch orders for a user from Supabase `orders`, merged with local cache. */
+/** Fetch orders for a user from Supabase, merged with local cache. */
 export async function getOrdersByUser(userId: string): Promise<LocalOrder[]> {
   const local = await getOrders();
   try {
     if (await isBackendOnline()) {
-      const { data, error } = await supabase
-        .from("orders")
-        .select("id, reference, status, total_usd, shipping_method, payment_status, destination_city, delivery_address, created_at, updated_at")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-      if (!error && Array.isArray(data)) {
-        const mapped: LocalOrder[] = data.map((o: any) => ({
-          id: o.id,
-          reference: o.reference || o.id,
-          status: o.status || "pending",
-          items: [],
-          total_usd: o.total_usd ?? 0,
-          shipping_method: o.shipping_method === "sea" ? "sea" : "air",
-          payment_status: o.payment_status || "pending",
-          payment_method: "",
-          recipient_name: "",
-          phone: "",
-          city: o.destination_city || "",
-          address: o.delivery_address || "",
-          created_at: o.created_at || new Date().toISOString(),
-          updated_at: o.updated_at || o.created_at || "",
-          synced: true,
-        }));
-        return mapped;
+      // Try the admin view first; if it doesn't exist, fall back to base orders.
+      let data: any[] | null = null;
+      try {
+        const v = await supabase
+          .from("admin_orders_view")
+          .select("id, order_number, reference, status, payment_status, payment_method, shipping_method, subtotal, shipping_cost, service_fee, total, recipient_name, phone, city, address, items, created_at, updated_at")
+          .eq("profile_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(200);
+        if (!v.error && v.data) data = v.data as any[];
+      } catch {}
+      if (!data) {
+        const r = await supabase
+          .from("orders")
+          .select("id, order_number, reference, status, payment_status, payment_method, shipping_method, subtotal, shipping_cost, service_fee, total, recipient_name, phone, city, address, items, created_at, updated_at")
+          .eq("profile_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(200);
+        if (!r.error && r.data) data = r.data as any[];
+      }
+      if (data) {
+        const remote: LocalOrder[] = data.map((o: any) => unadaptOrder(o));
+        // Merge: prefer remote, keep local-only orders
+        const ids = new Set(remote.map((r) => r.id));
+        const merged = [...remote, ...local.filter((l) => !ids.has(l.id))];
+        // Cache remote so next offline open is instant
+        await safeSet(ORDERS_KEY, JSON.stringify(merged));
+        return merged;
       }
     }
   } catch {}
@@ -157,24 +162,13 @@ export async function createOrder(order: LocalOrder): Promise<LocalOrder> {
   const orders = await getOrders();
   orders.unshift(order);
   await saveLocalOrders(orders);
-  // best-effort sync to Supabase (fire and forget)
+  // best-effort sync to Supabase (fire and forget) — uses the real schema via the adapter
   try {
     if (await isBackendOnline()) {
-      await supabase.from("orders").insert({
-        id: order.id,
-        reference: order.reference,
-        status: order.status,
-        total_usd: order.total_usd,
-        shipping_method: order.shipping_method,
-        payment_status: order.payment_status,
-        payment_method: order.payment_method,
-        recipient_name: order.recipient_name,
-        phone: order.phone,
-        city: order.city,
-        address: order.address,
-        items: order.items,
-        created_at: order.created_at,
-      });
+      const { data: auth } = await supabase.auth.getUser();
+      const profileId = auth?.user?.id ?? null;
+      const row = adaptOrder(order, profileId);
+      await supabase.from("orders").upsert(row, { onConflict: "id" });
     }
   } catch {
     // offline — stays local, synced on next online
@@ -190,7 +184,8 @@ export async function updateOrderStatus(id: string, status: string): Promise<voi
   await saveLocalOrders(orders);
   try {
     if (await isBackendOnline()) {
-      await supabase.from("orders").update({ status }).eq("id", id);
+      const dbStatus = mapMobileStatusToDb(status);
+      await supabase.from("orders").update({ status: dbStatus, updated_at: new Date().toISOString() }).eq("id", id);
     }
   } catch {}
 }
@@ -202,12 +197,14 @@ export async function updateOrderStatus(id: string, status: string): Promise<voi
 import type { Product } from "@/types";
 const PRODUCTS_KEY = "chinasuuq-local-products";
 
-export async function getProducts(): Promise<Product[]> {
-  const raw = await safeGet(PRODUCTS_KEY);
-  if (raw) {
-    try {
-      return JSON.parse(raw);
-    } catch {}
+export async function getProducts(force = false): Promise<Product[]> {
+  if (!force) {
+    const raw = await safeGet(PRODUCTS_KEY);
+    if (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch {}
+    }
   }
   // seed empty, try supabase
   try {
@@ -220,6 +217,16 @@ export async function getProducts(): Promise<Product[]> {
       }
     }
   } catch {}
+  // Fall back to local product cache (kept intact even when force=false only —
+  // a force refresh still returns [] rather than stale cache if the backend fails).
+  if (force) {
+    const raw = await safeGet(PRODUCTS_KEY);
+    if (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch {}
+    }
+  }
   return [];
 }
 
@@ -255,6 +262,36 @@ function mapRowToProduct(p: any): Product {
     last_synced_at: p.last_synced_at || p.updated_at || "",
     created_at: p.created_at || "",
   };
+}
+
+// =====================================================================
+// MARKETPLACE PRODUCTS — curated catalog per marketplace
+// =====================================================================
+
+/**
+ * Fetch in-stock products for a specific marketplace from Supabase.
+ * Used as a fallback when the WebView is blocked (login wall / CDN block).
+ */
+export async function getMarketplaceProducts(
+  marketplace: string
+): Promise<Product[]> {
+  try {
+    if (await isBackendOnline()) {
+      const { data, error } = await supabase
+        .from("source_products")
+        .select("*")
+        .eq("marketplace", marketplace)
+        .eq("stock_status", "in_stock")
+        .order("sales_count", { ascending: false })
+        .limit(30);
+      if (!error && data && data.length) {
+        return data.map((p: any) => mapRowToProduct(p));
+      }
+    }
+  } catch {}
+  // Fall back to local product cache filtered by marketplace
+  const all = await getProducts();
+  return all.filter((p) => p.marketplace === marketplace);
 }
 
 // =====================================================================
@@ -298,17 +335,9 @@ export async function saveSourcingCapture(c: SourcingCapture): Promise<SourcingC
   // sync to Supabase `sourcing_requests` for the admin mission control
   try {
     if (await isBackendOnline()) {
-      const { error } = await supabase.from("sourcing_requests").insert({
-        marketplace: c.marketplace,
-        product_url: c.product_url,
-        product_description: c.product_description,
-        quantity: c.quantity,
-        destination_city: c.destination_city,
-        price_cny: c.price_cny,
-        price_usd: c.price_usd,
-        images: c.images,
-        status: "pending",
-      });
+      const { data: auth } = await supabase.auth.getUser();
+      const row = adaptSourcing(c, auth?.user?.id ?? null);
+      const { error } = await supabase.from("sourcing_requests").upsert(row, { onConflict: "id" });
       if (!error) {
         // mark synced
         await setSourcingSynced(c.id, true);
@@ -420,10 +449,11 @@ const ADDRESSES_KEY = "chinasuuq-local-addresses";
 export async function getAddresses(userId: string): Promise<SavedAddress[]> {
   try {
     if (await isBackendOnline()) {
-      const { data, error } = await supabase.from("addresses").select("*").eq("user_id", userId).order("is_default", { ascending: false });
+      const { data, error } = await supabase.from("addresses").select("*").or(`profile_id.eq.${userId},user_id.eq.${userId}`).order("is_default", { ascending: false });
       if (!error && data) {
-        await safeSet(ADDRESSES_KEY, JSON.stringify(data));
-        return data as SavedAddress[];
+        const mapped = data.map((r: any) => unadaptAddress(r));
+        await safeSet(ADDRESSES_KEY, JSON.stringify(mapped));
+        return mapped as SavedAddress[];
       }
     }
   } catch {}
@@ -447,12 +477,21 @@ export async function saveAddress(addr: SavedAddress): Promise<SavedAddress> {
     all.unshift(result);
   }
   await safeSet(ADDRESSES_KEY, JSON.stringify(all));
-  // Sync to Supabase
+  // Sync to Supabase via the adapter (uses profile_id)
   try {
     if (await isBackendOnline()) {
+      const row = adaptAddress(addr, addr.user_id);
+      // If the user just set this address as default, clear others
+      if (addr.is_default) {
+        await supabase
+          .from("addresses")
+          .update({ is_default: false })
+          .or(`profile_id.eq.${addr.user_id},user_id.eq.${addr.user_id}`)
+          .neq("id", result.id || "00000000-0000-0000-0000-000000000000");
+      }
       const { data, error } = addr.id
-        ? await supabase.from("addresses").update(addr).eq("id", addr.id).select().single()
-        : await supabase.from("addresses").insert(addr).select().single();
+        ? await supabase.from("addresses").update(row).eq("id", result.id).select().single()
+        : await supabase.from("addresses").insert(row).select().single();
       if (!error && data?.id) result = { ...result, id: data.id };
     }
   } catch {}
@@ -512,9 +551,14 @@ export async function getPaymentsByUser(userId: string): Promise<PaymentRecord[]
 export async function getFavorites(userId: string): Promise<Product[]> {
   try {
     if (await isBackendOnline()) {
-      const { data, error } = await supabase.from("favorites").select("*, source_products(*)").eq("user_id", userId);
+      const { data, error } = await supabase
+        .from("favorites")
+        .select("*, source_products(*)")
+        .or(`profile_id.eq.${userId},user_id.eq.${userId}`);
       if (!error && data) {
-        return (data as any[]).map((f: any) => mapRowToProduct(f.source_products)).filter(Boolean);
+        return (data as any[])
+          .map((f: any) => mapRowToProduct(f.source_products))
+          .filter(Boolean);
       }
     }
   } catch {}
@@ -524,16 +568,101 @@ export async function getFavorites(userId: string): Promise<Product[]> {
 export async function toggleFavorite(userId: string, productId: string): Promise<boolean> {
   try {
     if (await isBackendOnline()) {
-      const { data } = await supabase.from("favorites").select("id").eq("user_id", userId).eq("product_id", productId).maybeSingle();
+      // Look up by either id; legacy schema used user_id, current uses profile_id
+      const { data } = await supabase
+        .from("favorites")
+        .select("id")
+        .or(`and(profile_id.eq.${userId},source_product_id.eq.${productId}),and(user_id.eq.${userId},product_id.eq.${productId})`)
+        .maybeSingle();
       if (data) {
         await supabase.from("favorites").delete().eq("id", data.id);
         return false;
       } else {
-        await supabase.from("favorites").insert({ user_id: userId, product_id: productId });
+        const row = adaptFavorite(userId, productId);
+        await supabase.from("favorites").insert(row);
         return true;
       }
     }
   } catch {}
   return false;
+}
+
+// =====================================================================
+// SUPPORT TICKETS — creates rows in the `support_tickets` table
+// (subject, description, category, status 'open', profile_id from auth)
+// =====================================================================
+export interface SupportTicketInput {
+  subject: string;
+  message: string; // maps to `description` column
+  category?: string; // defaults to 'other'
+}
+
+export interface SupportTicketResult {
+  ok: boolean;
+  id?: string;
+  ticketNumber?: string;
+  error?: string;
+}
+
+/** Create a support ticket in Supabase. Requires a logged-in user. */
+export async function createSupportTicket(
+  input: SupportTicketInput,
+  profileId: string | null
+): Promise<SupportTicketResult> {
+  if (!profileId) {
+    return { ok: false, error: "Please sign in to submit a support ticket." };
+  }
+  const subject = (input.subject || "").trim();
+  const message = (input.message || "").trim();
+  if (!subject || !message) {
+    return { ok: false, error: "Subject and message are required." };
+  }
+  try {
+    if (await isBackendOnline()) {
+      const row = {
+        profile_id: profileId,
+        subject,
+        description: message,
+        category: input.category || "other",
+        // status + created_at default at the DB level
+      };
+      const { data, error } = await supabase
+        .from("support_tickets")
+        .insert(row)
+        .select("id, ticket_number")
+        .maybeSingle();
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+      return {
+        ok: true,
+        id: data?.id,
+        ticketNumber: data?.ticket_number,
+      };
+    }
+    return { ok: false, error: "Backend is offline. Please try again later." };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "Could not submit ticket." };
+  }
+}
+
+// =====================================================================
+// NOTIFICATIONS — unread count badge
+// =====================================================================
+/** Count unread notifications (read_at IS NULL) for a user. */
+export async function getUnreadNotificationCount(userId: string): Promise<number> {
+  try {
+    if (await isBackendOnline()) {
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .is("read_at", null)
+        .eq("profile_id", userId);
+      if (!error && typeof count === "number") {
+        return count;
+      }
+    }
+  } catch {}
+  return 0;
 }
 

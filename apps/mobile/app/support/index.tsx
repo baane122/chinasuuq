@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   Pressable,
   Linking,
   Alert,
+  TextInput,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -18,11 +20,14 @@ import {
   ExternalLink,
   Mail,
   Phone,
+  Send,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { WHATSAPP_LINK } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
+import { createSupportTicket } from "@/db";
+import { useAuthStore } from "@/store/auth";
 
 const FAQ_ITEMS = [
   {
@@ -54,12 +59,42 @@ const FAQ_ITEMS = [
 export default function SupportScreen() {
   const { t } = useI18n();
   const router = useRouter();
+  const authUser = useAuthStore((s) => s.user);
+
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const openWhatsApp = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Linking.openURL(WHATSAPP_LINK).catch(() => {
       Alert.alert("Error", "Could not open WhatsApp. Please make sure it's installed.");
     });
+  };
+
+  const handleSubmitTicket = async () => {
+    if (submitting) return;
+    if (!subject.trim() || !message.trim()) {
+      Alert.alert("Missing info", "Please enter both a subject and a message.");
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSubmitting(true);
+    try {
+      const result = await createSupportTicket(
+        { subject, message },
+        authUser?.id ?? null
+      );
+      if (result.ok) {
+        Alert.alert("Ticket submitted", "Our support team will get back to you shortly.");
+        setSubject("");
+        setMessage("");
+      } else {
+        Alert.alert("Could not submit", result.error || "Please try again later.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -157,6 +192,63 @@ export default function SupportScreen() {
               </View>
             </React.Fragment>
           ))}
+        </View>
+
+        {/* Contact / Submit Ticket Form */}
+        <View style={styles.ticketCard}>
+          <View style={styles.ticketHeader}>
+            <View style={styles.ticketIconWrap}>
+              <Send size={18} color={COLORS.primary} />
+            </View>
+            <View>
+              <Text style={styles.ticketTitle}>Submit a Support Ticket</Text>
+              <Text style={styles.ticketSubtitle}>
+                We'll reply to your request via email or WhatsApp
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.inputLabel}>Subject</Text>
+          <TextInput
+            style={styles.input}
+            value={subject}
+            onChangeText={setSubject}
+            placeholder="What is this about?"
+            placeholderTextColor={COLORS.textMuted}
+            maxLength={120}
+          />
+
+          <Text style={styles.inputLabel}>Message</Text>
+          <TextInput
+            style={[styles.input, styles.messageInput]}
+            value={message}
+            onChangeText={setMessage}
+            placeholder="Describe your issue in a few sentences…"
+            placeholderTextColor={COLORS.textMuted}
+            multiline
+            textAlignVertical="top"
+            maxLength={2000}
+          />
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.submitButton,
+              pressed && { opacity: 0.85 },
+              submitting && { opacity: 0.7 },
+            ]}
+            onPress={handleSubmitTicket}
+            disabled={submitting}
+            android_ripple={{ color: COLORS.primaryDark }}
+          >
+            {submitting ? (
+              <ActivityIndicator color={COLORS.white} size="small" />
+            ) : (
+              <>
+                <Send size={16} color={COLORS.white} />
+                <Text style={styles.submitButtonText}>Submit Ticket</Text>
+              </>
+            )}
+          </Pressable>
         </View>
 
         {/* Footer */}
@@ -323,6 +415,80 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: COLORS.border,
     marginLeft: SPACING.lg,
+  },
+  // Contact / Submit Ticket form
+  ticketCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.lg,
+  },
+  ticketHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  ticketIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: COLORS.softOrange,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ticketTitle: {
+    fontSize: 15,
+    fontFamily: FONTS.semibold,
+    color: COLORS.black,
+  },
+  ticketSubtitle: {
+    fontSize: 12,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    marginTop: 1,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xs,
+  },
+  input: {
+    backgroundColor: COLORS.warmWhite,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    fontSize: 14,
+    fontFamily: FONTS.regular,
+    color: COLORS.black,
+    minHeight: 44,
+    marginBottom: SPACING.md,
+  },
+  messageInput: {
+    minHeight: 96,
+    paddingTop: SPACING.md,
+  },
+  submitButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: SPACING.sm,
+    backgroundColor: COLORS.primary,
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.pill,
+    minHeight: 48,
+    marginTop: SPACING.xs,
+  },
+  submitButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontFamily: FONTS.semibold,
   },
   footer: {
     alignItems: "center",

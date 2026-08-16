@@ -1,10 +1,39 @@
-import { Tabs } from "expo-router";
+import { Tabs, usePathname } from "expo-router";
 import { Home, Store, ShoppingBag, User } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { View, Text, StyleSheet } from "react-native";
+import { useEffect, useState } from "react";
 import { COLORS, RADIUS, FONTS } from "@/lib/theme";
+import { useCartStore } from "@/store/cart";
+import { useAuthStore } from "@/store/auth";
+import { getUnreadNotificationCount } from "@/db";
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
+  const isMarketplaceFlow = pathname.startsWith("/marketplace/");
+  const cartCount = useCartStore((s) => s.items.length);
+  const authUser = useAuthStore((s) => s.user);
+
+  // Unread notification count badge — poll on mount while signed in.
+  const [notifCount, setNotifCount] = useState(0);
+  useEffect(() => {
+    if (!authUser?.id) {
+      setNotifCount(0);
+      return;
+    }
+    let cancelled = false;
+    const refreshCount = async () => {
+      const n = await getUnreadNotificationCount(authUser.id);
+      if (!cancelled) setNotifCount(n);
+    };
+    refreshCount();
+    const timer = setInterval(refreshCount, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [authUser?.id]);
 
   return (
     <Tabs
@@ -13,6 +42,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: COLORS.primary,
         tabBarInactiveTintColor: COLORS.gray500,
         tabBarStyle: {
+          display: isMarketplaceFlow ? "none" : "flex",
           backgroundColor: COLORS.darkSurface,
           borderTopWidth: 0,
           borderTopLeftRadius: RADIUS.xl,
@@ -55,16 +85,58 @@ export default function TabLayout() {
         name="orders"
         options={{
           title: "Orders",
-          tabBarIcon: ({ color, size }) => <ShoppingBag size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => (
+            <View>
+              <ShoppingBag size={size} color={color} />
+              {cartCount > 0 && (
+                <View style={tabStyles.badge}>
+                  <Text style={tabStyles.badgeText}>
+                    {cartCount > 99 ? "99+" : cartCount}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
         name="account"
         options={{
           title: "Account",
-          tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => (
+            <View>
+              <User size={size} color={color} />
+              {notifCount > 0 && (
+                <View style={tabStyles.badge}>
+                  <Text style={tabStyles.badgeText}>
+                    {notifCount > 99 ? "99+" : notifCount}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ),
         }}
       />
     </Tabs>
   );
 }
+
+const tabStyles = StyleSheet.create({
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    fontSize: 10,
+    fontFamily: FONTS.bold,
+    color: COLORS.white,
+  },
+});

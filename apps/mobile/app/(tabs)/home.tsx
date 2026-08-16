@@ -33,58 +33,13 @@ import { ProductCardSkeleton } from "@/components/ui/SkeletonLoader";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
 import { getProducts } from "@/db";
+import { MARKETPLACES } from "@/lib/marketplaces";
 import type { Product } from "@/types";
 
 // Brand assets — clean circular app icon (NOT the busy promo image)
 const LOGO = require("../../assets/images/icon.png");
 
 const { width: SCREEN_W } = Dimensions.get("window");
-
-// ─── Real marketplace data with generated icon assets ───
-const MARKETPLACES = [
-  {
-    id: "1688",
-    name: "1688",
-    desc_en: "Wholesale prices",
-    desc_so: "Qiimo jumlo",
-    icon: require("../../assets/marketplaces/1688.png"),
-  },
-  {
-    id: "taobao",
-    name: "Taobao",
-    desc_en: "Millions of products",
-    desc_so: "Malaayiin alaab",
-    icon: require("../../assets/marketplaces/taobao.png"),
-  },
-  {
-    id: "yiwugo",
-    name: "YiwuGo",
-    desc_en: "Direct trade access",
-    desc_so: "Ganacsi toos ah",
-    icon: require("../../assets/marketplaces/yiwugo.png"),
-  },
-  {
-    id: "alibaba",
-    name: "Alibaba",
-    desc_en: "Global B2B trade",
-    desc_so: "Ganacsi B2B",
-    icon: require("../../assets/marketplaces/alibaba.png"),
-  },
-  {
-    id: "jd",
-    name: "JD.com",
-    desc_en: "Quality electronics",
-    desc_so: "Elektiroonik",
-    icon: require("../../assets/marketplaces/jd.png"),
-  },
-  {
-    id: "chinagoods",
-    name: "ChinaGoods",
-    desc_en: "Yiwu commodities",
-    desc_so: "Alaabta Yiwu",
-    icon: require("../../assets/marketplaces/chinagoods.png"),
-  },
-];
 
 // ─── Hero banner data with generated images ───
 const HERO_BANNERS = [
@@ -195,10 +150,10 @@ export default function HomeTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const loadProducts = useCallback(async () => {
+  const loadProducts = useCallback(async (force = false) => {
     setError(false);
     try {
-      const data = await getProducts();
+      const data = await getProducts(force);
       setProducts(data);
     } catch {
       setError(true);
@@ -214,7 +169,7 @@ export default function HomeTab() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await loadProducts();
+    await loadProducts(true); // skip cache, pull fresh from Supabase
     setRefreshing(false);
   }, [loadProducts]);
 
@@ -258,7 +213,10 @@ export default function HomeTab() {
           <TouchableOpacity
             style={styles.notifButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push("/notifications");
+            }}
           >
             <Bell size={22} color={COLORS.black} />
             {notifCount > 0 && (
@@ -283,7 +241,6 @@ export default function HomeTab() {
             <Mic size={16} color={COLORS.primary} />
           </View>
         </TouchableOpacity>
-
         {/* ── Hero Banner Carousel ── */}
         <HeroBannerCarousel />
 
@@ -318,7 +275,7 @@ export default function HomeTab() {
                 <Image source={m.icon} style={styles.marketIconImg} resizeMode="contain" />
                 <Text style={styles.marketName}>{m.name}</Text>
                 <Text style={styles.marketDesc} numberOfLines={1}>
-                  {locale === "en" ? m.desc_en : m.desc_so}
+                  {locale === "en" ? m.tagline_en : m.tagline_so}
                 </Text>
               </TouchableOpacity>
             ))}

@@ -10,103 +10,72 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ShoppingBag, Package, Truck, CheckCircle, Clock, MapPin } from "lucide-react-native";
+import { ShoppingBag, Package, ChevronRight, ShoppingCart, CheckCircle2, Truck } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
-import { getOrders } from "@/db/index";
+import { getOrders, getOrdersByUser } from "@/db/index";
 import type { LocalOrder } from "@/db/index";
+import { useAuthStore } from "@/store/auth";
 import { OrderCard } from "@/components/orders/OrderCard";
 import { OrderCardSkeleton } from "@/components/ui/SkeletonLoader";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { useCartStore } from "@/store/cart";
+import { formatUSD } from "@/lib/utils";
+import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
+import { ActiveOrderCard } from "@/components/orders/ActiveOrderCard";
 
-const TABS = ["All", "Processing", "Warehouse", "Shipping", "Delivered"] as const;
-type TabType = (typeof TABS)[number];
+const ACTIVE_STATUSES = [
+  "pending",
+  "confirmed",
+  "purchasing",
+  "purchased",
+  "in_transit_china",
+  "warehouse",
+  "inspection",
+  "consolidated",
+  "shipped",
+  "in_transit",
+  "arrived_somalia",
+  "customs",
+  "ready_for_pickup",
+  "out_for_delivery",
+];
 
-function orderMatchesTab(order: LocalOrder, tab: TabType): boolean {
-  if (tab === "All") return true;
-  const s = order.status.toLowerCase();
-  if (tab === "Processing") return s === "pending" || s === "processing" || s === "purchasing" || s === "purchased" || s === "confirmed";
-  if (tab === "Warehouse") return s === "warehouse" || s === "inspection" || s === "consolidated" || s === "in_transit_china";
-  if (tab === "Shipping") return s === "shipping" || s === "shipped" || s === "in_transit" || s === "arrived_somalia" || s === "customs" || s === "ready_for_pickup" || s === "out_for_delivery";
-  if (tab === "Delivered") return s === "delivered";
-  return false;
-}
-
-function mapStatus(s: string): "pending" | "processing" | "warehouse" | "shipping" | "delivered" {
-  const lower = s.toLowerCase();
-  if (lower === "delivered") return "delivered";
-  if (lower === "shipped" || lower === "shipping" || lower === "in_transit" || lower === "arrived_somalia" || lower === "customs" || lower === "ready_for_pickup" || lower === "out_for_delivery") return "shipping";
-  if (lower === "warehouse" || lower === "inspection" || lower === "consolidated" || lower === "in_transit_china") return "warehouse";
-  if (lower === "pending" || lower === "confirmed" || lower === "purchasing" || lower === "purchased") return "processing";
-  return "pending";
-}
-
-// ─── Order Tracking Route Visualization ─────────────
-function OrderTrackingRoute() {
-  const { locale } = useI18n();
-  const steps = [
-    { icon: Clock, label_en: "Processing", label_so: "Waxaa la qabanaayo" },
-    { icon: Package, label_en: "Warehouse", label_so: "Bakhaar" },
-    { icon: Truck, label_en: "In Transit", label_so: "Waa socda" },
-    { icon: MapPin, label_en: "Somalia", label_so: "Soomaaliya" },
-    { icon: CheckCircle, label_en: "Delivered", label_so: "La geeyay" },
-  ];
-  const currentStep = 2; // In Transit
-
-  return (
-    <View style={styles.trackingCard}>
-      <Text style={styles.trackingTitle}>
-        {locale === "en" ? "Order Tracking" : "Raadinta Dalabka"}
-      </Text>
-      <Text style={styles.trackingSub}>
-        {locale === "en" ? "From China to Somalia" : "Iyo Shiinaha ilaa Soomaaliya"}
-      </Text>
-
-      {/* Route visualization */}
-      <View style={styles.routeContainer}>
-        {steps.map((step, i) => {
-          const isActive = i <= currentStep;
-          const Icon = step.icon;
-          return (
-            <React.Fragment key={i}>
-              <View style={styles.routeStep}>
-                <View style={[styles.routeDot, isActive && styles.routeDotActive]}>
-                  <Icon size={14} color={isActive ? COLORS.white : COLORS.gray400} />
-                </View>
-                <Text style={[styles.routeLabel, isActive && styles.routeLabelActive]}>
-                  {locale === "en" ? step.label_en : step.label_so}
-                </Text>
-              </View>
-              {i < steps.length - 1 && (
-                <View style={[styles.routeLine, i < currentStep && styles.routeLineActive]} />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
+const HISTORY_STATUSES = ["delivered", "cancelled"];
 
 export default function OrdersScreen() {
   const { t, locale } = useI18n();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabType>("All");
   const [orders, setOrders] = useState<LocalOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Cart state
+  const cartItems = useCartStore((s) => s.items);
+  const cartGetTotal = useCartStore((s) => s.getTotal);
+  const cartTotal = cartGetTotal();
+
+  const authUser = useAuthStore((s) => s.user);
+
   const loadOrders = useCallback(async () => {
     try {
-      const data = await getOrders();
-      setOrders(data);
+      // Logged-in users fetch their own orders from Supabase; guests fall back
+      // to the local orders list.
+      const data = authUser?.id
+        ? await getOrdersByUser(authUser.id)
+        : await getOrders();
+      // Sort by created_at desc (most recent first)
+      const sorted = [...data].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      setOrders(sorted);
     } catch (e) {
       console.error("Failed to load orders", e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authUser?.id]);
 
   useEffect(() => {
     loadOrders();
@@ -119,25 +88,26 @@ export default function OrdersScreen() {
     setRefreshing(false);
   }, [loadOrders]);
 
-  const filteredOrders = orders.filter((order) => orderMatchesTab(order, activeTab));
+  const activeOrders = orders.filter((o) => ACTIVE_STATUSES.includes(o.status));
+  const historyOrders = orders.filter((o) => HISTORY_STATUSES.includes(o.status));
+  const totalSpent = orders.reduce((sum, o) => sum + (o.total_usd || 0), 0);
 
-  const renderEmptyState = () => (
+  const renderEmpty = () => (
     <View style={styles.emptyState}>
       <View style={styles.emptyIconContainer}>
         <Package size={48} color={COLORS.gray300} />
       </View>
       <Text style={styles.emptyTitle}>{t("orders.empty")}</Text>
       <Text style={styles.emptySubtitle}>
-        {locale === "en" ? "Start exploring products from China" : "Bilow inaad eegto alaab ka timid Shiinaha"}
+        {locale === "en"
+          ? "Place an order to see live tracking here"
+          : "Samee dalab si aad u aragto raadinta"}
       </Text>
       <Pressable
-        style={({ pressed }) => [
-          styles.startButton,
-          pressed && styles.startButtonPressed,
-        ]}
+        style={({ pressed }) => [styles.startButton, pressed && { opacity: 0.8 }]}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          router.push("/(tabs)/home");
+          router.push("/(tabs)/markets");
         }}
       >
         <ShoppingBag size={18} color={COLORS.white} />
@@ -148,24 +118,39 @@ export default function OrdersScreen() {
     </View>
   );
 
-  const renderOrderCard = (order: LocalOrder) => {
+  const renderHistoryCard = (order: LocalOrder, idx: number) => {
     const itemCount = order.items.reduce((sum, i) => sum + i.quantity, 0);
+    const date = new Date(order.created_at).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    const isDelivered = order.status === "delivered";
     return (
-      <OrderCard
+      <Pressable
         key={order.id}
-        order={{
-          id: order.id,
-          reference: order.reference,
-          itemCount,
-          totalUsd: order.total_usd,
-          status: mapStatus(order.status),
-          date: new Date(order.created_at).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          }),
+        style={({ pressed }) => [styles.historyCard, pressed && { opacity: 0.85 }]}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          router.push(`/orders/${order.id}`);
         }}
-      />
+      >
+        <View style={styles.historyStatus}>
+          {isDelivered ? (
+            <CheckCircle2 size={18} color={COLORS.success} />
+          ) : (
+            <Package size={18} color={COLORS.error} />
+          )}
+        </View>
+        <View style={styles.historyInfo}>
+          <Text style={styles.historyRef}>{order.reference}</Text>
+          <Text style={styles.historyMeta}>
+            {itemCount} item{itemCount === 1 ? "" : "s"} · {date}
+          </Text>
+        </View>
+        <Text style={styles.historyTotal}>${order.total_usd.toFixed(2)}</Text>
+        <ChevronRight size={18} color={COLORS.gray400} />
+      </Pressable>
     );
   };
 
@@ -173,42 +158,19 @@ export default function OrdersScreen() {
     <ErrorBoundary>
       <SafeAreaView style={styles.container} edges={["top"]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>{t("orders.title")}</Text>
+          <View>
+            <Text style={styles.headerEyebrow}>
+              {locale === "en" ? "YOUR SOURCING HUB" : "XARUNTA DALABAADKA"}
+            </Text>
+            <Text style={styles.headerTitle}>{t("orders.title")}</Text>
+          </View>
+          <Pressable style={styles.refreshPill} onPress={onRefresh} accessibilityLabel="Refresh orders">
+            <Text style={styles.refreshPillText}>
+              {locale === "en" ? "Refresh" : "Cusboonaysii"}
+            </Text>
+          </Pressable>
         </View>
 
-        {/* Tab Bar */}
-        <View style={styles.tabBarContainer}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.tabBar}
-          >
-            {TABS.map((tab) => (
-              <Pressable
-                key={tab}
-                style={[
-                  styles.tab,
-                  activeTab === tab && styles.tabActive,
-                ]}
-                onPress={() => {
-                  Haptics.selectionAsync();
-                  setActiveTab(tab);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.tabText,
-                    activeTab === tab && styles.tabTextActive,
-                  ]}
-                >
-                  {tab}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-
-        {/* Orders List */}
         <ScrollView
           style={styles.listContainer}
           contentContainerStyle={styles.listContent}
@@ -222,8 +184,58 @@ export default function OrdersScreen() {
           }
           showsVerticalScrollIndicator={false}
         >
-          {/* Tracking Route — show when there are orders */}
-          {!loading && orders.length > 0 && <OrderTrackingRoute />}
+          {/* Cart summary — show when cart has items */}
+          {cartItems.length > 0 && (
+            <Pressable
+              style={({ pressed }) => [styles.cartSummaryCard, pressed && { opacity: 0.85 }]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/cart");
+              }}
+            >
+              <View style={styles.cartIconWrap}>
+                <ShoppingCart size={20} color={COLORS.white} />
+              </View>
+              <View style={styles.cartInfo}>
+                <Text style={styles.cartTitle}>
+                  {locale === "en" ? "Your Cart" : "Gaarigaaga"}
+                </Text>
+                <Text style={styles.cartSub}>
+                  {cartTotal.items} item{cartTotal.items === 1 ? "" : "s"} · {formatUSD(cartTotal.subtotalUSD)}
+                </Text>
+              </View>
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{cartTotal.items}</Text>
+              </View>
+              <ChevronRight size={20} color={COLORS.primary} />
+            </Pressable>
+          )}
+
+          {/* Stats overview */}
+          {orders.length > 0 && (
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{activeOrders.length}</Text>
+                <Text style={styles.statLabel}>
+                  {locale === "en" ? "Active" : "Socda"}
+                </Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{historyOrders.filter((o) => o.status === "delivered").length}</Text>
+                <Text style={styles.statLabel}>
+                  {locale === "en" ? "Delivered" : "La geeyay"}
+                </Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>${totalSpent.toFixed(0)}</Text>
+                <Text style={styles.statLabel}>
+                  {locale === "en" ? "Spent" : "Wadarta"}
+                </Text>
+              </View>
+            </View>
+          )}
 
           {loading ? (
             <>
@@ -231,14 +243,53 @@ export default function OrdersScreen() {
               <OrderCardSkeleton />
               <OrderCardSkeleton />
             </>
-          ) : filteredOrders.length === 0 ? (
-            renderEmptyState()
+          ) : orders.length === 0 ? (
+            renderEmpty()
           ) : (
-            filteredOrders.map(renderOrderCard)
+            <>
+              {/* Active orders with smart tracking */}
+              {activeOrders.length > 0 && (
+                <>
+                  <View style={styles.sectionHeader}>
+                    <View style={styles.sectionIcon}>
+                      <Truck size={16} color={COLORS.primary} />
+                    </View>
+                    <Text style={styles.sectionTitle}>
+                      {locale === "en" ? "Active Orders" : "Dalabka Socda"}
+                    </Text>
+                    <View style={styles.sectionCount}>
+                      <Text style={styles.sectionCountText}>{activeOrders.length}</Text>
+                    </View>
+                  </View>
+                  {activeOrders.map((order, i) => (
+                    <ActiveOrderCard key={order.id} order={order} index={i} />
+                  ))}
+                </>
+              )}
+
+              {/* Order history */}
+              {historyOrders.length > 0 && (
+                <>
+                  <View style={styles.sectionHeader}>
+                    <View style={[styles.sectionIcon, styles.sectionIconHistory]}>
+                      <CheckCircle2 size={16} color={COLORS.success} />
+                    </View>
+                    <Text style={styles.sectionTitle}>
+                      {locale === "en" ? "Order History" : "Taariikhda Dalabka"}
+                    </Text>
+                    <View style={[styles.sectionCount, styles.sectionCountHistory]}>
+                      <Text style={styles.sectionCountText}>{historyOrders.length}</Text>
+                    </View>
+                  </View>
+                  {historyOrders.map(renderHistoryCard)}
+                </>
+              )}
+            </>
           )}
 
           <View style={styles.bottomPadding} />
         </ScrollView>
+        <FloatingCartButton />
       </SafeAreaView>
     </ErrorBoundary>
   );
@@ -246,54 +297,208 @@ export default function OrdersScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.warmWhite },
-  header: { paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md },
+  header: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerEyebrow: {
+    fontSize: 10,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
+    letterSpacing: 1.1,
+    marginBottom: 4,
+  },
   headerTitle: { fontSize: 28, fontFamily: FONTS.bold, color: COLORS.black },
-  tabBarContainer: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  tabBar: { paddingHorizontal: SPACING.lg },
-  tab: { paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, marginRight: SPACING.xs, minHeight: 44, justifyContent: "center" },
-  tabActive: { borderBottomWidth: 2, borderBottomColor: COLORS.primary },
-  tabText: { fontSize: 14, fontFamily: FONTS.medium, color: COLORS.textSecondary },
-  tabTextActive: { color: COLORS.primary, fontFamily: FONTS.semibold },
+  refreshPill: {
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+  },
+  refreshPillText: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.primary },
   listContainer: { flex: 1 },
-  listContent: { paddingTop: SPACING.md },
+  listContent: { paddingTop: SPACING.sm },
 
-  // Tracking card
-  trackingCard: {
-    backgroundColor: COLORS.white, borderRadius: RADIUS.lg,
-    padding: SPACING.lg, marginHorizontal: SPACING.lg, marginBottom: SPACING.lg,
-    borderWidth: 1, borderColor: COLORS.border,
+  // Cart summary
+  cartSummaryCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
-  trackingTitle: { fontSize: 17, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: 4 },
-  trackingSub: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.lg },
+  cartIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cartInfo: { flex: 1 },
+  cartTitle: { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.black },
+  cartSub: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
+  cartBadge: {
+    minWidth: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.softOrange,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  cartBadgeText: { fontSize: 13, fontFamily: FONTS.bold, color: COLORS.primary },
 
-  // Route visualization
-  routeContainer: {
-    flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between",
+  // Stats overview
+  statsRow: {
+    flexDirection: "row",
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.xl,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    paddingVertical: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  routeStep: { alignItems: "center", flex: 1 },
-  routeDot: {
-    width: 32, height: 32, borderRadius: 16, backgroundColor: COLORS.gray100,
-    alignItems: "center", justifyContent: "center", marginBottom: 6,
-    borderWidth: 2, borderColor: COLORS.gray200,
+  statItem: { flex: 1, alignItems: "center" },
+  statValue: { fontSize: 20, fontFamily: FONTS.bold, color: COLORS.black },
+  statLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+  statDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: COLORS.border,
+    alignSelf: "center",
   },
-  routeDotActive: {
-    backgroundColor: COLORS.primary, borderColor: COLORS.primary,
+
+  // Section headers
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.md,
+    marginTop: SPACING.sm,
   },
-  routeLabel: { fontSize: 10, fontFamily: FONTS.medium, color: COLORS.textMuted, textAlign: "center" },
-  routeLabelActive: { color: COLORS.primary, fontFamily: FONTS.semibold },
-  routeLine: {
-    height: 2, backgroundColor: COLORS.gray200, marginTop: 15, marginBottom: 20,
-    flex: 0.3,
+  sectionIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: COLORS.softOrange,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: SPACING.sm,
   },
-  routeLineActive: { backgroundColor: COLORS.primary },
+  sectionIconHistory: {
+    backgroundColor: "#ECFDF5",
+  },
+  sectionTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+  },
+  sectionCount: {
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: COLORS.softOrange,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  sectionCountHistory: {
+    backgroundColor: "#ECFDF5",
+  },
+  sectionCountText: {
+    fontSize: 12,
+    fontFamily: FONTS.bold,
+    color: COLORS.primary,
+  },
+
+  // History card
+  historyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  historyStatus: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#ECFDF5",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  historyInfo: { flex: 1 },
+  historyRef: {
+    fontSize: 14,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+  },
+  historyMeta: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  historyTotal: {
+    fontSize: 14,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+  },
 
   // Empty state
   emptyState: { alignItems: "center", paddingTop: SPACING.xxxl * 2 },
-  emptyIconContainer: { width: 96, height: 96, borderRadius: 48, backgroundColor: COLORS.gray100, alignItems: "center", justifyContent: "center", marginBottom: SPACING.lg },
+  emptyIconContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: COLORS.gray100,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: SPACING.lg,
+  },
   emptyTitle: { fontSize: 18, fontFamily: FONTS.semibold, color: COLORS.black, marginBottom: SPACING.sm },
-  emptySubtitle: { fontSize: 14, color: COLORS.textSecondary, marginBottom: SPACING.xl, fontFamily: FONTS.regular },
-  startButton: { flexDirection: "row", alignItems: "center", backgroundColor: COLORS.primary, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.md, borderRadius: RADIUS.pill, minHeight: 48 },
-  startButtonPressed: { opacity: 0.8 },
-  startButtonText: { color: COLORS.white, fontSize: 15, fontWeight: "600", marginLeft: SPACING.sm, fontFamily: FONTS.semibold },
-  bottomPadding: { height: 100 },
+  emptySubtitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xl,
+    fontFamily: FONTS.regular,
+  },
+  startButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.pill,
+    minHeight: 48,
+  },
+  startButtonText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontFamily: FONTS.semibold,
+    marginLeft: SPACING.sm,
+  },
+  bottomPadding: { height: 110 },
 });
