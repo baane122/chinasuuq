@@ -10,6 +10,7 @@ import {
   TextInput,
   FlatList,
   Image,
+  Animated,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -103,6 +104,19 @@ export default function MarketplaceBrowser() {
   const [showCurated, setShowCurated] = useState(false);
   const webRef = useRef<any>(null);
 
+  // Branded skeleton shimmer: gentle infinite opacity pulse while loading
+  const pulse = useRef(new Animated.Value(0.4)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.4, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [pulse]);
+
   // restore translation pref
   useEffect(() => {
     (async () => {
@@ -138,7 +152,7 @@ export default function MarketplaceBrowser() {
 
   // re-run scripts on navigation completes (bundled into one bridge call for perf)
   const runPerPageScripts = useCallback(
-    (webview: any) => {
+    (webview: any, delay = 0) => {
       const post = () => {
         try {
           // Build one combined script so the WebView only makes 1 round-trip
@@ -155,8 +169,9 @@ export default function MarketplaceBrowser() {
           webview?.injectJavaScript?.(combined);
         } catch {}
       };
-      // slight delay so SPA content settles
-      setTimeout(post, 1200);
+      // Translate ASAP for a snappy feel. Run once immediately and again
+      // shortly after so late-mounted SPA text still gets picked up fast.
+      setTimeout(post, delay);
     },
     [translateLang, accountCookieScript]
   );
@@ -224,6 +239,25 @@ export default function MarketplaceBrowser() {
       } catch {}
     }, 200);
   }, []);
+
+  // Open the capture form. If we don't yet have a captured listing, run the
+  // product-capture script first and open once a price arrives (or after a
+  // short fallback timeout) so the user sees a real ¥/USD price, not $0.
+  const openCaptureForm = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (currentListing && currentListing.price > 0) {
+      setCaptureFormVisible(true);
+      return;
+    }
+    // Trigger a fresh capture, then open the form shortly after.
+    tapCapture();
+    // The CAPTURE message sets currentListing -> we listen for it below.
+    // As a fallback, open the form regardless after 1.4s so the user is never
+    // stuck, even if the page didn't expose a scannable price.
+    setTimeout(() => {
+      setCaptureFormVisible(true);
+    }, 1400);
+  }, [currentListing, tapCapture]);
 
   const cycleTranslate = useCallback(async () => {
     Haptics.selectionAsync();
@@ -333,9 +367,22 @@ export default function MarketplaceBrowser() {
               setCanGoForward(nav.canGoForward);
             }}
             onShouldStartLoadWithRequest={(req) => {
-              // Open external schemes outside the WebView
+              // External schemes
               const u = req.url || "";
-              if (/^(intent|itms|itms-apps|market|fb|messenger|whatsapp|tg|mailto|tel):/i.test(u)) {
+              const scheme = u.split(":")[0]?.toLowerCase();
+              // App-awakening deep links (wireless1688, tbopen, openapp.jdmobile,
+              // alipay, taobao, etc.) try to open native apps — block them so the
+              // user stays in our WebView instead of erroring/failing.
+              const BLOCKED_APP_SCHEMES = new Set([
+                "wireless1688", "tbopen", "openapp", "openapp.jdmobile",
+                "alipay", "alipays", "aliopen", "taobao", "tmall", "jd",
+                "weixin", "wechat", "snssdk", "sinaweibo",
+              ]);
+              if (BLOCKED_APP_SCHEMES.has(scheme)) {
+                return false;
+              }
+              // Real intents / app store links open outside (rare; just block)
+              if (/^(intent|itms|itms-apps|market|fb|messenger|tg|mailto|tel):/i.test(u)) {
                 Linking.openURL(u).catch(() => {});
                 return false;
               }
@@ -345,7 +392,21 @@ export default function MarketplaceBrowser() {
               return false;
             }}
             onLoadStart={() => { setLoading(true); setCurrentListing(null); setCnylist([]); setLoginWall(false); setBlocked(false); }}
-            onLoadEnd={() => { setLoading(false); if (webRef.current) runPerPageScripts(webRef.current); }}
+            onLoadEnd={() => {
+              setLoading(false);
+              if (webRef.current) {
+                // Fast: kick off scripts immediately so translation starts ASAP.
+                runPerPageScripts(webRef.current, 10);
+                // Follow-up: catch SPA content that mounts a moment later.
+                setTimeout(() => {
+                  if (webRef.current && translateLang) {
+                    webRef.current.injectJavaScript(
+                      `window.__CS_TL=${JSON.stringify(translateLang)};${TRANSLATE_SCRIPT}`
+                    );
+                  }
+                }, 700);
+              }
+            }}
             onError={() => {
               setLoading(false);
             }}
@@ -353,6 +414,7 @@ export default function MarketplaceBrowser() {
             javaScriptEnabled
             domStorageEnabled
             cacheEnabled
+            setBuiltInZoomControls={false}
             setSupportMultipleWindows={false}
             javaScriptCanOpenWindowsAutomatically={false}
             allowsInlineMediaPlayback
@@ -367,11 +429,32 @@ export default function MarketplaceBrowser() {
             keyboardDisplayRequiresUserAction={false}
           />
           {loading && (
-            <View style={styles.loading} pointerEvents="none">
-              <View style={styles.loadingCard}>
-                <ActivityIndicator size="small" color={COLORS.primary} />
-                <Text style={styles.loadingText}>Loading {meta.name}...</Text>
-              </View>
+            <View style={styles.skeletonOverlay} pointerEvents="none">
+              <Animated.View style={[styles.skeletonBody, { opacity: pulse }]}>
+                {/* Marketplace brand chip */}
+                <View style={styles.skeletonBrand}>
+                  <View style={[styles.skeletonLogo, { backgroundColor: PLATFORM_BRAND_COLOR[marketplace ?? "1688"] || "#FF5000" }]}>
+                    <Text style={styles.skeletonLogoText}>
+                      {PLATFORM_MARK[marketplace ?? "1688"] || "CS"}
+                    </Text>
+                  </View>
+                  <View style={styles.skeletonBrandText}>
+                    <View style={[styles.skeletonLine, styles.skeletonLineBrand, { backgroundColor: (PLATFORM_BRAND_COLOR[marketplace ?? "1688"] || "#FF5000") + "2E" }]} />
+                    <Text style={styles.skeletonName}>{meta.name}</Text>
+                    <View style={[styles.skeletonLine, styles.skeletonLineSub, { backgroundColor: "#E9E5E1" }]} />
+                  </View>
+                </View>
+
+                {/* Large image block */}
+                <View style={[styles.skeletonImage, { backgroundColor: (PLATFORM_BRAND_COLOR[marketplace ?? "1688"] || "#FF5000") + "16" }]} />
+
+                {/* Text lines */}
+                <View style={styles.skeletonTextBlock}>
+                  <View style={[styles.skeletonLine, styles.skeletonLineWide, { backgroundColor: "#E9E5E1" }]} />
+                  <View style={[styles.skeletonLine, styles.skeletonLineMid, { backgroundColor: "#E9E5E1" }]} />
+                  <View style={[styles.skeletonLine, styles.skeletonLineShort, { backgroundColor: "#E9E5E1" }]} />
+                </View>
+              </Animated.View>
             </View>
           )}
 
@@ -488,17 +571,22 @@ export default function MarketplaceBrowser() {
         {controlsVisible && <TouchableOpacity
           style={styles.captureDock}
           activeOpacity={0.85}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            setCaptureFormVisible(true);
-          }}
+          onPress={openCaptureForm}
         >
           <View style={styles.captureDockIcon}>
-            <Plus size={18} color={COLORS.white} strokeWidth={3} />
+            {captureBusy ? (
+              <ActivityIndicator size="small" color={COLORS.white} />
+            ) : (
+              <Plus size={18} color={COLORS.white} strokeWidth={3} />
+            )}
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.captureDockTitle}>Add to ChinaSuuq cart</Text>
-            <Text style={styles.captureDockSub}>Smart-capture this product → convert & configure specs</Text>
+            <Text style={styles.captureDockSub}>
+              {captureBusy
+                ? "Detecting price…"
+                : "Smart-capture this product → convert & configure specs"}
+            </Text>
           </View>
         </TouchableOpacity>}
 
@@ -607,6 +695,47 @@ const styles = StyleSheet.create({
   },
   loadingCard: { flexDirection: "row", alignItems: "center", gap: SPACING.sm, backgroundColor: COLORS.white, borderRadius: RADIUS.pill, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.black, shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 4 },
   loadingText: { fontSize: 13, fontFamily: FONTS.semibold, color: COLORS.textSecondary },
+  // branded skeleton loading
+  skeletonOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: COLORS.warmWhite,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: 24,
+  },
+  skeletonBody: { width: "100%" },
+  skeletonBrand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.md,
+  },
+  skeletonLogo: {
+    width: 52,
+    height: 52,
+    borderRadius: RADIUS.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  skeletonLogoText: { color: COLORS.white, fontSize: 20, fontFamily: FONTS.bold },
+  skeletonBrandText: { flex: 1, gap: 5 },
+  skeletonLine: { height: 10, borderRadius: RADIUS.pill },
+  skeletonLineBrand: { width: 64, height: 8 },
+  skeletonName: { fontSize: 17, fontFamily: FONTS.bold, color: COLORS.black },
+  skeletonLineSub: { width: 110, height: 8 },
+  skeletonImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: RADIUS.lg,
+    marginTop: SPACING.lg,
+  },
+  skeletonTextBlock: { marginTop: SPACING.lg, gap: SPACING.md },
+  skeletonLineWide: { width: "100%" },
+  skeletonLineMid: { width: "78%" },
+  skeletonLineShort: { width: "55%" },
   // login wall banner
   loginBanner: {
     position: "absolute",
