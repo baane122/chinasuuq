@@ -74,10 +74,12 @@ export default function CheckoutScreen() {
   const [deliveryNotes, setDeliveryNotes] = useState("");
 
   // Cost calculation — auto-calculate shipping based on cart items
+  // Note: Domestic shipping within China is included in product price
+  // Customer pays international shipping (air/sea) when goods arrive in Somalia
   const subtotal = total.subtotalUSD;
   const serviceFee = Math.round(subtotal * 0.05 * 100) / 100;
 
-  // Auto-calculate estimated shipping cost
+  // Auto-calculate estimated international shipping cost (China → Somalia)
   const estimatedShipping = cartItems.reduce((total, item) => {
     const weight = item.product.attributes?.weight
       ? parseFloat(String(item.product.attributes.weight).replace(/[^0-9.]/g, "")) || 0.5
@@ -85,7 +87,7 @@ export default function CheckoutScreen() {
     const shipping = calculateShipping(
       {
         weight_kg: weight * item.quantity,
-        domestic_shipping_cny: item.product.domestic_shipping_cny || 0,
+        domestic_shipping_cny: 0, // not needed - international only
         marketplace: item.product.marketplace,
       },
       1, // already multiplied weight by quantity
@@ -94,7 +96,7 @@ export default function CheckoutScreen() {
     return total + shipping.costUSD;
   }, 0);
 
-  const grandTotal = subtotal + serviceFee; // shipping paid on arrival
+  const grandTotal = subtotal + serviceFee; // shipping paid on arrival in Somalia
 
   const canProceed = () => {
     switch (step) {
@@ -221,8 +223,8 @@ export default function CheckoutScreen() {
         </View>
         <View style={styles.shippingInfo}>
           <Text style={[styles.shippingTitle, shippingMethod === "air" && styles.shippingTitleActive]}>Air Freight</Text>
-          <Text style={styles.shippingDesc}>7-14 days · Faster delivery</Text>
-          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Paid on arrival</Text>
+          <Text style={styles.shippingDesc}>7-14 days from China warehouse</Text>
+          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Pay on arrival</Text>
         </View>
         <View style={[styles.radioOuter, shippingMethod === "air" && styles.radioOuterActive]}>
           {shippingMethod === "air" && <View style={styles.radioDot} />}
@@ -234,8 +236,8 @@ export default function CheckoutScreen() {
         </View>
         <View style={styles.shippingInfo}>
           <Text style={[styles.shippingTitle, shippingMethod === "sea" && styles.shippingTitleActive]}>Sea Freight</Text>
-          <Text style={styles.shippingDesc}>25-35 days · More economical</Text>
-          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Paid on arrival</Text>
+          <Text style={styles.shippingDesc}>25-35 days from China warehouse</Text>
+          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Pay on arrival</Text>
         </View>
         <View style={[styles.radioOuter, shippingMethod === "sea" && styles.radioOuterActive]}>
           {shippingMethod === "sea" && <View style={styles.radioDot} />}

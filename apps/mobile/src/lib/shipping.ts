@@ -20,20 +20,19 @@ export interface ProductShipping {
 const CNY_TO_USD = 0.14; // ~7.14 CNY per USD
 const USD_TO_SOS = 570; // ~570 SOS per USD
 
-// Air freight rates (per kg)
+// Air freight rates (per kg) - China to Somalia
 const AIR_RATE_PER_KG = 8.50; // USD per kg for air freight
 const AIR_MIN_CHARGE = 15; // minimum charge for air
 
-// Sea freight rates (per kg, with minimums)
+// Sea freight rates (per kg) - China to Somalia
 const SEA_RATE_PER_KG = 2.20; // USD per kg for sea freight
 const SEA_MIN_CHARGE = 25; // minimum charge for sea
 const SEA_MIN_WEIGHT = 10; // minimum chargeable weight
 
-// Domestic shipping (within China to warehouse)
-const DOMESTIC_SHIPPING_CNY_PER_KG = 5; // ~5 CNY per kg domestic
-
 /**
- * Calculate shipping cost for a product
+ * Calculate shipping cost for a product (China to Somalia only)
+ * Note: Domestic shipping within China is handled by the seller/marketplace
+ * Customer pays international shipping when goods arrive in Somalia
  */
 export function calculateShipping(
   product: ProductShipping,
@@ -43,39 +42,32 @@ export function calculateShipping(
   // Calculate total weight
   const totalWeight = Math.max(product.weight_kg * quantity, 0.5); // minimum 0.5kg
 
-  // Add domestic shipping if not included
-  const domesticShippingCNY = product.domestic_shipping_cny ||
-    Math.ceil(totalWeight * DOMESTIC_SHIPPING_CNY_PER_KG);
-  const domesticShippingUSD = Math.round(domesticShippingCNY * CNY_TO_USD * 100) / 100;
-
-  // Calculate international shipping
-  let internationalCostUSD: number;
+  // International shipping only (China → Somalia)
+  let costUSD: number;
   let days: string;
   let label: string;
 
   if (method === "air") {
     // Air freight calculation
     const freightCost = Math.max(totalWeight * AIR_RATE_PER_KG, AIR_MIN_CHARGE);
-    internationalCostUSD = Math.round(freightCost * 100) / 100;
+    costUSD = Math.round(freightCost * 100) / 100;
     days = "7-14";
     label = "Air Freight";
   } else {
     // Sea freight calculation
     const chargeableWeight = Math.max(totalWeight, SEA_MIN_WEIGHT);
     const freightCost = Math.max(chargeableWeight * SEA_RATE_PER_KG, SEA_MIN_CHARGE);
-    internationalCostUSD = Math.round(freightCost * 100) / 100;
+    costUSD = Math.round(freightCost * 100) / 100;
     days = "25-35";
     label = "Sea Freight";
   }
 
-  // Total shipping (domestic + international)
-  const totalUSD = Math.round((domesticShippingUSD + internationalCostUSD) * 100) / 100;
-  const totalCNY = Math.round(totalUSD / CNY_TO_USD);
+  const costCNY = Math.round(costUSD / CNY_TO_USD);
 
   return {
     method,
-    costUSD: totalUSD,
-    costCNY: totalCNY,
+    costUSD,
+    costCNY,
     days,
     label,
   };
