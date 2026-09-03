@@ -10,8 +10,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
+
+const ONBOARDING_KEY = "chinasuuq-onboarding-seen";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -57,11 +60,13 @@ export default function OnboardingScreen() {
       setIndex(next);
       scrollRef.current?.scrollTo({ x: next * SCREEN_W, animated: true });
     } else {
+      void AsyncStorage.setItem(ONBOARDING_KEY, "1");
       router.replace("/(tabs)/home");
     }
   };
 
   const handleSkip = () => {
+    void AsyncStorage.setItem(ONBOARDING_KEY, "1");
     router.replace("/(tabs)/home");
   };
 

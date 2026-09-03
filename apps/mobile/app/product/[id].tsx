@@ -11,21 +11,22 @@ import {
 } from "react-native";
 import {
   ArrowLeft,
-  Search,
   Star,
   Truck,
   MessageCircle,
   ShieldCheck,
   ChevronDown,
   ChevronUp,
+  Heart,
 } from "lucide-react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS, whatsappOrderLink } from "@/lib/theme";
 import { formatUSD, formatCNY } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
+import { useAuthStore } from "@/store/auth";
 import { useCartStore } from "@/store/cart";
-import { getProductById } from "@/db";
+import { getProductById, toggleFavorite, getFavorites } from "@/db";
 import type { Product, ProductVariant } from "@/types";
 import ImageCarousel from "@/components/product/ImageCarousel";
 import QuantitySelector from "@/components/product/QuantitySelector";
@@ -36,10 +37,13 @@ export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { t } = useI18n();
   const addItem = useCartStore((s) => s.addItem);
+  const user = useAuthStore((s) => s.user);
 
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [togglingFav, setTogglingFav] = useState(false);
 
   const [qty, setQty] = useState(1);
   const [variantSelections, setVariantSelections] = useState<
@@ -84,6 +88,39 @@ export default function ProductDetailScreen() {
       active = false;
     };
   }, [id]);
+
+  // Check if this product is in the user's wishlist
+  useEffect(() => {
+    (async () => {
+      if (!user?.id || !id) {
+        setIsFavorite(false);
+        return;
+      }
+      try {
+        const favs = await getFavorites(user.id);
+        setIsFavorite(favs.some((p) => p.id === id));
+      } catch {}
+    })();
+  }, [id, user?.id]);
+
+  const handleToggleFavorite = async () => {
+    if (!user?.id) {
+      Alert.alert(
+        "Sign in to save",
+        "Create an account or sign in to save items to your wishlist."
+      );
+      return;
+    }
+    if (!id) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setTogglingFav(true);
+    try {
+      const nowFav = await toggleFavorite(user.id, id);
+      setIsFavorite(nowFav);
+    } finally {
+      setTogglingFav(false);
+    }
+  };
 
   const images = useMemo(() => {
     return product?.images && product.images.length > 0
@@ -161,10 +198,15 @@ export default function ProductDetailScreen() {
       <Text style={styles.headerTitle}>Product Detail</Text>
       <TouchableOpacity
         style={styles.headerBtn}
-        onPress={() => router.push("/search")}
+        onPress={handleToggleFavorite}
         activeOpacity={0.7}
+        disabled={togglingFav}
       >
-        <Search size={22} color={COLORS.black} />
+        <Heart
+          size={22}
+          color={isFavorite ? COLORS.error : COLORS.black}
+          fill={isFavorite ? COLORS.error : "transparent"}
+        />
       </TouchableOpacity>
     </View>
   );

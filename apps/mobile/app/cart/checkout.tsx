@@ -25,20 +25,32 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS, whatsappOrderLink } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useCartStore } from "@/store/cart";
+import { useAuthStore } from "@/store/auth";
 import StepIndicator from "@/components/checkout/StepIndicator";
 import PaymentMethodCard from "@/components/checkout/PaymentMethodCard";
 import { formatUSD, generateOrderRef } from "@/lib/utils";
 import { createOrder } from "@/db";
+import { SmartRoute } from "@/components/orders/SmartRoute";
 
 const STEP_LABELS = ["Contact", "Shipping", "Payment", "Confirm"];
-const CITIES = ["Mogadishu", "Hargeisa", "Berbera", "Kismayo", "Garowe", "Bosaso", "Mandera", "Nairobi"];
+const CITIES = [
+  "Mogadishu",
+  "Hargeisa",
+  "Berbera",
+  "Kismayo",
+  "Garowe",
+  "Bosaso",
+  "Mandera",
+  "Nairobi",
+];
 
 export default function CheckoutScreen() {
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const cartItems = useCartStore((s) => s.items);
   const getTotal = useCartStore((s) => s.getTotal);
   const total = getTotal();
+  const user = useAuthStore((s) => s.user);
 
   const [step, setStep] = useState(0);
   const [showCityDropdown, setShowCityDropdown] = useState(false);
@@ -54,9 +66,11 @@ export default function CheckoutScreen() {
 
   // Step 3 — Payment
   const [paymentMethod, setPaymentMethod] = useState("");
+  const [paymentIdentifier, setPaymentIdentifier] = useState("");
 
   // Step 4 — Confirm
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [deliveryNotes, setDeliveryNotes] = useState("");
 
   // Cost calculation — shipping is NOT priced here. Customer picks air/sea
   // and pays shipping when the goods arrive (ChinaSuuq invoices it at delivery).
@@ -66,9 +80,21 @@ export default function CheckoutScreen() {
 
   const canProceed = () => {
     switch (step) {
-      case 0: return fullName.trim() && phone.trim() && city.trim() && address.trim();
+      case 0:
+        return (
+          fullName.trim().length >= 2 &&
+          /^[0-9+\s-]{7,}$/.test(phone.trim()) &&
+          city.trim() &&
+          address.trim()
+        );
       case 1: return !!shippingMethod;
-      case 2: return !!paymentMethod;
+      case 2:
+        if (!paymentMethod) return false;
+        // require a phone / account for non-WhatsApp methods
+        if (paymentMethod !== "whatsapp" && !/^[0-9+\s-]{7,}$/.test(paymentIdentifier.trim())) {
+          return false;
+        }
+        return true;
       case 3: return acceptedTerms;
       default: return false;
     }
@@ -89,10 +115,10 @@ export default function CheckoutScreen() {
 
   const handlePlaceOrder = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    let orderId = `ord-${Date.now()}`;
     try {
-      // Persist the order via the resilient data layer (local-first + supabase sync)
-      await createOrder({
-        id: `ord-${Date.now()}`,
+      const created = await createOrder({
+        id: orderId,
         reference: generateOrderRef(),
         status: "pending",
         items: cartItems.map((it) => ({
@@ -113,31 +139,37 @@ export default function CheckoutScreen() {
         updated_at: new Date().toISOString(),
         synced: true,
       });
+      orderId = created.id;
       useCartStore.getState().clearCart();
     } catch {
-      // even if persistence fails, still show confirmation
+      // even if persistence fails, still show success
     }
-    Alert.alert(
-      "Order Placed!",
-      "Your order has been placed successfully. We will contact you shortly on WhatsApp.",
-      [
-        {
-          text: "OK",
-          onPress: async () => {
-            try {
-              const url = whatsappOrderLink("Multiple items");
-              const supported = await Linking.canOpenURL(url);
-              if (supported) await Linking.openURL(url);
-            } catch { /* ignore */ }
-            router.replace("/orders");
-          },
-        },
-      ]
-    );
+    router.replace(`/orders/success?id=${orderId}`);
   };
 
   const renderStep1 = () => (
     <View style={styles.stepContent}>
+      {/* Guest login prompt */}
+      {!user && (
+        <View style={styles.loginPrompt}>
+          <Text style={styles.loginPromptText}>
+            {locale === "en"
+              ? "Sign in to save your order history & track shipments"
+              : "Ku soo dhawoobo si aad u kaydiso taariikhda dalabka & raadinta"}
+          </Text>
+          <TouchableOpacity
+            style={styles.loginPromptLink}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push("/(auth)/login");
+            }}
+          >
+            <Text style={styles.loginPromptLinkText}>
+              {locale === "en" ? "Sign In" : "Gal"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <Text style={styles.stepTitle}>Contact Information</Text>
       <Text style={styles.label}>Full Name</Text>
       <TextInput style={styles.input} placeholder="e.g. Ahmed Hassan" placeholderTextColor={COLORS.gray400} value={fullName} onChangeText={setFullName} autoCapitalize="words" />
@@ -191,17 +223,50 @@ export default function CheckoutScreen() {
           {shippingMethod === "sea" && <View style={styles.radioDot} />}
         </View>
       </TouchableOpacity>
+
+      {/* Route preview — show once city + method selected */}
+      {city && (
+        <View style={styles.routePreview}>
+          <Text style={styles.routePreviewTitle}>
+            {locale === "en" ? "Your delivery route" : "Jidka gaarsiintaada"}
+          </Text>
+          <SmartRoute method={shippingMethod} city={city} status="pending" />
+        </View>
+      )}
     </View>
   );
 
   const renderStep3 = () => (
     <View style={styles.stepContent}>
       <Text style={styles.stepTitle}>Payment Method</Text>
-      <PaymentMethodCard icon="📱" name="ZAAD" description="Mobile money transfer" selected={paymentMethod === "zaad"} onSelect={() => { setPaymentMethod("zaad"); Haptics.selectionAsync(); }} />
-      <PaymentMethodCard icon="💰" name="eDahab" description="Mobile wallet payment" selected={paymentMethod === "edahab"} onSelect={() => { setPaymentMethod("edahab"); Haptics.selectionAsync(); }} />
-      <PaymentMethodCard icon="📞" name="EVC Plus" description="Prepaid scratch card" selected={paymentMethod === "evc"} onSelect={() => { setPaymentMethod("evc"); Haptics.selectionAsync(); }} />
-      <PaymentMethodCard icon="🏦" name="Bank Transfer" description="Direct bank deposit" selected={paymentMethod === "bank"} onSelect={() => { setPaymentMethod("bank"); Haptics.selectionAsync(); }} />
-      <PaymentMethodCard icon="💬" name="Pay on WhatsApp" description="Arrange payment via chat" selected={paymentMethod === "whatsapp"} onSelect={() => { setPaymentMethod("whatsapp"); Haptics.selectionAsync(); }} />
+      <PaymentMethodCard icon="📱" name="ZAAD" description="Mobile money transfer" selected={paymentMethod === "zaad"} onSelect={() => { setPaymentMethod("zaad"); setPaymentIdentifier(""); Haptics.selectionAsync(); }} />
+      <PaymentMethodCard icon="💰" name="eDahab" description="Mobile wallet payment" selected={paymentMethod === "edahab"} onSelect={() => { setPaymentMethod("edahab"); setPaymentIdentifier(""); Haptics.selectionAsync(); }} />
+      <PaymentMethodCard icon="📞" name="EVC Plus" description="Prepaid scratch card" selected={paymentMethod === "evc"} onSelect={() => { setPaymentMethod("evc"); setPaymentIdentifier(""); Haptics.selectionAsync(); }} />
+      <PaymentMethodCard icon="🏦" name="Bank Transfer" description="Direct bank deposit" selected={paymentMethod === "bank"} onSelect={() => { setPaymentMethod("bank"); setPaymentIdentifier(""); Haptics.selectionAsync(); }} />
+      <PaymentMethodCard icon="💬" name="Pay on WhatsApp" description="Arrange payment via chat" selected={paymentMethod === "whatsapp"} onSelect={() => { setPaymentMethod("whatsapp"); setPaymentIdentifier(""); Haptics.selectionAsync(); }} />
+
+      {paymentMethod && paymentMethod !== "whatsapp" ? (
+        <View style={styles.paymentIdWrap}>
+          <Text style={styles.label}>
+            {paymentMethod === "bank"
+              ? "Bank account number"
+              : "Mobile money phone number"}
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder={paymentMethod === "bank" ? "e.g. 1234 5678 9012" : "+252 61 234 5678"}
+            placeholderTextColor={COLORS.gray400}
+            keyboardType={paymentMethod === "bank" ? "number-pad" : "phone-pad"}
+            value={paymentIdentifier}
+            onChangeText={setPaymentIdentifier}
+          />
+          <Text style={styles.paymentHint}>
+            {paymentMethod === "bank"
+              ? "We will email transfer instructions to confirm."
+              : "We'll confirm the transfer before shipping."}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 
@@ -234,8 +299,20 @@ export default function CheckoutScreen() {
         <Text style={styles.infoLabel}>City: {city}</Text>
         <Text style={styles.infoLabel}>Address: {address}</Text>
         <Text style={styles.infoLabel}>Shipping: {shippingMethod === "air" ? "Air Freight" : "Sea Freight"}</Text>
-        <Text style={styles.infoLabel}>Payment: {paymentMethod.toUpperCase()}</Text>
+        <Text style={styles.infoLabel}>Payment: {paymentMethod.toUpperCase()}{paymentIdentifier ? ` (${paymentIdentifier})` : ""}</Text>
       </View>
+
+      <Text style={styles.label}>Delivery notes (optional)</Text>
+      <TextInput
+        style={[styles.input, styles.textArea]}
+        placeholder="Any instructions for the courier..."
+        placeholderTextColor={COLORS.gray400}
+        value={deliveryNotes}
+        onChangeText={setDeliveryNotes}
+        multiline
+        numberOfLines={3}
+        textAlignVertical="top"
+      />
       <TouchableOpacity style={styles.termsRow} onPress={() => setAcceptedTerms(!acceptedTerms)} activeOpacity={0.7}>
         <View style={[styles.checkbox, acceptedTerms && styles.checkboxActive]}>
           {acceptedTerms && <Check size={14} color={COLORS.white} strokeWidth={3} />}
@@ -306,6 +383,53 @@ const styles = StyleSheet.create({
   headerBtn: { width: 44, height: 44, justifyContent: "center", alignItems: "center" },
   headerTitle: { flex: 1, fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, textAlign: "center", marginRight: 44 },
   scrollContent: { padding: SPACING.lg },
+  // Route preview
+  routePreview: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.lg,
+    marginTop: SPACING.sm,
+  },
+  routePreviewTitle: {
+    fontSize: 14,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+    marginBottom: SPACING.xs,
+  },
+  // Login prompt
+  loginPrompt: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: COLORS.softOrange,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    marginBottom: SPACING.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255,90,10,0.15)",
+  },
+  paymentIdWrap: { marginTop: SPACING.md },
+  paymentHint: { fontSize: 12, color: COLORS.textMuted, marginTop: 4 },
+  loginPromptText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: FONTS.medium,
+    color: COLORS.primaryDark,
+    marginRight: SPACING.md,
+  },
+  loginPromptLink: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+  },
+  loginPromptLinkText: {
+    fontSize: 13,
+    fontFamily: FONTS.bold,
+    color: COLORS.white,
+  },
   // Steps
   stepContent: {},
   stepTitle: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: SPACING.lg },

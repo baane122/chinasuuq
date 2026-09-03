@@ -21,16 +21,30 @@ interface AuthStore {
   signOut: () => Promise<void>;
   loadSession: () => Promise<void>;
   clearError: () => void;
+  refreshProfile: () => Promise<void>;
 }
 
-function mapUser(sessionUser: Session["user"]): User {
+function mapUser(sessionUser: Session["user"], profile?: any): User {
   return {
     id: sessionUser.id,
     email: sessionUser.email,
-    full_name: sessionUser.user_metadata?.full_name,
-    phone: sessionUser.user_metadata?.phone,
-    city: sessionUser.user_metadata?.city,
+    full_name: profile?.full_name || sessionUser.user_metadata?.full_name,
+    phone: profile?.phone || sessionUser.user_metadata?.phone,
+    city: profile?.city || sessionUser.user_metadata?.city,
   };
+}
+
+async function fetchProfile(userId: string) {
+  try {
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, full_name, phone, city")
+      .eq("id", userId)
+      .maybeSingle();
+    return data || null;
+  } catch {
+    return null;
+  }
 }
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
@@ -52,8 +66,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         return { error: error.message };
       }
       if (data.user) {
+        const profile = await fetchProfile(data.user.id);
         set({
-          user: mapUser(data.user),
+          user: mapUser(data.user, profile),
           session: data.session,
           error: null,
         });
@@ -79,8 +94,15 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         return { error: error.message };
       }
       if (data.user) {
+        // Best-effort: write the name into the profiles table right away so
+        // the rest of the app sees a fully populated user.
+        try {
+          await supabase
+            .from("profiles")
+            .upsert({ id: data.user.id, full_name: name, updated_at: new Date().toISOString() });
+        } catch {}
         set({
-          user: mapUser(data.user),
+          user: mapUser(data.user, { full_name: name }),
           session: data.session,
           error: null,
         });
@@ -110,8 +132,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         console.warn("Session restore failed:", error.message);
       }
       if (data.session?.user) {
+        const profile = await fetchProfile(data.session.user.id);
         set({
-          user: mapUser(data.session.user),
+          user: mapUser(data.session.user, profile),
           session: data.session,
           loading: false,
           initialized: true,
@@ -121,6 +144,15 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
     } catch {
       set({ loading: false, initialized: true });
+    }
+  },
+
+  refreshProfile: async () => {
+    const current = get().user;
+    if (!current?.id) return;
+    const profile = await fetchProfile(current.id);
+    if (profile) {
+      set({ user: mapUser({ id: current.id, email: current.email } as any, profile) });
     }
   },
 

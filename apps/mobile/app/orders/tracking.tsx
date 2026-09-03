@@ -19,7 +19,7 @@ import {
   MapPin,
   Calendar,
 } from "lucide-react-native";
-import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
+import { COLORS, SPACING, RADIUS, FONTS, whatsappOrderLink } from "@/lib/theme";
 import { ORDER_STATUS_LABELS } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
 import { getOrders, getOrderById } from "@/db/index";
@@ -256,7 +256,14 @@ export default function TrackingScreen() {
                   pressed && styles.supportButtonPressed,
                 ]}
                 onPress={() => {
-                  // Open WhatsApp support
+                  // Open WhatsApp support with the order reference so the team has context
+                  const ref = order?.reference;
+                  const url = whatsappOrderLink(
+                    ref ? `Tracking question for order ${ref}` : "Tracking question"
+                  );
+                  import("react-native").then(({ Linking }) => {
+                    Linking.openURL(url).catch(() => {});
+                  });
                 }}
               >
                 <MessageCircle size={18} color={COLORS.white} />

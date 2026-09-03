@@ -19,7 +19,7 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { isBackendOnline, getOrders } from "@/db/index";
+import { isBackendOnline, getOrders, getFavorites } from "@/db/index";
 
 type MenuItem = {
   id: string;
@@ -40,6 +40,7 @@ export default function AccountScreen() {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [checkingBackend, setCheckingBackend] = useState(true);
   const [orderCount, setOrderCount] = useState(0);
+  const [favoritesCount, setFavoritesCount] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -62,6 +63,17 @@ export default function AccountScreen() {
       } catch {}
     })();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (user?.id) {
+          const favs = await getFavorites(user.id);
+          setFavoritesCount(favs?.length ?? 0);
+        }
+      } catch {}
+    })();
+  }, [user?.id]);
 
   const displayName = user?.full_name || "Guest User";
   const displayEmail = user?.email || "";
@@ -168,49 +180,80 @@ export default function AccountScreen() {
         style={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Dark Profile Card — matching reference */}
-        <View style={styles.profileCard}>
-          <View style={styles.profileRow}>
-            <View style={styles.avatar}>
-              <User size={28} color={COLORS.white} />
+        {/* Profile Card — guest or logged-in */}
+        {!user ? (
+          <View style={styles.guestCard}>
+            <View style={styles.guestRow}>
+              <View style={styles.guestIcon}>
+                <User size={28} color={COLORS.white} />
+              </View>
+              <View style={styles.guestInfo}>
+                <Text style={styles.guestTitle}>
+                  {locale === "en" ? "Welcome, Guest" : "Ku soo dhawoobo, Marti"}
+                </Text>
+                <Text style={styles.guestSub}>
+                  {locale === "en"
+                    ? "Sign in to save orders, addresses & wishlist"
+                    : "Ku soo dhawoobo si aad u kaydiso dalabka, cinwaanada & liiska"}
+                </Text>
+              </View>
+              <Pressable
+                style={({ pressed }) => [styles.signInBtn, pressed && { opacity: 0.8 }]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push("/(auth)/login");
+                }}
+              >
+                <Text style={styles.signInText}>
+                  {locale === "en" ? "Sign In" : "Gal"}
+                </Text>
+              </Pressable>
             </View>
-            <View style={styles.profileInfo}>
-              <Text style={styles.displayName}>{displayName}</Text>
-              {displayEmail ? (
-                <Text style={styles.displayEmail}>{displayEmail}</Text>
-              ) : null}
-              <View style={styles.locationRow}>
-                <MapPin size={12} color="rgba(255,255,255,0.6)" />
-                <Text style={styles.displayLocation}>{displayLocation}</Text>
+          </View>
+        ) : (
+          <View style={styles.profileCard}>
+            <View style={styles.profileRow}>
+              <View style={styles.avatar}>
+                <User size={28} color={COLORS.white} />
+              </View>
+              <View style={styles.profileInfo}>
+                <Text style={styles.displayName}>{displayName}</Text>
+                {displayEmail ? (
+                  <Text style={styles.displayEmail}>{displayEmail}</Text>
+                ) : null}
+                <View style={styles.locationRow}>
+                  <MapPin size={12} color="rgba(255,255,255,0.6)" />
+                  <Text style={styles.displayLocation}>{displayLocation}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Gold Buyer Badge */}
+            <View style={styles.badgeRow}>
+              <View style={styles.goldBadge}>
+                <Text style={styles.goldBadgeText}>🏅 {locale === "en" ? "Gold Buyer" : "Iibiye Dahab"}</Text>
+              </View>
+            </View>
+
+            {/* Stats Row */}
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{orderCount}</Text>
+                <Text style={styles.statLabel}>{locale === "en" ? "Orders" : "Dalab"}</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{favoritesCount}</Text>
+                <Text style={styles.statLabel}>{locale === "en" ? "Saved" : "Kaydka"}</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>24/7</Text>
+                <Text style={styles.statLabel}>{locale === "en" ? "Support" : "Taageero"}</Text>
               </View>
             </View>
           </View>
-
-          {/* Gold Buyer Badge */}
-          <View style={styles.badgeRow}>
-            <View style={styles.goldBadge}>
-              <Text style={styles.goldBadgeText}>🏅 {locale === "en" ? "Gold Buyer" : "Iibiye Dahab"}</Text>
-            </View>
-          </View>
-
-          {/* Stats Row */}
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>{orderCount}</Text>
-              <Text style={styles.statLabel}>{locale === "en" ? "Orders" : "Dalab"}</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>0</Text>
-              <Text style={styles.statLabel}>{locale === "en" ? "Saved" : "Kaydka"}</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statValue}>24/7</Text>
-              <Text style={styles.statLabel}>{locale === "en" ? "Support" : "Taageero"}</Text>
-            </View>
-          </View>
-        </View>
+        )}
 
         {/* Backend Status */}
         <View
@@ -296,6 +339,57 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
+  },
+
+  // Guest sign-in card
+  guestCard: {
+    marginHorizontal: SPACING.lg,
+    marginTop: SPACING.sm,
+    backgroundColor: COLORS.darkSurface,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.xl,
+    shadowColor: COLORS.black,
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  guestRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  guestIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  guestInfo: { flex: 1 },
+  guestTitle: {
+    fontSize: 17,
+    fontFamily: FONTS.bold,
+    color: COLORS.white,
+    marginBottom: 4,
+  },
+  guestSub: {
+    fontSize: 12,
+    fontFamily: FONTS.regular,
+    color: "rgba(255,255,255,0.55)",
+    lineHeight: 17,
+  },
+  signInBtn: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+  },
+  signInText: {
+    fontSize: 14,
+    fontFamily: FONTS.bold,
+    color: COLORS.white,
   },
   profileRow: {
     flexDirection: "row",

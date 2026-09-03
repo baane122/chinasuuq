@@ -24,6 +24,9 @@ const MARKET_NAMES: Record<string, string> = {
   "1688": "1688.com",
   taobao: "Taobao",
   yiwugo: "YiwuGo",
+  alibaba: "Alibaba",
+  chinagoods: "ChinaGoods",
+  jd: "JD.com",
   chinasuuq: "ChinaSuuq Deals",
 };
 
@@ -31,6 +34,9 @@ const MARKET_COLORS: Record<string, string> = {
   "1688": "#FF5000",
   taobao: "#FF7400",
   yiwugo: "#1A8CFF",
+  alibaba: "#FF6A00",
+  chinagoods: "#E60012",
+  jd: "#E1251B",
   chinasuuq: "#FF5A0A",
 };
 

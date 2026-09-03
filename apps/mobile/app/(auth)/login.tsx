@@ -90,6 +90,12 @@ export default function LoginScreen() {
             <Text style={styles.showPassText}>{showPass ? "Hide" : "Show"} Password</Text>
           </TouchableOpacity>
 
+          <Link href="/(auth)/forgot-password" asChild>
+            <TouchableOpacity style={styles.forgotBtn} activeOpacity={0.7}>
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+          </Link>
+
           <TouchableOpacity
             style={[styles.btn, loading && styles.btnDisabled]}
             onPress={handleLogin}
@@ -140,6 +146,8 @@ const styles = StyleSheet.create({
   linkText: { color: COLORS.primary, fontSize: 14, fontWeight: "600" },
   showPassBtn: { alignSelf: "flex-end", marginBottom: SPACING.sm, minHeight: 32, justifyContent: "center" },
   showPassText: { color: COLORS.textSecondary, fontSize: 13 },
+  forgotBtn: { alignSelf: "flex-end", marginBottom: SPACING.md, minHeight: 32, justifyContent: "center", paddingVertical: SPACING.xs },
+  forgotText: { color: COLORS.primary, fontSize: 13, fontWeight: "600" },
   skipBtn: {
     marginTop: SPACING.lg,
     minHeight: 44,

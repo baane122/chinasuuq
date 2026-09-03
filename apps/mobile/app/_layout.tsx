@@ -63,7 +63,7 @@ export default function RootLayout() {
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="onboarding" options={{ presentation: "card" }} />
           <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="(auth)" options={{ presentation: "modal" }} />
+          <Stack.Screen name="(auth)" options={{ presentation: "card" }} />
           <Stack.Screen name="product/[id]" options={{ presentation: "card" }} />
           <Stack.Screen name="marketplace/[marketplace]" options={{ presentation: "card" }} />
           <Stack.Screen name="cart/index" options={{ presentation: "card" }} />
@@ -71,6 +71,7 @@ export default function RootLayout() {
           <Stack.Screen name="search/index" options={{ presentation: "card" }} />
           <Stack.Screen name="orders/[id]" options={{ presentation: "card" }} />
           <Stack.Screen name="orders/tracking" options={{ presentation: "card" }} />
+          <Stack.Screen name="orders/success" options={{ presentation: "card" }} />
           <Stack.Screen name="settings/index" options={{ presentation: "card" }} />
           <Stack.Screen name="support/index" options={{ presentation: "card" }} />
           {/* Profile subscreens */}
@@ -81,6 +82,7 @@ export default function RootLayout() {
           <Stack.Screen name="profile/order-history" options={{ presentation: "card" }} />
           <Stack.Screen name="profile/wishlist" options={{ presentation: "card" }} />
           <Stack.Screen name="profile/referral" options={{ presentation: "card" }} />
+          <Stack.Screen name="notifications/index" options={{ presentation: "card" }} />
           <Stack.Screen name="+not-found" />
         </Stack>
       </View>

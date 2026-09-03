@@ -23,9 +23,11 @@ import {
   User,
   Phone,
   RefreshCw,
+  XCircle,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import { COLORS, SPACING, RADIUS, FONTS, WHATSAPP_LINK } from "@/lib/theme";
+import { Linking } from "react-native";
+import { COLORS, SPACING, RADIUS, FONTS, WHATSAPP_LINK, whatsappOrderLink } from "@/lib/theme";
 import { ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
 import { getOrderById, updateOrderStatus } from "@/db/index";
@@ -130,53 +132,38 @@ export default function OrderDetailScreen() {
   };
 
   const handleContactSupport = () => {
-    // Placeholder — opens WhatsApp link
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (!order) return;
+    const url = whatsappOrderLink(
+      `Question about order ${order.reference}`
+    );
+    Linking.openURL(url).catch(() => {
+      Alert.alert("Error", "Could not open WhatsApp.");
+    });
   };
 
-  const handleUpdateStatus = () => {
+  const handleCancelOrder = () => {
     if (!order) return;
-    const currentStatus = order.status.toLowerCase();
-    // Define possible next statuses
-    const statusFlow = [
-      "pending",
-      "confirmed",
-      "purchasing",
-      "purchased",
-      "in_transit_china",
-      "warehouse",
-      "inspection",
-      "consolidated",
-      "shipped",
-      "in_transit",
-      "arrived_somalia",
-      "customs",
-      "ready_for_pickup",
-      "out_for_delivery",
-      "delivered",
-    ];
-    const idx = statusFlow.indexOf(currentStatus);
-    if (idx === -1 || idx >= statusFlow.length - 1) {
-      Alert.alert("No Update", "This order is already in its final state.");
+    if (order.status === "delivered" || order.status === "cancelled") {
+      Alert.alert("Cannot cancel", "This order can no longer be cancelled.");
       return;
     }
-    const nextStatus = statusFlow[idx + 1];
-    const nextLabel = ORDER_STATUS_LABELS[nextStatus] || nextStatus;
-
     Alert.alert(
-      "Update Status",
-      `Advance order to "${nextLabel}"?`,
+      "Cancel order?",
+      "This will mark the order as cancelled. Our team will reach out to confirm.",
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "Keep order", style: "cancel" },
         {
-          text: "Advance",
+          text: "Cancel order",
+          style: "destructive",
           onPress: async () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             setUpdating(true);
             try {
-              await updateOrderStatus(order.id, nextStatus);
+              await updateOrderStatus(order.id, "cancelled");
               await loadOrder();
             } catch (e) {
-              console.error("Failed to update status", e);
+              console.error("Cancel failed", e);
             } finally {
               setUpdating(false);
             }
@@ -360,7 +347,6 @@ export default function OrderDetailScreen() {
             style={({ pressed }) => [
               styles.primaryButton,
               pressed && styles.primaryButtonPressed,
-              updating && styles.buttonDisabled,
             ]}
             onPress={handleTrack}
           >
@@ -368,24 +354,26 @@ export default function OrderDetailScreen() {
             <Text style={styles.primaryButtonText}>Track Shipment</Text>
           </Pressable>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.updateButton,
-              pressed && styles.updateButtonPressed,
-              updating && styles.buttonDisabled,
-            ]}
-            onPress={handleUpdateStatus}
-            disabled={updating}
-          >
-            {updating ? (
-              <ActivityIndicator size="small" color={COLORS.primary} />
-            ) : (
-              <RefreshCw size={18} color={COLORS.primary} />
-            )}
-            <Text style={styles.updateButtonText}>
-              {updating ? "Updating..." : "Advance Status"}
-            </Text>
-          </Pressable>
+          {order && order.status !== "delivered" && order.status !== "cancelled" ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.updateButton,
+                pressed && styles.updateButtonPressed,
+                updating && styles.buttonDisabled,
+              ]}
+              onPress={handleCancelOrder}
+              disabled={updating}
+            >
+              {updating ? (
+                <ActivityIndicator size="small" color={COLORS.error} />
+              ) : (
+                <XCircle size={18} color={COLORS.error} />
+              )}
+              <Text style={[styles.updateButtonText, { color: COLORS.error }]}>
+                {updating ? "Cancelling..." : "Cancel order"}
+              </Text>
+            </Pressable>
+          ) : null}
 
           <View style={styles.secondaryButtons}>
             <Pressable
@@ -395,8 +383,8 @@ export default function OrderDetailScreen() {
               ]}
               onPress={handleContactSupport}
             >
-              <MessageCircle size={18} color={COLORS.primary} />
-              <Text style={styles.secondaryButtonText}>Contact Support</Text>
+              <MessageCircle size={18} color={COLORS.success} />
+              <Text style={[styles.secondaryButtonText, { color: COLORS.success }]}>Contact Support</Text>
             </Pressable>
           </View>
         </View>

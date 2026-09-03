@@ -56,7 +56,21 @@
     "processing": "Processing",
     "shipped": "Shipped",
     "delivered": "Delivered",
-    "track": "Track Order"
+    "track": "Track Order",
+    "yourCart": "Your Cart",
+    "startShopping": "Start Shopping",
+    "refresh": "Refresh",
+    "activeOrders": "Active Orders",
+    "orderHistory": "Order History",
+    "active": "Active",
+    "deliveredShort": "Delivered",
+    "spent": "Spent",
+    "viewDetails": "View Details",
+    "nextMilestone": "Next",
+    "estArrival": "Est. arrival",
+    "progress": "Progress",
+    "items": "Items",
+    "total": "Total"
   },
   "profile": {
     "title": "Profile",
@@ -71,7 +85,10 @@
     "language": "Language",
     "totalOrders": "Total Orders",
     "saved": "Saved Items",
-    "support247": "24/7"
+    "support247": "24/7",
+    "welcomeGuest": "Welcome, Guest",
+    "guestSubtitle": "Sign in to save orders, addresses & wishlist",
+    "signIn": "Sign In"
   },
   "common": {
     "loading": "Loading...",
@@ -84,7 +101,41 @@
     "next": "Next",
     "done": "Done",
     "search": "Search",
-    "noResults": "No results found"
+    "noResults": "No results found",
+    "edit": "Edit",
+    "delete": "Delete",
+    "phone": "Phone",
+    "email": "Email"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "markAllRead": "Mark all read",
+    "empty": "No notifications yet",
+    "emptySubtitle": "We'll let you know when your order ships, arrives, or needs attention.",
+    "guestTitle": "Sign in to see notifications",
+    "guestSubtitle": "Order updates, shipping alerts, and exclusive offers will appear here."
+  },
+  "paymentMethods": {
+    "title": "Payment Methods",
+    "preferred": "Preferred payment method",
+    "saved": "Saved methods",
+    "addNumber": "Phone or account number",
+    "addBank": "Bank account number",
+    "addNote": "We'll confirm the transfer before shipping."
+  },
+  "success": {
+    "title": "Order placed!",
+    "subtitle": "We've received your order. Our team will reach out on WhatsApp to confirm details and arrange payment.",
+    "track": "Track my order",
+    "keepShopping": "Keep shopping",
+    "whatsapp": "Chat on WhatsApp",
+    "whatNext": "What happens next?",
+    "next1Title": "WhatsApp confirmation",
+    "next1Desc": "We'll message you within 1 hour to confirm and arrange payment.",
+    "next2Title": "Sourcing & quality check",
+    "next2Desc": "We find the supplier, inspect the goods, and pack securely.",
+    "next3Title": "Shipping & delivery",
+    "next3Desc": "Track every step from China to your door in the Orders tab."
   },
   "checkout": {
     "title": "Checkout",

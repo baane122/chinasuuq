@@ -1,12 +1,14 @@
 "use client";
 
 // Admin session helper.
-// Primary path is Supabase Auth. Fallback: if the GoTrue service is having
-// schema issues (e.g. "Database error querying schema"), allow a local recovery
-// session so Mission Control stays usable. The recovery code is stored in a
-// localStorage flag; this is NOT a security boundary, it's a resilience bridge
-// until Supabase restarts the Auth service. Replace/remove when Supabase Auth
-// is healthy.
+// The only supported path is real Supabase Auth. If Supabase Auth is
+// temporarily unavailable, the admin login page surfaces the error instead
+// of falling back to a hardcoded recovery code (which would be a security
+// hole baked into the client bundle).
+//
+// If you need to grant emergency access while Auth is down, set the env var
+// NEXT_PUBLIC_ADMIN_RECOVERY_CODE on the server and verify it in an Edge
+// Function or a server-side route. Never embed a recovery code here.
 
 const FALLBACK_FLAG = "chinasuuq-admin-fallback";
 
@@ -25,5 +27,6 @@ export function hasAdminFallbackSession(): boolean {
   }
 }
 
-// Matches the value used in the login guard.
-export const defaultRecoveryCode = "ChinaSuuq-2026"; // user can change in Settings
+// NOTE: The hardcoded recovery code that previously lived here has been
+// removed for security. Use the server-side recovery flow if needed.
+export const defaultRecoveryCode = "";

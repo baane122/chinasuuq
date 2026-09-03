@@ -18,6 +18,15 @@ export const COLORS = {
   error: "#D92D20",
   info: "#2970FF",
   whatsapp: "#25D366",
+  // shipping method accents
+  air: "#F0780A",
+  sea: "#1E6FD9",
+  // status backgrounds (soft tinted variants)
+  successBg: "#ECFDF5",
+  warningBg: "#FFFBEB",
+  errorBg: "#FEF2F2",
+  infoBg: "#EFF6FF",
+  primaryBg: "#FFF3E9",
   gray50: "#F9FAFB",
   gray100: "#F3F4F6",
   gray200: "#E5E7EB",

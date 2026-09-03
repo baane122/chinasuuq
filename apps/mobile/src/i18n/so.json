@@ -56,7 +56,21 @@
     "processing": "Wadda",
     "shipped": "Diray",
     "delivered": "Gaadhay",
-    "track": "Raadi Dalabka"
+    "track": "Raadi Dalabka",
+    "yourCart": "Gaarigaaga",
+    "startShopping": "Bilow Iibsiga",
+    "refresh": "Cusboonaysii",
+    "activeOrders": "Dalabka Socda",
+    "orderHistory": "Taariikhda Dalabka",
+    "active": "Socda",
+    "deliveredShort": "La geeyay",
+    "spent": "Wadarta",
+    "viewDetails": "Fiiri Daadkooda",
+    "nextMilestone": "Xiga",
+    "estArrival": "Waqtiga gaaritaanka",
+    "progress": "Horumar",
+    "items": "Alaabta",
+    "total": "Wadarta"
   },
   "profile": {
     "title": "Profile",
@@ -71,7 +85,10 @@
     "language": "Luqadda",
     "totalOrders": "Wadarta Dalabka",
     "saved": "Alaabda Kaydsan",
-    "support247": "24/7"
+    "support247": "24/7",
+    "welcomeGuest": "Ku soo dhawoobo, Marti",
+    "guestSubtitle": "Ku soo dhawoobo si aad u kaydiso dalabka, cinwaanada & liiska",
+    "signIn": "Gal"
   },
   "common": {
     "loading": "Waa soo raraya...",
@@ -84,7 +101,41 @@
     "next": "Xiga",
     "done": "Dhammaatay",
     "search": "Raadi",
-    "noResults": "Natiijo lama helin"
+    "noResults": "Natiijo lama helin",
+    "edit": "Wax ka beddel",
+    "delete": "Tirtir",
+    "phone": "Taleefan",
+    "email": "Emayl"
+  },
+  "notifications": {
+    "title": "Ogeysiisyada",
+    "markAllRead": "Calaamadee dhamaan",
+    "empty": "Weli ogeysiis ma jiro",
+    "emptySubtitle": "Waan ku ogeysiin doonnaa marka dalabkaagu rikooray, gaadho, ama u baahdo feejignaan.",
+    "guestTitle": "Soo gal si aad u aragto ogeysiisyada",
+    "guestSubtitle": "Cusboonaysiinta dalabka, digniintada rarka, iyo dalabyada gaarka ah halkan ayay ka muuqan doonaan."
+  },
+  "paymentMethods": {
+    "title": "Hababka Lacag Bixinta",
+    "preferred": "Habka aad doorbidayso",
+    "saved": "Hababka keydsan",
+    "addNumber": "Lambarka taleefanka ama akoonka",
+    "addBank": "Lambarka akoonka bankiga",
+    "addNote": "Waan xaqiijin doonnaa wareejinta ka hor intaan rarka."
+  },
+  "success": {
+    "title": "Dalabka waa la sameeyay!",
+    "subtitle": "Waxaan helnay dalabkaaga. Kooxdayadu waxay kula soo xiriiri doonaan WhatsApp si ay u xaqiijiyaan faahfaahinta.",
+    "track": "Raadi dalabkayga",
+    "keepShopping": "Sii wad iibsiga",
+    "whatsapp": "WhatsApp la xiriir",
+    "whatNext": "Maxaa dhacaya kadib?",
+    "next1Title": "Xaqiijinta WhatsApp",
+    "next1Desc": "Waxaan ku soo diri doonaa fariin saacad gudahood si aan u xaqiijino oo aan u qaabeyno lacag bixinta.",
+    "next2Title": "Raadinta & hubinta tayada",
+    "next2Desc": "Waxaan helaynaa iibiyaha, hubinnaa alaabta, oo aan u xirxirnaa si ammaan ah.",
+    "next3Title": "Rarka & gaarsiinta",
+    "next3Desc": "Raadraac tallaabo kasta Shiinaha ilaa albaabkaaga tab-ka Dalabka."
   },
   "checkout": {
     "title": "Bixi",
