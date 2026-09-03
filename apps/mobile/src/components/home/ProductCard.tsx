@@ -5,6 +5,7 @@ import { Plus } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import type { Product } from "@/types";
 import { useCartStore } from "@/store/cart";
+import { parseMOQ, getMOQText } from "@/lib/shipping";
 
 interface ProductCardProps {
   product: Product;
@@ -17,6 +18,14 @@ export const ProductCard = React.memo(function ProductCard({
 }: ProductCardProps) {
   const addItem = useCartStore((s) => s.addItem);
   const thumbnail = product.images?.[0] || "https://picsum.photos/300/300";
+
+  // Smart MOQ parsing
+  const smartMOQ = parseMOQ(
+    product.moq || 1,
+    product.attributes || {},
+    product.title_original || product.title_english,
+    product.description_original || product.description_english
+  );
 
   const marketplaceColors: Record<string, string> = {
     "1688": "#FF6600",
@@ -52,13 +61,13 @@ export const ProductCard = React.memo(function ProductCard({
           {product.title_english || product.title_original}
         </Text>
         <Text style={styles.price}>${product.price_usd_estimated.toFixed(2)}</Text>
-        <Text style={styles.moq}>MOQ: {product.moq}</Text>
+        <Text style={styles.moq}>{getMOQText(smartMOQ)}</Text>
       </View>
 
       <TouchableOpacity
         style={styles.addButton}
         activeOpacity={0.7}
-        onPress={() => addItem(product, product.moq || 1)}
+        onPress={() => addItem(product, smartMOQ)}
       >
         <Plus size={18} color={COLORS.white} strokeWidth={2.5} />
       </TouchableOpacity>

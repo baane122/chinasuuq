@@ -28,6 +28,7 @@ import { useAuthStore } from "@/store/auth";
 import { useCartStore } from "@/store/cart";
 import { getProductById, toggleFavorite, getFavorites } from "@/db";
 import type { Product, ProductVariant } from "@/types";
+import { parseMOQ, getMOQText, getSuggestedQuantities, calculateShipping } from "@/lib/shipping";
 import ImageCarousel from "@/components/product/ImageCarousel";
 import QuantitySelector from "@/components/product/QuantitySelector";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -46,6 +47,7 @@ export default function ProductDetailScreen() {
   const [togglingFav, setTogglingFav] = useState(false);
 
   const [qty, setQty] = useState(1);
+  const [suggestedQtys, setSuggestedQtys] = useState<number[]>([1, 2, 5, 10]);
   const [variantSelections, setVariantSelections] = useState<
     Record<string, string>
   >({});
@@ -64,7 +66,15 @@ export default function ProductDetailScreen() {
           setNotFound(true);
         } else {
           setProduct(p);
-          setQty(Math.max(1, p.moq || 1));
+          // Smart MOQ: parse from attributes, title, or use product.moq
+          const smartMOQ = parseMOQ(
+            p.moq || 1,
+            p.attributes || {},
+            p.title_original || p.title_english,
+            p.description_original || p.description_english
+          );
+          setQty(smartMOQ);
+          setSuggestedQtys(getSuggestedQuantities(smartMOQ));
           // Default-select the first option of every variant group.
           const defaults: Record<string, string> = {};
           p.variants.forEach((v: ProductVariant) => {
@@ -348,12 +358,41 @@ export default function ProductDetailScreen() {
           </View>
         ))}
 
-        {/* Quantity (MOQ) */}
-        <QuantitySelector
-          value={qty}
-          onChange={setQty}
-          min={Math.max(1, product.moq)} // MOQ respected
-        />
+        {/* Quantity (MOQ) - Smart */}
+        <View style={styles.qtySection}>
+          <View style={styles.qtyHeader}>
+            <Text style={styles.sectionTitle}>{t("product.quantity")}</Text>
+            <Text style={styles.moqBadge}>
+              {getMOQText(parseMOQ(product.moq || 1, product.attributes || {}, product.title_original))}
+            </Text>
+          </View>
+
+          {/* Quick quantity buttons */}
+          <View style={styles.qtyQuickRow}>
+            {suggestedQtys.map((q) => (
+              <TouchableOpacity
+                key={q}
+                style={[styles.qtyQuickBtn, qty === q && styles.qtyQuickBtnActive]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setQty(q);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.qtyQuickText, qty === q && styles.qtyQuickTextActive]}>
+                  {q}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Manual quantity selector */}
+          <QuantitySelector
+            value={qty}
+            onChange={setQty}
+            min={Math.max(1, parseMOQ(product.moq || 1, product.attributes || {}, product.title_original))}
+          />
+        </View>
 
         {/* Attributes */}
         {Object.keys(attributes).length > 0 && (
@@ -543,6 +582,56 @@ const styles = StyleSheet.create({
     color: COLORS.black,
   },
   variantPillTextActive: { color: COLORS.primary },
+  // Quantity Section
+  qtySection: {
+    padding: SPACING.lg,
+    backgroundColor: COLORS.white,
+    marginTop: SPACING.sm,
+  },
+  qtyHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: SPACING.md,
+  },
+  moqBadge: {
+    fontSize: 12,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
+    backgroundColor: COLORS.primaryBg,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 4,
+    borderRadius: RADIUS.pill,
+  },
+  qtyQuickRow: {
+    flexDirection: "row",
+    gap: SPACING.sm,
+    marginBottom: SPACING.md,
+    flexWrap: "wrap",
+  },
+  qtyQuickBtn: {
+    minWidth: 56,
+    height: 40,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.gray50,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: SPACING.md,
+  },
+  qtyQuickBtnActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  qtyQuickText: {
+    fontSize: 14,
+    fontFamily: FONTS.semibold,
+    color: COLORS.black,
+  },
+  qtyQuickTextActive: {
+    color: COLORS.white,
+  },
   // Attributes
   attrSection: {
     padding: SPACING.lg,

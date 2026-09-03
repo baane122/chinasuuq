@@ -31,6 +31,7 @@ import PaymentMethodCard from "@/components/checkout/PaymentMethodCard";
 import { formatUSD, generateOrderRef } from "@/lib/utils";
 import { createOrder } from "@/db";
 import { SmartRoute } from "@/components/orders/SmartRoute";
+import { calculateShipping, getShippingEstimates } from "@/lib/shipping";
 
 const STEP_LABELS = ["Contact", "Shipping", "Payment", "Confirm"];
 const CITIES = [
@@ -72,10 +73,27 @@ export default function CheckoutScreen() {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [deliveryNotes, setDeliveryNotes] = useState("");
 
-  // Cost calculation — shipping is NOT priced here. Customer picks air/sea
-  // and pays shipping when the goods arrive (ChinaSuuq invoices it at delivery).
+  // Cost calculation — auto-calculate shipping based on cart items
   const subtotal = total.subtotalUSD;
   const serviceFee = Math.round(subtotal * 0.05 * 100) / 100;
+
+  // Auto-calculate estimated shipping cost
+  const estimatedShipping = cartItems.reduce((total, item) => {
+    const weight = item.product.attributes?.weight
+      ? parseFloat(String(item.product.attributes.weight).replace(/[^0-9.]/g, "")) || 0.5
+      : 0.5;
+    const shipping = calculateShipping(
+      {
+        weight_kg: weight * item.quantity,
+        domestic_shipping_cny: item.product.domestic_shipping_cny || 0,
+        marketplace: item.product.marketplace,
+      },
+      1, // already multiplied weight by quantity
+      shippingMethod
+    );
+    return total + shipping.costUSD;
+  }, 0);
+
   const grandTotal = subtotal + serviceFee; // shipping paid on arrival
 
   const canProceed = () => {
@@ -203,8 +221,8 @@ export default function CheckoutScreen() {
         </View>
         <View style={styles.shippingInfo}>
           <Text style={[styles.shippingTitle, shippingMethod === "air" && styles.shippingTitleActive]}>Air Freight</Text>
-          <Text style={styles.shippingDesc}>5-10 business days · Faster delivery</Text>
-          <Text style={styles.shippingCost}>Paid on arrival</Text>
+          <Text style={styles.shippingDesc}>7-14 days · Faster delivery</Text>
+          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Paid on arrival</Text>
         </View>
         <View style={[styles.radioOuter, shippingMethod === "air" && styles.radioOuterActive]}>
           {shippingMethod === "air" && <View style={styles.radioDot} />}
@@ -216,8 +234,8 @@ export default function CheckoutScreen() {
         </View>
         <View style={styles.shippingInfo}>
           <Text style={[styles.shippingTitle, shippingMethod === "sea" && styles.shippingTitleActive]}>Sea Freight</Text>
-          <Text style={styles.shippingDesc}>20-35 business days · More economical</Text>
-          <Text style={styles.shippingCost}>Paid on arrival</Text>
+          <Text style={styles.shippingDesc}>25-35 days · More economical</Text>
+          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Paid on arrival</Text>
         </View>
         <View style={[styles.radioOuter, shippingMethod === "sea" && styles.radioOuterActive]}>
           {shippingMethod === "sea" && <View style={styles.radioDot} />}
@@ -289,9 +307,14 @@ export default function CheckoutScreen() {
         <View style={styles.divider} />
         <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{formatUSD(subtotal)}</Text></View>
         <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Service Fee (5%)</Text><Text style={styles.summaryValue}>{formatUSD(serviceFee)}</Text></View>
-        <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Shipping ({shippingMethod === "air" ? "Air" : "Sea"})</Text><Text style={styles.summaryValue}>Paid on arrival</Text></View>
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryLabel}>Est. Shipping ({shippingMethod === "air" ? "Air" : "Sea"})</Text>
+          <Text style={[styles.summaryValue, { color: COLORS.textMuted, fontSize: 12 }]}>
+            ~{formatUSD(estimatedShipping)} (final on arrival)
+          </Text>
+        </View>
         <View style={styles.divider} />
-        <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.totalValue}>{formatUSD(grandTotal)}</Text></View>
+        <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total (excl. shipping)</Text><Text style={styles.totalValue}>{formatUSD(grandTotal)}</Text></View>
       </View>
       <View style={styles.infoSummary}>
         <Text style={styles.infoLabel}>Contact: {fullName}</Text>
