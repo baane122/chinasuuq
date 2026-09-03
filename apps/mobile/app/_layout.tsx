@@ -13,6 +13,7 @@ import { View, StyleSheet } from "react-native";
 import { useAuthStore } from "@/store/auth";
 import { COLORS } from "@/lib/theme";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { I18nProvider } from "@/lib/i18n";
 
 // Keep splash screen visible while we load fonts + auth
 SplashScreen.preventAutoHideAsync();
@@ -57,10 +58,11 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
-      <View style={styles.container}>
-        <StatusBar style="dark" />
-        <AuthRedirect />
-        <Stack screenOptions={{ headerShown: false }}>
+      <I18nProvider>
+        <View style={styles.container}>
+          <StatusBar style="dark" />
+          <AuthRedirect />
+          <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="onboarding" options={{ presentation: "card" }} />
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="(auth)" options={{ presentation: "card" }} />
@@ -86,6 +88,7 @@ export default function RootLayout() {
           <Stack.Screen name="+not-found" />
         </Stack>
       </View>
+      </I18nProvider>
     </ErrorBoundary>
   );
 }

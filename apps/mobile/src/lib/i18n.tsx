@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import en from "@/i18n/en.json";
 import so from "@/i18n/so.json";
@@ -9,11 +9,22 @@ type Translations = typeof en;
 const translations: Record<Locale, Translations> = { en, so };
 const LOCALE_KEY = "chinasuuq-locale";
 
-// Default locale
-let savedLocale: Locale = "en";
+interface I18nContextType {
+  locale: Locale;
+  setLocale: (locale: Locale) => Promise<void>;
+  t: (key: string) => string;
+  loaded: boolean;
+}
 
-export function useI18n() {
-  const [locale, setLocaleState] = useState<Locale>(savedLocale);
+const I18nContext = createContext<I18nContextType>({
+  locale: "en",
+  setLocale: async () => {},
+  t: (key: string) => key,
+  loaded: false,
+});
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const [locale, setLocaleState] = useState<Locale>("en");
   const [loaded, setLoaded] = useState(false);
 
   // Load saved locale on mount
@@ -22,7 +33,6 @@ export function useI18n() {
       try {
         const stored = await AsyncStorage.getItem(LOCALE_KEY);
         if (stored && (stored === "en" || stored === "so")) {
-          savedLocale = stored;
           setLocaleState(stored);
         }
       } catch {}
@@ -31,7 +41,6 @@ export function useI18n() {
   }, []);
 
   const setLocale = useCallback(async (newLocale: Locale) => {
-    savedLocale = newLocale;
     setLocaleState(newLocale);
     try {
       await AsyncStorage.setItem(LOCALE_KEY, newLocale);
@@ -50,5 +59,13 @@ export function useI18n() {
     [locale]
   );
 
-  return { locale, setLocale, t, loaded };
+  return (
+    <I18nContext.Provider value={{ locale, setLocale, t, loaded }}>
+      {children}
+    </I18nContext.Provider>
+  );
+}
+
+export function useI18n() {
+  return useContext(I18nContext);
 }
