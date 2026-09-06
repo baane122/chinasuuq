@@ -10,11 +10,6 @@
     "backgroundColor": "#FFFCF8",
     "primaryColor": "#FF5A0A",
     "description": "Order products from China to Somalia. Browse 1688, Taobao and YiwuGo with live translation, CNY-to-USD conversion, and a unified cart. Air or sea freight to Hargeisa, Mogadishu, Bosaso and more.",
-    "splash": {
-      "image": "./assets/images/splash.png",
-      "resizeMode": "cover",
-      "backgroundColor": "#FFFCF8"
-    },
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -42,8 +37,7 @@
       "favicon": "./assets/images/icon.png"
     },
     "plugins": [
-      "expo-router",
-      "expo-asset"
+      "expo-router"
     ],
     "extra": {
       "supabaseUrl": "https://athkmrvsaijwgsyvwrbp.supabase.co",

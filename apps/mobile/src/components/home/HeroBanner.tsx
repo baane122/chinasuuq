@@ -99,7 +99,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   slideBg: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: COLORS.primary,
     borderRadius: RADIUS.xl,
   },

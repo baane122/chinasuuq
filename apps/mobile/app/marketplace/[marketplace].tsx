@@ -688,7 +688,7 @@ const styles = StyleSheet.create({
   webWrap: { flex: 1, position: "relative" },
   web: { flex: 1, backgroundColor: "#fff" },
   loading: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.85)",
@@ -697,7 +697,7 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 13, fontFamily: FONTS.semibold, color: COLORS.textSecondary },
   // branded skeleton loading
   skeletonOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: COLORS.warmWhite,
     paddingHorizontal: SPACING.lg,
     paddingTop: 24,
@@ -820,7 +820,7 @@ const styles = StyleSheet.create({
 
   // blocked-state overlay / curated catalog
   blockedOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: COLORS.warmWhite,
     alignItems: "center",
     paddingHorizontal: SPACING.xxxl,
