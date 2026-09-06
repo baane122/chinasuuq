@@ -84,7 +84,14 @@ export default function RootLayout() {
           <Stack.Screen name="profile/order-history" options={{ presentation: "card" }} />
           <Stack.Screen name="profile/wishlist" options={{ presentation: "card" }} />
           <Stack.Screen name="profile/referral" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/help" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/about" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/terms" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/privacy" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/returns" options={{ presentation: "card" }} />
+          <Stack.Screen name="profile/shipping-info" options={{ presentation: "card" }} />
           <Stack.Screen name="notifications/index" options={{ presentation: "card" }} />
+          <Stack.Screen name="notifications/settings" options={{ presentation: "card" }} />
           <Stack.Screen name="+not-found" />
         </Stack>
       </View>
