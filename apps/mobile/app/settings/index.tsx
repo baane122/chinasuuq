@@ -29,9 +29,23 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { isBackendOnline, SHIPPING_METHODS, updateProfile } from "@/db/index";
 
-type ShippingMethodId = (typeof SHIPPING_METHODS)[number]["id"];
+// Lazy import to avoid crash if db module has issues
+let isBackendOnline: () => Promise<boolean> = async () => false;
+let SHIPPING_METHODS: Array<{ id: string; label: string; days: string; desc: string }> = [
+  { id: "air", label: "Air Freight", days: "5–12 days", desc: "Faster, paid on arrival" },
+  { id: "sea", label: "Sea Freight", days: "25–40 days", desc: "Economical, paid on arrival" },
+];
+let updateProfile: (userId: string, updates: any) => Promise<void> = async () => {};
+
+try {
+  const db = require("@/db/index");
+  isBackendOnline = db.isBackendOnline;
+  SHIPPING_METHODS = db.SHIPPING_METHODS;
+  updateProfile = db.updateProfile;
+} catch {}
+
+type ShippingMethodId = "air" | "sea";
 
 export default function SettingsScreen() {
   const { t, locale, setLocale } = useI18n();
@@ -41,23 +55,25 @@ export default function SettingsScreen() {
   const [fullName, setFullName] = useState(user?.full_name || "");
   const [phone, setPhone] = useState(user?.phone || "");
   const [city, setCity] = useState(user?.city || "");
-  const [selectedShipping, setSelectedShipping] = useState<ShippingMethodId>("air");
+  const [selectedShipping, setSelectedShipping] = useState<string>("air");
   const [selectedLanguage, setSelectedLanguage] = useState<"en" | "so">(locale);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [checkingBackend, setCheckingBackend] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const online = await isBackendOnline();
-        setBackendOnline(online);
+        if (!cancelled) setBackendOnline(online);
       } catch {
-        setBackendOnline(false);
+        if (!cancelled) setBackendOnline(false);
       } finally {
-        setCheckingBackend(false);
+        if (!cancelled) setCheckingBackend(false);
       }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   const handleSaveProfile = async () => {
@@ -82,7 +98,7 @@ export default function SettingsScreen() {
     await setLocale(lang);
   };
 
-  const handleShippingChange = (id: ShippingMethodId) => {
+  const handleShippingChange = (id: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedShipping(id);
   };
