@@ -31,33 +31,45 @@ import { useAuthStore } from "@/store/auth";
 
 const FAQ_ITEMS = [
   {
-    q: "How do I place an order?",
-    a: "Browse products from 1688, Taobao, or YiwuGo, add them to your cart, and proceed to checkout. You'll receive a WhatsApp confirmation.",
+    q_en: "How do I place an order?",
+    q_so: "Sideen u dalban karaa dalab?",
+    a_en: "Browse products from 1688, Taobao, or YiwuGo, add them to your cart, and proceed to checkout. You'll receive a WhatsApp confirmation.",
+    a_so: "Eeg alaabta 1688, Taobao, ama YiwuGo, ku dar karadaaga, oo aad u gudub bixinta. Waxaad heli doontaa xaqiijin WhatsApp.",
   },
   {
-    q: "What shipping methods are available?",
-    a: "Air Freight (5–12 days) and Sea Freight (25–40 days). Shipping is paid upon arrival in Somalia.",
+    q_en: "What shipping methods are available?",
+    q_so: "Nooca rarka ee la heli karo waa kuu?",
+    a_en: "Air Freight (7–14 days) and Sea Freight (25–35 days). Shipping is paid upon arrival in Somalia.",
+    a_so: "Rarka Hawada (7-14 maalmood) iyo Rarka Badda (25-35 maalmood). Rarka waa la bixiyaa marka la gaaro Soomaaliya.",
   },
   {
-    q: "What payment methods do you accept?",
-    a: "We accept ZAAD, Edahab, Premier Wallet, EVC Plus, Sahal, and Bank Transfer.",
+    q_en: "What payment methods do you accept?",
+    q_so: "Hababka lacag bixinta ee la aqbalayo waa kuwa?",
+    a_en: "We accept ZAAD, Edahab, Premier Wallet, EVC Plus, Sahal, and Bank Transfer.",
+    a_so: "Waxaan aqbalnaa ZAAD, Edahab, Premier Wallet, EVC Plus, Sahal, iyo Bank Transfer.",
   },
   {
-    q: "How can I track my order?",
-    a: "Go to the Orders tab in your account. Each order has real-time tracking updates from purchase to delivery.",
+    q_en: "How can I track my order?",
+    q_so: "Sideen u raadikaraa dalabkayga?",
+    a_en: "Go to the Orders tab in your account. Each order has real-time tracking updates from purchase to delivery.",
+    a_so: "Ku tag tab-ka Dalabka ee akoonkaaga. Dalab kasta wuxuu leeyahay cusbooneysiin raadraac toos ah.",
   },
   {
-    q: "Can I return a product?",
-    a: "Returns are handled case by case. Contact us on WhatsApp and we'll assist you with any issues.",
+    q_en: "Can I return a product?",
+    q_so: "Ma dib u CELIN karaa alaab?",
+    a_en: "Returns are handled case by case. Contact us on WhatsApp and we'll assist you with any issues.",
+    a_so: "Dib u celintu waa loo maamulaa xaalad walba. La xiriir WhatsApp oo waxaan ku caawin doonnaa dhibaato kasta.",
   },
   {
-    q: "Do you ship to all cities in Somalia?",
-    a: "Yes, we ship to Mogadishu, Hargeisa, Bosaso, Kismayo, Baidoa, and all major cities across Somalia.",
+    q_en: "Do you ship to all cities in Somalia?",
+    q_so: "Maad u dirtaa magaalooyinka Soomaaliya oo dhan?",
+    a_en: "Yes, we ship to Mogadishu, Hargeisa, Bosaso, Kismayo, Baidoa, and all major cities across Somalia.",
+    a_so: "Haa, waxaan u dirnaa Muqdisho, Hargeysa, Bosaso, Kismaayo, Baydhabo, iyo magaalooyiin kale oo waaweyn.",
   },
 ];
 
 export default function SupportScreen() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const router = useRouter();
   const authUser = useAuthStore((s) => s.user);
 
@@ -187,8 +199,8 @@ export default function SupportScreen() {
             <React.Fragment key={index}>
               {index > 0 && <View style={styles.faqDivider} />}
               <View style={styles.faqItem}>
-                <Text style={styles.faqQuestion}>{item.q}</Text>
-                <Text style={styles.faqAnswer}>{item.a}</Text>
+                <Text style={styles.faqQuestion}>{locale === "en" ? item.q_en : item.q_so}</Text>
+                <Text style={styles.faqAnswer}>{locale === "en" ? item.a_en : item.a_so}</Text>
               </View>
             </React.Fragment>
           ))}
