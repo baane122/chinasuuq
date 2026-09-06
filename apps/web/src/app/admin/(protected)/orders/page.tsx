@@ -434,7 +434,7 @@ export default function OrdersPage() {
                         onClick={() => { setBulkTargetStatus(s); setBulkConfirmOpen(true); setBulkStatusOpen(false); }}
                         className="flex w-full items-center gap-2 px-3 py-2 text-xs text-dark-600 hover:bg-brand-50 hover:text-brand-700"
                       >
-                        {s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                        {s.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
                       </button>
                     ))}
                   </div>
@@ -464,7 +464,7 @@ export default function OrdersPage() {
                 : "border-dark-900/10 bg-white text-dark-900/60 hover:border-brand-500/30"
             )}
           >
-            {s === "all" ? "All" : s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+            {s === "all" ? "All" : s.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
             {statusCounts[s] !== undefined && (
               <span
                 className={cn(
@@ -563,12 +563,12 @@ export default function OrdersPage() {
                       />
                     </div>
                     <p className="mt-2 text-[10px] text-dark-400">
-                      {selected.status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                      {selected.status.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
                       {getStatusGroup(selected.status) !== "terminal" && (
                         <>
                           {" → "}
                           {STATUS_FLOW[Math.min(STATUS_FLOW.indexOf(selected.status) + 1, STATUS_FLOW.length - 1)]
-                            .replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                            .replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
                         </>
                       )}
                     </p>
@@ -587,7 +587,7 @@ export default function OrdersPage() {
                     ) : (
                       <>
                         Advance to {STATUS_FLOW[Math.min(STATUS_FLOW.indexOf(selected.status) + 1, STATUS_FLOW.length - 1)]
-                          ?.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                          ?.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
                         <ArrowRight className="h-4 w-4" />
                       </>
                     )}
@@ -630,7 +630,7 @@ export default function OrdersPage() {
                               <span className="h-2 w-2 rounded-full bg-dark-300" />
                             )}
                           </div>
-                          <span className="flex-1">{s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}</span>
+                          <span className="flex-1">{s.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}</span>
                           {isCurrent && !isCancelled && (
                             <span className="rounded-full bg-brand-500 px-2 py-0.5 text-[10px] font-bold text-white">CURRENT</span>
                           )}

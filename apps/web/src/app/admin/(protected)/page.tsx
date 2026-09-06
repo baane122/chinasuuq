@@ -18,7 +18,6 @@ import {
   Download,
   Globe,
   Package,
-  PieChart,
   Plus,
   RefreshCw,
   Search,
@@ -299,7 +298,8 @@ function MarketplaceBreakdown({ data }: { data: MarketplaceRevenue[] }) {
                 animate={{ width: `${Math.max(pct, 2)}%` }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
                 className="h-full rounded-full"
-                style={{ background: d.color }}
+                // @ts-expect-error framer-motion style typing
+                style={{ backgroundColor: d.color }}
               />
             </div>
           </div>
@@ -735,7 +735,7 @@ export default function AdminDashboard() {
         >
           <div className="mb-4">
             <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-              <PieChart className="h-4 w-4 text-dark-900/40" />
+              <BarChart3 className="h-4 w-4 text-dark-900/40" />
               Order Status
             </h3>
             <p className="text-xs text-dark-900/40 mt-1">
@@ -763,7 +763,7 @@ export default function AdminDashboard() {
       >
         <div className="flex items-center justify-between p-5 pb-0">
           <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-            <ShoppingBag className="h-4 w-4 text-dark-900/40" />
+            <Package className="h-4 w-4 text-dark-900/40" />
             Recent Orders
           </h3>
           <a

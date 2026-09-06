@@ -176,12 +176,8 @@ export default function ProductsPage() {
     });
 
     result.sort((a, b) => {
-      let av = a[sortKey];
-      let bv = b[sortKey];
-      if (sortKey === "created_at") {
-        av = av || "";
-        bv = bv || "";
-      }
+      const av = (a as unknown as Record<string, unknown>)[sortKey];
+      const bv = (b as unknown as Record<string, unknown>)[sortKey];
       const cmp = typeof av === "number" && typeof bv === "number"
         ? av - bv
         : String(av ?? "").localeCompare(String(bv ?? ""));
@@ -337,6 +333,11 @@ export default function ProductsPage() {
   const openDeleteDialog = (product: Product) => {
     setDeletingProduct(product);
     setDeleteDialogOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteDialogOpen(false);
+    setDeletingProduct(null);
   };
 
   const handleDelete = async () => {

@@ -199,7 +199,7 @@ export default function AccountScreen() {
       icon: <HelpCircle size={20} color={COLORS.primary} />,
       label: t("profile.help"),
       subtitle: locale === "en" ? "FAQs & contact support" : "Su'aalo & taageero xiriir",
-      route: "/support/index",
+      route: "/profile/help",
     },
     {
       id: "terms",
