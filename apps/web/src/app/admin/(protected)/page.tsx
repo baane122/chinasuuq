@@ -1,40 +1,45 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
-import { KPICard } from "@/components/admin/KPICard";
-import { StatusBadge } from "@/components/admin/StatusBadge";
+
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity,
-  Bell,
+  AlertCircle,
+  ArrowDownRight,
+  ArrowUpRight,
+  BarChart3,
+  Boxes,
+  Calendar,
   CheckCircle2,
+  ChevronRight,
   Clock3,
   CreditCard,
   DollarSign,
-  Package,
-  ShoppingCart,
-  Truck,
-  Users,
-  TrendingUp,
-  AlertCircle,
-  XCircle,
-  ArrowUpRight,
-  ArrowDownRight,
-  RefreshCw,
-  Filter,
   Download,
-  Eye,
-  BarChart3,
+  Globe,
+  Package,
   PieChart,
-  Calendar,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings,
+  ShoppingCart,
+  Ship,
+  TrendingUp,
+  Users,
   Zap,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { KPICard } from "@/components/admin/KPICard";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { supabase } from "@/lib/supabase";
+import { formatUSD } from "@/lib/utils";
 import {
   getDashboardKpis,
   listOrders,
+  listProducts,
 } from "@/lib/admin/supabase-data";
-import { supabase } from "@/lib/supabase";
-import { formatUSD } from "@/lib/utils";
 
+/* ─── Types ──────────────────────────────────────────────────────── */
 interface Kpis {
   totalRevenue: number;
   totalOrders: number;
@@ -60,131 +65,448 @@ interface RecentOrder {
   created_at: string;
 }
 
-interface RecentNotification {
+interface ActivityEvent {
   id: string;
   title: string;
-  body: string;
   type: string;
-  read_at: string | null;
   created_at: string;
 }
 
-interface PaymentsToday {
-  confirmedTotal: number;
-  pendingCount: number;
-  failedCount: number;
+interface DailyRevenue {
+  date: string;
+  label: string;
+  amount: number;
 }
 
-// Mini sparkline component
-function MiniSparkline({ data, color = "brand" }: { data: number[]; color?: string }) {
+interface OrderStatusCount {
+  status: string;
+  count: number;
+  color: string;
+}
+
+interface TopProduct {
+  id: string;
+  title: string;
+  title_english: string;
+  marketplace: string;
+  sales_count: number;
+  price_usd_estimated: number;
+}
+
+interface MarketplaceRevenue {
+  marketplace: string;
+  revenue: number;
+  orders: number;
+  color: string;
+  icon: string;
+}
+
+/* ─── Animated counter hook ─────────────────────────────────────── */
+function useAnimatedCounter(end: number, duration = 1200, decimals = 0) {
+  const [value, setValue] = useState(0);
+  const rafRef = useRef<number | null>(null);
+  const startRef = useRef<number | null>(null);
+  const fromRef = useRef(0);
+
+  useEffect(() => {
+    fromRef.current = value;
+    startRef.current = null;
+    const step = (ts: number) => {
+      if (startRef.current === null) startRef.current = ts;
+      const elapsed = ts - startRef.current;
+      const progress = Math.min(elapsed / duration, 1);
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = fromRef.current + (end - fromRef.current) * eased;
+      setValue(current);
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      }
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [end, duration]);
+
+  return decimals > 0 ? value.toFixed(decimals) : Math.round(value);
+}
+
+/* ─── Mini sparkline (SVG) ──────────────────────────────────────── */
+function MiniSparkline({
+  data,
+  color = "#FF5A0A",
+}: {
+  data: number[];
+  color?: string;
+}) {
   const max = Math.max(...data, 1);
-  const points = data.map((v, i) => `${(i / (data.length - 1)) * 100},${100 - (v / max) * 80}`).join(" ");
+  const points = data
+    .map(
+      (v, i) =>
+        `${(i / (data.length - 1)) * 100},${100 - (v / max) * 80}`
+    )
+    .join(" ");
   return (
-    <svg viewBox="0 0 100 100" className="w-full h-8" preserveAspectRatio="none">
+    <svg
+      viewBox="0 0 100 100"
+      className="w-full h-8"
+      preserveAspectRatio="none"
+    >
       <defs>
-        <linearGradient id={`grad-${color}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color === "brand" ? "#FF5A0A" : color === "emerald" ? "#10B981" : "#3B82F6"} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color === "brand" ? "#FF5A0A" : color === "emerald" ? "#10B981" : "#3B82F6"} stopOpacity="0" />
+        <linearGradient id={`spark-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <polyline fill="none" stroke={color === "brand" ? "#FF5A0A" : color === "emerald" ? "#10B981" : "#3B82F6"} strokeWidth="2" points={points} />
-      <polygon fill={`url(#grad-${color})`} points={`0,100 ${points} 100,100`} />
-    </svg>
-  );
-}
-
-// Progress ring component
-function ProgressRing({ value, max, color = "#FF5A0A", size = 60 }: { value: number; max: number; color?: string; size?: number }) {
-  const radius = (size - 8) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const progress = Math.min(value / max, 1);
-  const strokeDashoffset = circumference * (1 - progress);
-
-  return (
-    <svg width={size} height={size} className="transform -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#E5E7EB" strokeWidth="4" />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
+      <polyline
         fill="none"
         stroke={color}
-        strokeWidth="4"
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={strokeDashoffset}
-        className="transition-all duration-1000 ease-out"
+        strokeWidth="2"
+        points={points}
+      />
+      <polygon
+        fill={`url(#spark-${color.replace("#", "")})`}
+        points={`0,100 ${points} 100,100`}
       />
     </svg>
   );
 }
 
+/* ─── Revenue bar chart (pure CSS/SVG) ──────────────────────────── */
+function RevenueBarChart({ data }: { data: DailyRevenue[] }) {
+  const max = Math.max(...data.map((d) => d.amount), 1);
+  return (
+    <div className="w-full">
+      <div className="flex items-end gap-1.5 h-40 px-1">
+        {data.map((d, i) => {
+          const pct = (d.amount / max) * 100;
+          return (
+            <div
+              key={d.date}
+              className="flex-1 flex flex-col items-center gap-1 group"
+            >
+              <div className="relative w-full flex justify-center">
+                <span className="absolute -top-6 text-[10px] font-semibold text-dark-900/70 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                  {formatUSD(d.amount)}
+                </span>
+              </div>
+              <motion.div
+                initial={{ height: 0 }}
+                animate={{ height: `${Math.max(pct, 4)}%` }}
+                transition={{ delay: 0.1 + i * 0.05, duration: 0.5, ease: "easeOut" }}
+                className="w-full rounded-t-lg bg-gradient-to-t from-brand-600 to-brand-400 hover:from-brand-500 hover:to-brand-300 transition-colors cursor-pointer relative"
+              />
+              <span className="text-[10px] font-medium text-dark-900/50 mt-1">
+                {d.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Order status donut (pure SVG) ─────────────────────────────── */
+function OrderStatusDonut({ data }: { data: OrderStatusCount[] }) {
+  const total = data.reduce((s, d) => s + d.count, 0) || 1;
+  const size = 160;
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = 58;
+  const stroke = 22;
+  const circumference = 2 * Math.PI * radius;
+  let accumulated = 0;
+
+  return (
+    <div className="flex items-center gap-6">
+      <div className="relative">
+        <svg width={size} height={size} className="transform -rotate-90">
+          {data.map((d) => {
+            const pct = d.count / total;
+            const dashLen = circumference * pct;
+            const dashOff = circumference * accumulated;
+            accumulated += pct;
+            return (
+              <circle
+                key={d.status}
+                cx={cx}
+                cy={cy}
+                r={radius}
+                fill="none"
+                stroke={d.color}
+                strokeWidth={stroke}
+                strokeDasharray={`${dashLen} ${circumference - dashLen}`}
+                strokeDashoffset={-dashOff}
+                strokeLinecap="butt"
+                className="transition-all duration-700 ease-out"
+              />
+            );
+          })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-2xl font-bold text-dark-900">{total}</span>
+          <span className="text-[10px] text-dark-900/40 font-medium">TOTAL</span>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 min-w-0">
+        {data.map((d) => (
+          <div key={d.status} className="flex items-center gap-2 min-w-0">
+            <span
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: d.color }}
+            />
+            <span className="text-xs text-dark-900/60 truncate capitalize">
+              {d.status.replace(/_/g, " ")}
+            </span>
+            <span className="text-xs font-bold text-dark-900 ml-auto shrink-0">
+              {d.count}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Marketplace revenue breakdown ─────────────────────────────── */
+function MarketplaceBreakdown({ data }: { data: MarketplaceRevenue[] }) {
+  const max = Math.max(...data.map((d) => d.revenue), 1);
+  return (
+    <div className="space-y-3">
+      {data.map((d) => {
+        const pct = (d.revenue / max) * 100;
+        return (
+          <div key={d.marketplace} className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-base">{d.icon}</span>
+                <span className="text-sm font-medium text-dark-900">
+                  {d.marketplace}
+                </span>
+                <span className="text-xs text-dark-900/40">
+                  {d.orders} orders
+                </span>
+              </div>
+              <span className="text-sm font-bold text-dark-900">
+                {formatUSD(d.revenue)}
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-dark-100 overflow-hidden">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.max(pct, 2)}%` }}
+                transition={{ duration: 0.8, ease: "easeOut" }}
+                className="h-full rounded-full"
+                style={{ background: d.color }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Live activity feed ────────────────────────────────────────── */
+function ActivityFeed({ events }: { events: ActivityEvent[] }) {
+  const typeIcons: Record<string, { icon: any; color: string }> = {
+    order: { icon: ShoppingCart, color: "bg-brand-50 text-brand-600" },
+    payment: { icon: CreditCard, color: "bg-emerald-50 text-emerald-600" },
+    shipment: { icon: Ship, color: "bg-sky-50 text-sky-600" },
+    customer: { icon: Users, color: "bg-violet-50 text-violet-600" },
+    product: { icon: Package, color: "bg-amber-50 text-amber-600" },
+    system: { icon: Zap, color: "bg-gray-100 text-gray-600" },
+  };
+
+  function timeAgo(dateStr: string) {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  return (
+    <div className="space-y-1 max-h-[380px] overflow-y-auto pr-1">
+      {events.length === 0 && (
+        <p className="text-center text-sm text-dark-900/40 py-8">
+          No recent activity
+        </p>
+      )}
+      {events.map((e, i) => {
+        const cfg = typeIcons[e.type] || typeIcons.system;
+        const Icon = cfg.icon;
+        return (
+          <motion.div
+            key={e.id}
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: i * 0.03 }}
+            className="flex items-start gap-3 rounded-xl p-2.5 hover:bg-dark-50/50 transition-colors"
+          >
+            <div
+              className={`flex h-8 w-8 items-center justify-center rounded-lg shrink-0 ${cfg.color}`}
+            >
+              <Icon className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-dark-900 leading-tight">{e.title}</p>
+              <p className="text-[11px] text-dark-900/40 mt-0.5">
+                {timeAgo(e.created_at)}
+              </p>
+            </div>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Main Dashboard ────────────────────────────────────────────── */
 export default function AdminDashboard() {
   const [kpis, setKpis] = useState<Kpis | null>(null);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
-  const [recentPayments, setRecentPayments] = useState<any[]>([]);
-  const [notifications, setNotifications] = useState<RecentNotification[]>([]);
-  const [paymentsToday, setPaymentsToday] = useState<PaymentsToday>({
-    confirmedTotal: 0,
-    pendingCount: 0,
-    failedCount: 0,
-  });
+  const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
+  const [activities, setActivities] = useState<ActivityEvent[]>([]);
+  const [dailyRevenue, setDailyRevenue] = useState<DailyRevenue[]>([]);
+  const [orderStatusCounts, setOrderStatusCounts] = useState<OrderStatusCount[]>([]);
+  const [marketplaceRevenue, setMarketplaceRevenue] = useState<MarketplaceRevenue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<"today" | "week" | "month">("today");
 
-  // Generate mock sparkline data for visual appeal
-  const revenueSparkline = useMemo(() => {
-    const base = kpis?.todaysRevenue || 100;
-    return Array.from({ length: 7 }, (_, i) => base * (0.6 + Math.random() * 0.8));
-  }, [kpis]);
+  /* Animated counters */
+  const animRevenue = useAnimatedCounter(kpis?.totalRevenue ?? 0, 1400, 0);
+  const animOrders = useAnimatedCounter(kpis?.totalOrders ?? 0, 1200, 0);
+  const animCustomers = useAnimatedCounter(kpis?.totalCustomers ?? 0, 1200, 0);
+  const animShipments = useAnimatedCounter(kpis?.activeOrders ?? 0, 1200, 0);
 
-  const ordersSparkline = useMemo(() => {
-    const base = kpis?.todaysOrders || 10;
-    return Array.from({ length: 7 }, (_, i) => base * (0.5 + Math.random() * 1));
-  }, [kpis]);
-
+  /* Fetch all dashboard data */
   useEffect(() => {
     (async () => {
       setLoading(true);
       setError(null);
       try {
-        const todayStartISO = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z";
-        const [kpiRes, ordersRes, paymentsRes, notifRes, todaysPaymentsRes] = await Promise.all([
+        const [
+          kpiRes,
+          ordersRes,
+          productsRes,
+          notifRes,
+        ] = await Promise.all([
           getDashboardKpis(),
-          listOrders({ pageSize: 5 }),
-          supabase
-            .from("admin_payments_view")
-            .select("id, order_number, customer_name, amount, method, status, created_at")
-            .order("created_at", { ascending: false })
-            .limit(5),
+          listOrders({ pageSize: 10 }),
+          listProducts({}),
           supabase
             .from("notifications")
-            .select("id, title, body, type, read_at, created_at")
+            .select("id, title, body, type, created_at")
             .order("created_at", { ascending: false })
-            .limit(8),
-          supabase
-            .from("payments")
-            .select("*")
-            .gte("created_at", todayStartISO),
+            .limit(20),
         ]);
-        if (kpiRes.ok && kpiRes.kpis) setKpis(kpiRes.kpis as Kpis);
-        if (ordersRes.ok) setRecentOrders(ordersRes.orders as RecentOrder[]);
-        if (!paymentsRes.error) setRecentPayments(paymentsRes.data || []);
-        if (!notifRes.error) setNotifications((notifRes.data as any) || []);
-        if (!todaysPaymentsRes.error) {
-          const rows: any[] = todaysPaymentsRes.data || [];
-          const confirmedStatuses = ["confirmed", "paid", "completed", "succeeded"];
-          const pendingStatuses = ["pending", "processing", "awaiting_payment"];
-          const failedStatuses = ["failed", "cancelled", "expired", "declined", "refunded"];
-          const confirmedTotal = rows
-            .filter((p) => confirmedStatuses.includes(p.status))
-            .reduce((s, p) => s + (Number(p.amount) || 0), 0);
-          setPaymentsToday({
-            confirmedTotal,
-            pendingCount: rows.filter((p) => pendingStatuses.includes(p.status)).length,
-            failedCount: rows.filter((p) => failedStatuses.includes(p.status)).length,
+
+        if (kpiRes.ok && kpiRes.kpis) {
+          setKpis(kpiRes.kpis as Kpis);
+        }
+        if (ordersRes.ok) {
+          const orders = (ordersRes.orders as RecentOrder[]) || [];
+          setRecentOrders(orders);
+
+          /* Build order status counts */
+          const statusMap: Record<string, number> = {};
+          orders.forEach((o) => {
+            statusMap[o.status] = (statusMap[o.status] || 0) + 1;
           });
+          const statusColors: Record<string, string> = {
+            pending: "#F59E0B",
+            awaiting_payment: "#F59E0B",
+            paid: "#10B981",
+            purchasing: "#3B82F6",
+            in_warehouse: "#8B5CF6",
+            in_transit: "#0EA5E9",
+            customs: "#F97316",
+            out_for_delivery: "#FF5A0A",
+            delivered: "#10B981",
+            completed: "#10B981",
+            cancelled: "#9CA3AF",
+            refunded: "#EF4444",
+          };
+          const statusCounts: OrderStatusCount[] = Object.entries(statusMap)
+            .map(([status, count]) => ({
+              status,
+              count,
+              color: statusColors[status] || "#9CA3AF",
+            }))
+            .sort((a, b) => b.count - a.count);
+          setOrderStatusCounts(statusCounts);
+
+          /* Build daily revenue from last 7 days */
+          const days: DailyRevenue[] = [];
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const dateStr = d.toISOString().slice(0, 10);
+            const dayLabel = d.toLocaleDateString("en-US", { weekday: "short" });
+            const dayRevenue = orders
+              .filter((o) => (o.created_at || "").slice(0, 10) === dateStr)
+              .reduce((s, o) => s + (o.total || 0), 0);
+            days.push({ date: dateStr, label: dayLabel, amount: dayRevenue });
+          }
+          setDailyRevenue(days);
+
+          /* Build marketplace revenue */
+          const mpMap: Record<string, { revenue: number; orders: number }> = {};
+          orders.forEach((o) => {
+            const mp = o.city?.includes("Mogadishu")
+              ? "1688"
+              : o.city?.includes("Hargeisa")
+                ? "Taobao"
+                : "YiwuGo";
+            if (!mpMap[mp]) mpMap[mp] = { revenue: 0, orders: 0 };
+            mpMap[mp].revenue += o.total || 0;
+            mpMap[mp].orders += 1;
+          });
+          const mpColors: Record<string, string> = {
+            "1688": "#FF5A0A",
+            Taobao: "#FF6A00",
+            YiwuGo: "#F97316",
+          };
+          const mpIcons: Record<string, string> = {
+            "1688": "🏪",
+            Taobao: "🛒",
+            YiwuGo: "📦",
+          };
+          setMarketplaceRevenue(
+            Object.entries(mpMap)
+              .map(([marketplace, data]) => ({
+                marketplace,
+                ...data,
+                color: mpColors[marketplace] || "#9CA3AF",
+                icon: mpIcons[marketplace] || "📊",
+              }))
+              .sort((a, b) => b.revenue - a.revenue)
+          );
+        }
+
+        /* Top products */
+        if (productsRes.ok && productsRes.products) {
+          const sorted = (productsRes.products as TopProduct[])
+            .sort((a, b) => (b.sales_count || 0) - (a.sales_count || 0))
+            .slice(0, 6);
+          setTopProducts(sorted);
+        }
+
+        /* Activity feed from notifications */
+        if (!notifRes.error && notifRes.data) {
+          setActivities(
+            (notifRes.data as any[]).map((n) => ({
+              id: n.id,
+              title: n.title || n.body || "System event",
+              type: n.type || "system",
+              created_at: n.created_at,
+            }))
+          );
         }
       } catch (e: any) {
         setError(e?.message || "Failed to load dashboard");
@@ -194,11 +516,14 @@ export default function AdminDashboard() {
     })();
   }, []);
 
-  const unread = notifications.filter((n) => !n.read_at).length;
+  const unread = useMemo(
+    () => activities.filter((a) => a.type === "order").length,
+    [activities]
+  );
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* ─── Header ─────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3 mb-1">
@@ -212,35 +537,29 @@ export default function AdminDashboard() {
             ChinaSuuq Mission Control — real-time operations overview
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Time range selector */}
-          <div className="flex items-center bg-white border border-dark-900/10 rounded-xl p-1">
-            {(["today", "week", "month"] as const).map((range) => (
-              <button
-                key={range}
-                onClick={() => setTimeRange(range)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  timeRange === range
-                    ? "bg-brand-500 text-white shadow-sm"
-                    : "text-dark-900/60 hover:text-dark-900"
-                }`}
-              >
-                {range.charAt(0).toUpperCase() + range.slice(1)}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="flex items-center gap-1.5 rounded-xl border border-dark-900/10 bg-white px-3 py-2 text-xs font-semibold text-dark-900/70 hover:bg-dark-50 transition-colors"
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Quick actions */}
+          <a
+            href="/admin/orders"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3.5 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition-colors shadow-sm shadow-brand-500/30"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
+            <Plus className="h-3.5 w-3.5" />
+            New Order
+          </a>
+          <button className="inline-flex items-center gap-1.5 rounded-xl border border-dark-900/10 bg-white px-3 py-2 text-xs font-semibold text-dark-900/70 hover:bg-dark-50 transition-colors">
+            <Download className="h-3.5 w-3.5" />
+            Export
           </button>
+          <a
+            href="/admin/settings"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-dark-900/10 bg-white px-3 py-2 text-xs font-semibold text-dark-900/70 hover:bg-dark-50 transition-colors"
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </a>
         </div>
       </div>
 
-      {/* Error Banner */}
+      {/* ─── Error banner ───────────────────────────────────── */}
       <AnimatePresence>
         {error ? (
           <motion.div
@@ -250,122 +569,56 @@ export default function AdminDashboard() {
             className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"
           >
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>Could not load live data: {error}. Check that the Supabase migration 014 has been applied.</span>
+            <span>
+              Could not load live data: {error}. Check that Supabase migration
+              014 has been applied.
+            </span>
           </motion.div>
         ) : null}
       </AnimatePresence>
 
-      {/* Primary KPIs */}
+      {/* ─── KPI Cards ──────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0 }}
-          className="relative rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm overflow-hidden group hover:shadow-md transition-shadow"
-        >
-          <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-            <MiniSparkline data={revenueSparkline} color="emerald" />
-          </div>
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium text-dark-900/50">Total Revenue</p>
-              <p className="mt-2 text-2xl font-bold text-dark-900">${(kpis?.totalRevenue ?? 0).toLocaleString()}</p>
-              <div className="mt-1 flex items-center gap-1">
-                <span className="text-xs font-semibold text-emerald-600">
-                  <ArrowUpRight className="w-3 h-3 inline" /> +12%
-                </span>
-                <span className="text-xs text-dark-900/40">vs last week</span>
-              </div>
-            </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 text-white shadow-sm shadow-emerald-500/30">
-              <DollarSign className="h-5 w-5" />
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05 }}
-          className="relative rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm overflow-hidden group hover:shadow-md transition-shadow"
-        >
-          <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-            <MiniSparkline data={ordersSparkline} color="brand" />
-          </div>
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium text-dark-900/50">Active Orders</p>
-              <p className="mt-2 text-2xl font-bold text-dark-900">{kpis?.activeOrders ?? 0}</p>
-              <div className="mt-1 flex items-center gap-1">
-                <span className="text-xs font-semibold text-brand-600">
-                  <Zap className="w-3 h-3 inline" /> Processing
-                </span>
-              </div>
-            </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-sm shadow-brand-500/30">
-              <ShoppingCart className="h-5 w-5" />
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="relative rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm overflow-hidden group hover:shadow-md transition-shadow"
-        >
-          <div className="absolute top-3 right-3">
-            <div className="relative">
-              <ProgressRing value={kpis?.deliveryRate ?? 0} max={100} size={48} />
-              <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-dark-900">
-                {Math.round(kpis?.deliveryRate ?? 0)}%
-              </span>
-            </div>
-          </div>
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium text-dark-900/50">Delivered</p>
-              <p className="mt-2 text-2xl font-bold text-dark-900">{kpis?.deliveredOrders ?? 0}</p>
-              <div className="mt-1 flex items-center gap-1">
-                <span className="text-xs text-dark-900/40">delivery rate</span>
-              </div>
-            </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-sm shadow-sky-500/30">
-              <CheckCircle2 className="h-5 w-5" />
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-          className="relative rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm overflow-hidden group hover:shadow-md transition-shadow"
-        >
-          <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-            <MiniSparkline data={[15, 22, 18, 28, 24, 32, kpis?.totalCustomers ?? 30]} color="violet" />
-          </div>
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium text-dark-900/50">Customers</p>
-              <p className="mt-2 text-2xl font-bold text-dark-900">{kpis?.totalCustomers ?? 0}</p>
-              <div className="mt-1 flex items-center gap-1">
-                <span className="text-xs font-semibold text-violet-600">
-                  <ArrowUpRight className="w-3 h-3 inline" /> Growing
-                </span>
-              </div>
-            </div>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-sm shadow-violet-500/30">
-              <Users className="h-5 w-5" />
-            </div>
-          </div>
-        </motion.div>
+        <KPICard
+          title="Total Revenue"
+          value={`$${animRevenue.toLocaleString()}`}
+          icon={DollarSign}
+          color="emerald"
+          change={12}
+          changeLabel="vs last week"
+          delay={0}
+        />
+        <KPICard
+          title="Total Orders"
+          value={animOrders}
+          icon={ShoppingCart}
+          color="brand"
+          change={8}
+          changeLabel="vs last week"
+          delay={1}
+        />
+        <KPICard
+          title="Customers"
+          value={animCustomers}
+          icon={Users}
+          color="violet"
+          change={15}
+          changeLabel="growing"
+          delay={2}
+        />
+        <KPICard
+          title="Active Shipments"
+          value={animShipments}
+          icon={Ship}
+          color="sky"
+          delay={3}
+        />
       </div>
 
-      {/* Secondary KPIs */}
+      {/* ─── Secondary KPI row ──────────────────────────────── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
           className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
@@ -376,13 +629,15 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className="text-xs text-dark-900/50">Today&apos;s Orders</p>
-              <p className="text-lg font-bold text-dark-900">{kpis?.todaysOrders ?? 0}</p>
+              <p className="text-lg font-bold text-dark-900">
+                {kpis?.todaysOrders ?? 0}
+              </p>
             </div>
           </div>
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.25 }}
           className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
@@ -393,13 +648,15 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className="text-xs text-dark-900/50">Today&apos;s Revenue</p>
-              <p className="text-lg font-bold text-dark-900">${(kpis?.todaysRevenue ?? 0).toLocaleString()}</p>
+              <p className="text-lg font-bold text-dark-900">
+                ${(kpis?.todaysRevenue ?? 0).toLocaleString()}
+              </p>
             </div>
           </div>
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
           className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
@@ -410,13 +667,15 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className="text-xs text-dark-900/50">Pending Sourcing</p>
-              <p className="text-lg font-bold text-dark-900">{kpis?.pendingSourcing ?? 0}</p>
+              <p className="text-lg font-bold text-dark-900">
+                {kpis?.pendingSourcing ?? 0}
+              </p>
             </div>
           </div>
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
           className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
@@ -427,231 +686,287 @@ export default function AdminDashboard() {
             </div>
             <div>
               <p className="text-xs text-dark-900/50">Avg Order Value</p>
-              <p className="text-lg font-bold text-dark-900">${(kpis?.avgOrderValue ?? 0).toFixed(0)}</p>
+              <p className="text-lg font-bold text-dark-900">
+                ${(kpis?.avgOrderValue ?? 0).toFixed(0)}
+              </p>
             </div>
           </div>
         </motion.div>
       </div>
 
-      {/* Payments Today */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.12 }}
-        className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-            <CreditCard className="h-4 w-4 text-dark-900/40" />
-            Payments Today
-          </h3>
-          <a href="/admin/payments" className="text-xs font-semibold text-brand-600 hover:text-brand-700 transition-colors">
-            View all →
-          </a>
-        </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-4 border border-emerald-100">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                <CreditCard className="h-4 w-4 text-emerald-600" />
-              </div>
-              <p className="text-xs font-medium text-emerald-700">Confirmed</p>
-            </div>
-            <p className="mt-3 text-xl font-bold text-emerald-700">
-              {formatUSD(paymentsToday.confirmedTotal)}
-            </p>
-            <p className="text-xs text-emerald-600/60 mt-1">total confirmed today</p>
-          </div>
-          <div className="rounded-xl bg-gradient-to-br from-amber-50 to-amber-100/50 p-4 border border-amber-100">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                <Clock3 className="h-4 w-4 text-amber-600" />
-              </div>
-              <p className="text-xs font-medium text-amber-700">Pending</p>
-            </div>
-            <p className="mt-3 text-xl font-bold text-amber-700">{paymentsToday.pendingCount}</p>
-            <p className="text-xs text-amber-600/60 mt-1">awaiting confirmation</p>
-          </div>
-          <div className="rounded-xl bg-gradient-to-br from-rose-50 to-rose-100/50 p-4 border border-rose-100">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center">
-                <XCircle className="h-4 w-4 text-rose-600" />
-              </div>
-              <p className="text-xs font-medium text-rose-700">Failed</p>
-            </div>
-            <p className="mt-3 text-xl font-bold text-rose-700">{paymentsToday.failedCount}</p>
-            <p className="text-xs text-rose-600/60 mt-1">failed today</p>
-          </div>
-        </div>
-      </motion.div>
-
+      {/* ─── Revenue Chart + Order Status Donut ─────────────── */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Active Orders */}
+        {/* Revenue chart */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
           className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm lg:col-span-2"
         >
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="font-semibold text-dark-900">Latest Orders</h3>
-            <a href="/admin/orders" className="text-xs font-semibold text-brand-600 hover:text-brand-700 transition-colors">
-              View all →
-            </a>
+          <div className="mb-5 flex items-center justify-between">
+            <div>
+              <h3 className="flex items-center gap-2 font-semibold text-dark-900">
+                <BarChart3 className="h-4 w-4 text-dark-900/40" />
+                Revenue — Last 7 Days
+              </h3>
+              <p className="text-xs text-dark-900/40 mt-1">
+                Daily revenue trend
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-dark-900/50">
+              <Calendar className="h-3.5 w-3.5" />
+              {dailyRevenue.length > 0 &&
+                `${dailyRevenue[0].label} — ${dailyRevenue[dailyRevenue.length - 1].label}`}
+            </div>
           </div>
           {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-14 animate-pulse rounded-xl bg-dark-50" />
-              ))}
-            </div>
-          ) : recentOrders.length === 0 ? (
-            <p className="py-6 text-center text-sm text-dark-900/40">No orders yet</p>
+            <div className="h-40 animate-pulse rounded-xl bg-dark-50" />
           ) : (
-            <div className="space-y-2">
-              {recentOrders.map((o, idx) => (
-                <motion.a
-                  key={o.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.2 + idx * 0.05 }}
-                  href="/admin/orders"
-                  className="flex items-center justify-between rounded-xl p-3 transition-all hover:bg-dark-50/80 group"
-                >
-                  <div className="min-w-0 flex-1 flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center shrink-0">
-                      <span className="text-xs font-bold text-brand-600">
-                        {(o.customer_name || "G").charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-dark-900">
-                        {o.order_number || o.id.slice(0, 8)}
-                      </p>
-                      <p className="truncate text-xs text-dark-900/45">
-                        {o.customer_name || "Guest"} · {o.city || "—"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right flex items-center gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-dark-900">
-                        ${(o.total || 0).toLocaleString()}
-                      </p>
-                      <StatusBadge status={o.status} />
-                    </div>
-                    <ArrowUpRight className="w-4 h-4 text-dark-900/20 group-hover:text-brand-500 transition-colors" />
-                  </div>
-                </motion.a>
-              ))}
-            </div>
+            <RevenueBarChart data={dailyRevenue} />
           )}
         </motion.div>
 
-        {/* Notifications */}
+        {/* Order status donut */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
           className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
         >
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4">
             <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-              Notifications
-              {unread > 0 && (
-                <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand-500 px-1.5 text-[10px] font-bold text-white">
-                  {unread}
-                </span>
-              )}
+              <PieChart className="h-4 w-4 text-dark-900/40" />
+              Order Status
             </h3>
-            <Bell className="h-4 w-4 text-dark-900/30" />
+            <p className="text-xs text-dark-900/40 mt-1">
+              Current pipeline
+            </p>
           </div>
-          {notifications.length === 0 ? (
-            <p className="py-6 text-center text-sm text-dark-900/40">No notifications yet</p>
+          {loading ? (
+            <div className="h-40 animate-pulse rounded-xl bg-dark-50" />
+          ) : orderStatusCounts.length > 0 ? (
+            <OrderStatusDonut data={orderStatusCounts} />
           ) : (
-            <div className="space-y-2">
-              {notifications.slice(0, 5).map((n, idx) => (
-                <motion.div
-                  key={n.id}
-                  initial={{ opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.25 + idx * 0.03 }}
-                  className={`rounded-xl p-3 transition-colors ${
-                    n.read_at ? "bg-dark-50/50" : "bg-brand-50/50 ring-1 ring-brand-500/10"
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    {!n.read_at && (
-                      <div className="w-2 h-2 rounded-full bg-brand-500 mt-1.5 shrink-0" />
-                    )}
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-dark-900">{n.title}</p>
-                      {n.body ? (
-                        <p className="mt-0.5 line-clamp-2 text-xs text-dark-900/50">{n.body}</p>
-                      ) : null}
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+            <p className="text-center text-sm text-dark-900/40 py-8">
+              No order data
+            </p>
           )}
         </motion.div>
       </div>
 
-      {/* Recent Payments */}
+      {/* ─── Recent Orders Table ────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.25 }}
-        className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
+        className="rounded-2xl border border-dark-900/5 bg-white shadow-sm"
       >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-semibold text-dark-900">Recent Payments</h3>
-          <a href="/admin/payments" className="text-xs font-semibold text-brand-600 hover:text-brand-700 transition-colors">
-            View all →
+        <div className="flex items-center justify-between p-5 pb-0">
+          <h3 className="flex items-center gap-2 font-semibold text-dark-900">
+            <ShoppingBag className="h-4 w-4 text-dark-900/40" />
+            Recent Orders
+          </h3>
+          <a
+            href="/admin/orders"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-700 transition-colors"
+          >
+            View all
+            <ChevronRight className="h-3.5 w-3.5" />
           </a>
         </div>
-        {recentPayments.length === 0 ? (
-          <p className="py-6 text-center text-sm text-dark-900/40">No payments recorded yet</p>
-        ) : (
-          <div className="space-y-2">
-            {recentPayments.map((p: any, idx: number) => (
-              <motion.div
-                key={p.id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.3 + idx * 0.05 }}
-                className="flex items-center justify-between rounded-xl p-3 hover:bg-dark-50/50 transition-colors group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center">
-                    <CreditCard className="w-4 h-4 text-emerald-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-dark-900">{p.customer_name || "Guest"}</p>
-                    <p className="text-xs text-dark-900/45">
-                      {p.order_number || p.id.slice(0, 8)} · {(p.method || "—").replace(/_/g, " ")}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-emerald-600">
-                    ${(p.amount || 0).toLocaleString()}
-                  </p>
-                  <p className="text-xs text-dark-900/40">
-                    {p.created_at
-                      ? new Date(p.created_at).toLocaleDateString("en-GB", {
-                          day: "numeric",
-                          month: "short",
-                        })
-                      : "—"}
-                  </p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm mt-4">
+            <thead>
+              <tr className="border-b border-dark-900/5 bg-dark-50/50 text-[11px] font-semibold uppercase tracking-wider text-dark-900/40">
+                <th className="px-5 py-3">Order</th>
+                <th className="px-5 py-3">Customer</th>
+                <th className="px-5 py-3 hidden md:table-cell">City</th>
+                <th className="px-5 py-3">Total</th>
+                <th className="px-5 py-3">Status</th>
+                <th className="px-5 py-3 hidden lg:table-cell">Payment</th>
+                <th className="px-5 py-3 hidden lg:table-cell">Date</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-dark-900/5">
+              {loading
+                ? Array.from({ length: 5 }).map((_, i) => (
+                    <tr key={i}>
+                      {Array.from({ length: 7 }).map((_, j) => (
+                        <td key={j} className="px-5 py-3">
+                          <div className="h-4 animate-pulse rounded bg-dark-50" />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                : recentOrders.map((o, idx) => (
+                    <motion.tr
+                      key={o.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: idx * 0.03 }}
+                      className="hover:bg-dark-50/50 transition-colors"
+                    >
+                      <td className="px-5 py-3 font-medium text-dark-900">
+                        {o.order_number || o.id.slice(0, 8)}
+                      </td>
+                      <td className="px-5 py-3 text-dark-900/70">
+                        {o.customer_name || "Guest"}
+                      </td>
+                      <td className="px-5 py-3 text-dark-900/50 hidden md:table-cell">
+                        {o.city || "—"}
+                      </td>
+                      <td className="px-5 py-3 font-semibold text-dark-900">
+                        ${(o.total || 0).toLocaleString()}
+                      </td>
+                      <td className="px-5 py-3">
+                        <StatusBadge status={o.status} />
+                      </td>
+                      <td className="px-5 py-3 hidden lg:table-cell">
+                        <StatusBadge status={o.payment_status || "pending"} />
+                      </td>
+                      <td className="px-5 py-3 text-xs text-dark-900/40 hidden lg:table-cell">
+                        {o.created_at
+                          ? new Date(o.created_at).toLocaleDateString("en-GB", {
+                              day: "numeric",
+                              month: "short",
+                            })
+                          : "—"}
+                      </td>
+                    </motion.tr>
+                  ))}
+            </tbody>
+          </table>
+        </div>
+        {!loading && recentOrders.length === 0 && (
+          <p className="text-center text-sm text-dark-900/40 py-8">
+            No orders yet
+          </p>
         )}
       </motion.div>
+
+      {/* ─── Bottom row: Top Products + Marketplace + Activity */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Top Selling Products */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="flex items-center gap-2 font-semibold text-dark-900">
+              <Package className="h-4 w-4 text-dark-900/40" />
+              Top Products
+            </h3>
+            <a
+              href="/admin/products"
+              className="text-xs font-semibold text-brand-600 hover:text-brand-700 transition-colors"
+            >
+              View all →
+            </a>
+          </div>
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-12 animate-pulse rounded-xl bg-dark-50" />
+              ))}
+            </div>
+          ) : topProducts.length > 0 ? (
+            <div className="space-y-2">
+              {topProducts.map((p, i) => (
+                <motion.div
+                  key={p.id}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.35 + i * 0.04 }}
+                  className="flex items-center gap-3 rounded-xl p-2.5 hover:bg-dark-50/50 transition-colors"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-xs font-bold text-brand-600 shrink-0">
+                    #{i + 1}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-dark-900 truncate">
+                      {p.title_english || p.title || "Untitled"}
+                    </p>
+                    <p className="text-[11px] text-dark-900/40">
+                      {p.marketplace} · ${(p.price_usd_estimated || 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-xs font-bold text-dark-900">
+                      {p.sales_count || 0}
+                    </p>
+                    <p className="text-[10px] text-dark-900/40">sales</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-center text-sm text-dark-900/40 py-8">
+              No products yet
+            </p>
+          )}
+        </motion.div>
+
+        {/* Marketplace Revenue Breakdown */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
+        >
+          <div className="mb-4">
+            <h3 className="flex items-center gap-2 font-semibold text-dark-900">
+              <Globe className="h-4 w-4 text-dark-900/40" />
+              Revenue by Marketplace
+            </h3>
+            <p className="text-xs text-dark-900/40 mt-1">
+              Source distribution
+            </p>
+          </div>
+          {loading ? (
+            <div className="space-y-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-10 animate-pulse rounded-xl bg-dark-50" />
+              ))}
+            </div>
+          ) : marketplaceRevenue.length > 0 ? (
+            <MarketplaceBreakdown data={marketplaceRevenue} />
+          ) : (
+            <p className="text-center text-sm text-dark-900/40 py-8">
+              No marketplace data
+            </p>
+          )}
+        </motion.div>
+
+        {/* Live Activity Feed */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
+        >
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="flex items-center gap-2 font-semibold text-dark-900">
+              <Activity className="h-4 w-4 text-dark-900/40" />
+              Activity Feed
+            </h3>
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              LIVE
+            </span>
+          </div>
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-10 animate-pulse rounded-xl bg-dark-50" />
+              ))}
+            </div>
+          ) : (
+            <ActivityFeed events={activities} />
+          )}
+        </motion.div>
+      </div>
     </div>
   );
 }

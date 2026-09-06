@@ -14,6 +14,12 @@ import {
   Home,
   Heart,
   Gift,
+  Info,
+  FileText,
+  Shield,
+  RotateCcw,
+  Truck,
+  Bell,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
@@ -161,11 +167,53 @@ export default function AccountScreen() {
       route: "/settings/index",
     },
     {
+      id: "about",
+      icon: <Info size={20} color={COLORS.primary} />,
+      label: locale === "en" ? "About" : "Ku saabsan",
+      subtitle: locale === "en" ? "App info & legal" : "Macluumaad app & sharciga",
+      route: "/profile/about",
+    },
+    {
+      id: "shipping-info",
+      icon: <Truck size={20} color={COLORS.primary} />,
+      label: locale === "en" ? "Shipping Info" : "Macluumaadka Rarka",
+      subtitle: locale === "en" ? "Air & sea freight details" : "Faahfaahinta rarka hawada & badda",
+      route: "/profile/shipping-info",
+    },
+    {
+      id: "returns",
+      icon: <RotateCcw size={20} color={COLORS.primary} />,
+      label: locale === "en" ? "Returns Policy" : "Dib-u-celinta",
+      subtitle: locale === "en" ? "7-day return window" : "Fasax dib-u-celin 7 maalmood",
+      route: "/profile/returns",
+    },
+    {
+      id: "notifications-settings",
+      icon: <Bell size={20} color={COLORS.primary} />,
+      label: locale === "en" ? "Notification Settings" : "Dejinta Ogeysiisyada",
+      subtitle: locale === "en" ? "Manage push notifications" : "Maamul ogeysiisyada",
+      route: "/notifications/settings",
+    },
+    {
       id: "help",
       icon: <HelpCircle size={20} color={COLORS.primary} />,
       label: t("profile.help"),
       subtitle: locale === "en" ? "FAQs & contact support" : "Su'aalo & taageero xiriir",
       route: "/support/index",
+    },
+    {
+      id: "terms",
+      icon: <FileText size={20} color={COLORS.primary} />,
+      label: locale === "en" ? "Terms of Service" : "Shuruucda Adeega",
+      subtitle: locale === "en" ? "Legal terms & conditions" : "Shuruucda sharciga ah",
+      route: "/profile/terms",
+    },
+    {
+      id: "privacy",
+      icon: <Shield size={20} color={COLORS.primary} />,
+      label: locale === "en" ? "Privacy Policy" : "Siyaasadda Arrimaha Gaarka",
+      subtitle: locale === "en" ? "Data protection info" : "Macluumaadka ilaalinta xogta",
+      route: "/profile/privacy",
     },
     {
       id: "logout",
