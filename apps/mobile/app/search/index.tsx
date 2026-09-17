@@ -24,7 +24,10 @@ import * as Haptics from "expo-haptics";
 import { getProducts } from "@/db";
 import { ProductCard } from "@/components/home/ProductCard";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { Image } from "expo-image";
 import type { Product } from "@/types";
+
+const EMPTY_SEARCH_IMG = require("../../assets/screens/empty_search.png");
 
 // Derived filter chips from data (plus "All")
 type SortKey = "relevance" | "price-asc" | "price-desc" | "rating" | "sales";
@@ -276,7 +279,7 @@ export default function SearchScreen() {
 
             {filteredProducts.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyEmoji}>🔍</Text>
+                <Image source={EMPTY_SEARCH_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
                 <Text style={styles.emptyTitle}>No products found</Text>
                 <Text style={styles.emptySubtitle}>
                   Try adjusting your search or filters
@@ -386,7 +389,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: SPACING.xxl,
   },
-  emptyEmoji: { fontSize: 64, marginBottom: SPACING.lg },
+  emptyImg: { width: 200, height: 200, marginBottom: SPACING.md },
   emptyTitle: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: SPACING.sm },
   emptySubtitle: { fontSize: 14, color: COLORS.textSecondary, textAlign: "center" },
 });

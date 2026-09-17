@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { Image } from "expo-image";
 import {
   ArrowLeft,
   Search,
@@ -25,6 +26,8 @@ import { useI18n } from "@/lib/i18n";
 import { getOrders, getOrderById } from "@/db/index";
 import type { LocalOrder } from "@/db/index";
 import { Timeline, TimelineEvent } from "@/components/orders/Timeline";
+
+const TRACKING_IMG = require("../../assets/screens/tracking.png");
 
 /** Build a full tracking timeline from an order's status */
 function buildTrackingTimeline(order: LocalOrder): TimelineEvent[] {
@@ -276,7 +279,7 @@ export default function TrackingScreen() {
         {/* Empty state when no id provided and no search yet */}
         {!order && !loading && !notFound && !searching && !id && (
           <View style={styles.emptyState}>
-            <Package size={48} color={COLORS.gray300} />
+            <Image source={TRACKING_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
             <Text style={styles.emptyTitle}>Track Your Order</Text>
             <Text style={styles.emptySubtitle}>
               Enter your order reference above to see real-time tracking updates.
@@ -376,6 +379,7 @@ const styles = StyleSheet.create({
   supportButtonPressed: { opacity: 0.8 },
   supportButtonText: { color: COLORS.white, fontSize: 16, fontWeight: "600", marginLeft: SPACING.sm, fontFamily: FONTS.semibold },
   emptyState: { alignItems: "center", paddingTop: SPACING.xxxl * 2, paddingHorizontal: SPACING.lg },
+  emptyImg: { width: 220, height: 220, marginBottom: SPACING.lg },
   emptyTitle: { fontSize: 18, fontFamily: FONTS.semibold, color: COLORS.black, marginTop: SPACING.lg, marginBottom: SPACING.sm },
   emptySubtitle: { fontSize: 14, color: COLORS.textSecondary, textAlign: "center", fontFamily: FONTS.regular },
   bottomPadding: { height: 100 },

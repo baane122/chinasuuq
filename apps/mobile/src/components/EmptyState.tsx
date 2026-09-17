@@ -1,10 +1,12 @@
 import React from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
+import { Image } from "expo-image";
 import { Package } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 
 interface EmptyStateProps {
   icon?: React.ReactNode;
+  image?: number; // require("...") asset source
   title: string;
   subtitle?: string;
   actionLabel?: string;
@@ -14,6 +16,7 @@ interface EmptyStateProps {
 
 export function EmptyState({
   icon,
+  image,
   title,
   subtitle,
   actionLabel,
@@ -22,9 +25,13 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <View style={[styles.wrap, compact && styles.wrapCompact]}>
-      <View style={styles.iconContainer}>
-        {icon ?? <Package size={compact ? 32 : 48} color={COLORS.gray300} />}
-      </View>
+      {image ? (
+        <Image source={image} style={styles.image} contentFit="contain" transition={150} />
+      ) : (
+        <View style={[styles.iconContainer, compact && styles.iconContainerCompact]}>
+          {icon ?? <Package size={compact ? 32 : 48} color={COLORS.gray300} />}
+        </View>
+      )}
       <Text style={styles.title}>{title}</Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       {actionLabel && onAction ? (
@@ -48,6 +55,11 @@ const styles = StyleSheet.create({
   wrapCompact: {
     paddingTop: SPACING.xl,
   },
+  image: {
+    width: 220,
+    height: 220,
+    marginBottom: SPACING.md,
+  },
   iconContainer: {
     width: 96,
     height: 96,
@@ -56,6 +68,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: SPACING.lg,
+  },
+  iconContainerCompact: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
   },
   title: {
     fontSize: 18,

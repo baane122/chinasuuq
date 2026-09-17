@@ -2,9 +2,12 @@ import React from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Image } from "expo-image";
 import { ArrowLeft, RotateCcw, CheckCircle, Clock, MessageCircle } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
+
+const RETURNS_IMG = require("../../assets/screens/returns_hero.png");
 
 export default function ReturnsScreen() {
   const { locale } = useI18n();
@@ -35,7 +38,7 @@ export default function ReturnsScreen() {
       </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.heroSection}>
-          <RotateCcw size={48} color={COLORS.primary} />
+          <Image source={RETURNS_IMG} style={styles.heroImg} contentFit="contain" transition={150} />
           <Text style={styles.heroTitle}>{locale === "en" ? "Easy Returns" : "Dib-u-celin Fudud"}</Text>
           <Text style={styles.heroSub}>{locale === "en" ? "7-day return window for all orders" : "Fasax dib-u-celin 7 maalmood ah"}</Text>
         </View>
@@ -88,6 +91,7 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, textAlign: "center", marginRight: 44 },
   content: { padding: SPACING.lg, paddingBottom: 40 },
   heroSection: { alignItems: "center", paddingVertical: SPACING.xxl },
+  heroImg: { width: 200, height: 150, marginBottom: SPACING.xs },
   heroTitle: { fontSize: 22, fontFamily: FONTS.bold, color: COLORS.black, marginTop: SPACING.md },
   heroSub: { fontSize: 13, color: COLORS.textSecondary, marginTop: SPACING.xs },
   highlightRow: { flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.xl },

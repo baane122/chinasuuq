@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, Image, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Image as ExpoImage } from "expo-image";
 import { ArrowLeft, Heart, Trash2, ShoppingCart } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
@@ -10,6 +11,8 @@ import { getFavorites } from "@/db/index";
 import type { Product } from "@/types";
 import { WHATSAPP_LINK } from "@/lib/constants";
 import { Linking } from "react-native";
+
+const EMPTY_WISHLIST_IMG = require("../../assets/screens/empty_wishlist.png");
 
 export default function WishlistScreen() {
   const router = useRouter();
@@ -50,7 +53,7 @@ export default function WishlistScreen() {
         <View style={styles.centerLoading}><ActivityIndicator color={COLORS.primary} /></View>
       ) : items.length === 0 ? (
         <View style={styles.empty}>
-          <View style={styles.emptyIcon}><Heart size={40} color={COLORS.primary} /></View>
+          <ExpoImage source={EMPTY_WISHLIST_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
           <Text style={styles.emptyTitle}>Your wishlist is empty</Text>
           <Text style={styles.emptySub}>Tap the heart on any product to save it here.</Text>
           <Pressable style={styles.shopBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/(tabs)" as any); }}>
@@ -97,7 +100,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 17, fontFamily: FONTS.semibold, color: COLORS.black },
   centerLoading: { flex: 1, alignItems: "center", justifyContent: "center" },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: SPACING.xxxl },
-  emptyIcon: { width: 84, height: 84, borderRadius: 42, backgroundColor: COLORS.softOrange, alignItems: "center", justifyContent: "center", marginBottom: SPACING.lg },
+  emptyImg: { width: 200, height: 200, marginBottom: SPACING.lg },
   emptyTitle: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: 4 },
   emptySub: { fontSize: 14, fontFamily: FONTS.regular, color: COLORS.textSecondary, textAlign: "center" },
   shopBtn: { marginTop: SPACING.lg, backgroundColor: COLORS.primary, paddingHorizontal: SPACING.xxl, paddingVertical: SPACING.md, borderRadius: RADIUS.pill },

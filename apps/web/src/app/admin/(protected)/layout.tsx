@@ -19,13 +19,11 @@ import {
   ClipboardList,
   BadgeDollarSign,
   UserCog,
+  BarChart3,
   LogOut,
   Menu,
   X,
-  TrendingUp,
-  BarChart3,
   Bell,
-  HelpCircle,
   ChevronLeft,
   Search,
   ChevronRight,
@@ -57,6 +55,15 @@ const NAV_ITEMS_BASE: Omit<NavItem, "badge">[] = [
   { href: "/admin/warehouse", label: "Warehouse", icon: Boxes },
   { href: "/admin/staff", label: "Staff & Roles", icon: UserCog },
   { href: "/admin/settings", label: "Settings", icon: Settings },
+];
+
+/* ─── Sidebar sections (grouped by href mapping into NAV_ITEMS_BASE) ── */
+const NAV_SECTIONS: { title: string; hrefs: string[] }[] = [
+  { title: "Overview", hrefs: ["/admin"] },
+  { title: "Commerce", hrefs: ["/admin/orders", "/admin/customers", "/admin/payments"] },
+  { title: "Operations", hrefs: ["/admin/sourcing", "/admin/shipments", "/admin/warehouse"] },
+  { title: "Catalog", hrefs: ["/admin/products", "/admin/marketplaces", "/admin/rates"] },
+  { title: "Office", hrefs: ["/admin/quotes", "/admin/staff", "/admin/settings"] },
 ];
 
 /* ─── Search results dropdown ───────────────────────────────────── */
@@ -266,23 +273,25 @@ export default function ProtectedLayout({
       ? item.match.includes(pathname)
       : pathname.startsWith(item.href);
 
+  const currentPageTitle = (() => {
+    const exact = NAV_ITEMS_BASE.find((item) =>
+      (item.match ?? [item.href]).includes(pathname)
+    );
+    if (exact) return exact.label;
+    const prefixed = [...NAV_ITEMS_BASE]
+      .sort((a, b) => b.href.length - a.href.length)
+      .find((item) => pathname.startsWith(item.href));
+    return prefixed?.label ?? "Dashboard";
+  })();
+
   return (
     <ToastProvider>
       <div className="flex min-h-screen bg-dark-50">
-        {/* ─── Mobile sidebar toggle ────────────────────────── */}
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="fixed left-4 top-4 z-40 rounded-xl bg-dark-900 p-2.5 text-white shadow-lg md:hidden"
-          aria-label="Open menu"
-        >
-          <Menu className="h-5 w-5" />
-        </button>
-
         {/* ─── Sidebar ──────────────────────────────────────── */}
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-50 flex flex-col bg-dark-900 text-white transition-all duration-300 md:static",
-            collapsed ? "w-[72px]" : "w-64",
+            "fixed inset-y-0 left-0 z-50 flex flex-col bg-dark-950 text-white transition-all duration-300 md:static",
+            collapsed ? "w-[76px]" : "w-[264px]",
             sidebarOpen
               ? "translate-x-0"
               : "-translate-x-full md:translate-x-0"
@@ -291,250 +300,125 @@ export default function ProtectedLayout({
           {/* Logo */}
           <div
             className={cn(
-              "flex items-center px-5 py-5",
-              collapsed ? "justify-center" : "justify-between"
+              "relative flex items-center gap-3 px-4 py-5",
+              collapsed && "justify-center px-0"
             )}
           >
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500 shadow-sm shadow-brand-500/30">
-                <TrendingUp className="h-5 w-5 text-white" />
+            <div className="flex h-10 shrink-0 items-center justify-center rounded-xl bg-white/10 px-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/admin/logo.jpg"
+                alt="ChinaSuuq"
+                className="h-8 w-auto object-contain"
+              />
+            </div>
+            {!collapsed && (
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-white">
+                  ChinaSuuq
+                </p>
+                <p className="text-[10px] font-medium text-white/50">
+                  Mission Control
+                </p>
               </div>
-              {!collapsed && (
-                <div>
-                  <p className="text-sm font-bold tracking-tight">
-                    ChinaSuuq
-                  </p>
-                  <p className="text-[10px] text-white/40 font-medium">
-                    Mission Control
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setCollapsed(!collapsed)}
-                className="hidden md:flex text-white/40 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
-              >
-                <ChevronLeft
-                  className={cn(
-                    "h-4 w-4 transition-transform",
-                    collapsed && "rotate-180"
-                  )}
-                />
-              </button>
-              <button
-                onClick={() => setSidebarOpen(false)}
-                className="text-white/40 hover:text-white md:hidden p-1"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+            )}
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="absolute right-3 top-3 rounded-lg p-1 text-white/40 transition-colors hover:bg-white/10 hover:text-white md:hidden"
+              aria-label="Close menu"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
-          {/* System Status indicator */}
-          {!collapsed && (
-            <div className="mx-3 mb-3 rounded-xl bg-white/5 border border-white/5 p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[10px] font-semibold text-white/60 uppercase tracking-wider">
-                  System Online
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-lg bg-white/5 p-2">
-                  <p className="text-[10px] text-white/40">Uptime</p>
-                  <p className="text-xs font-bold text-emerald-400">
-                    99.9%
-                  </p>
-                </div>
-                <div className="rounded-lg bg-white/5 p-2">
-                  <p className="text-[10px] text-white/40">Latency</p>
-                  <p className="text-xs font-bold text-white">42ms</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Collapsed system dot */}
-          {collapsed && (
-            <div className="flex justify-center mb-3">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="System Online" />
-            </div>
-          )}
-
-          {/* Search */}
-          {!collapsed && (
-            <div className="px-3 mb-3" ref={searchRef}>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/30" />
-                <input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onFocus={() => setSearchFocused(true)}
-                  placeholder="Search pages…"
-                  className="h-9 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-3 text-sm text-white placeholder:text-white/30 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500/30"
-                />
-              </div>
-              {/* Search dropdown */}
-              {searchFocused && searchResults.length > 0 && (
-                <div className="mt-2 rounded-xl border border-white/10 bg-dark-800 shadow-xl overflow-hidden">
-                  {searchResults.map((r) => {
-                    const Icon = r.icon;
-                    return (
-                      <Link
-                        key={r.href}
-                        href={r.href}
-                        onClick={() => {
-                          setSearchQuery("");
-                          setSearchFocused(false);
-                          setSidebarOpen(false);
-                        }}
-                        className="flex items-center gap-3 px-3 py-2.5 text-sm text-white/70 hover:bg-white/5 hover:text-white transition-colors"
-                      >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <span>{r.label}</span>
-                        <ChevronRight className="h-3 w-3 ml-auto opacity-30" />
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Notification bell (inline) */}
-          {!collapsed && (
-            <div className="px-3 mb-2">
-              <Link
-                href="/admin/orders"
-                className={cn(
-                  "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
-                  notifCount > 0
-                    ? "bg-brand-500/10 text-brand-400 border border-brand-500/20"
-                    : "text-white/50 hover:bg-white/5 hover:text-white"
-                )}
-              >
-                <div className="relative">
-                  <Bell className="h-[18px] w-[18px]" />
-                  {notifCount > 0 && (
-                    <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand-500 px-1 text-[9px] font-bold text-white">
-                      {notifCount > 99 ? "99+" : notifCount}
-                    </span>
-                  )}
-                </div>
-                <span>Notifications</span>
-                {notifCount > 0 && (
-                  <span className="ml-auto rounded-full bg-brand-500/20 px-2 py-0.5 text-[10px] font-bold text-brand-400">
-                    {notifCount}
-                  </span>
-                )}
-              </Link>
-            </div>
-          )}
-
-          {/* Collapsed notification bell */}
-          {collapsed && notifCount > 0 && (
-            <div className="flex justify-center mb-2">
-              <div className="relative">
-                <Bell className="h-4 w-4 text-white/50" />
-                <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-brand-500 px-0.5 text-[8px] font-bold text-white">
-                  {notifCount > 99 ? "99+" : notifCount}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Nav */}
-          <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item);
+          {/* Nav sections */}
+          <nav className="scrollbar-slim flex-1 overflow-y-auto px-3 py-4">
+            {NAV_SECTIONS.map((section) => {
+              const sectionItems = section.hrefs
+                .map((href) => navItems.find((n) => n.href === href))
+                .filter((n): n is NavItem => Boolean(n));
+              if (sectionItems.length === 0) return null;
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setSidebarOpen(false)}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all group",
-                    collapsed && "justify-center px-0",
-                    active
-                      ? "bg-brand-500 text-white shadow-sm shadow-brand-500/30"
-                      : "text-white/60 hover:bg-white/5 hover:text-white"
+                <div key={section.title} className="mb-5 last:mb-0">
+                  {!collapsed && (
+                    <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-widest text-white/25">
+                      {section.title}
+                    </p>
                   )}
-                  title={collapsed ? item.label : undefined}
-                >
-                  <div className="relative shrink-0">
-                    <Icon className="h-[18px] w-[18px]" />
-                    {/* Badge dot for collapsed sidebar */}
-                    {!collapsed && item.badge && item.badge > 0 && (
-                      <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-brand-500" />
-                    )}
+                  <div className="space-y-1">
+                    {sectionItems.map((item) => {
+                      const Icon = item.icon;
+                      const active = isActive(item);
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setSidebarOpen(false)}
+                          title={collapsed ? item.label : undefined}
+                          className={cn(
+                            "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
+                            collapsed && "justify-center px-0",
+                            active
+                              ? "bg-white/[0.06] text-white"
+                              : "text-white/45 hover:bg-white/5 hover:text-white/80"
+                          )}
+                        >
+                          {active && (
+                            <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-brand-500" />
+                          )}
+                          <span className="relative shrink-0">
+                            <Icon
+                              className={cn(
+                                "h-[18px] w-[18px]",
+                                active ? "text-brand-400" : undefined
+                              )}
+                            />
+                          </span>
+                          {!collapsed && (
+                            <span className="flex-1 truncate">
+                              {item.label}
+                            </span>
+                          )}
+                          {!collapsed && item.badge && item.badge > 0 && (
+                            <span className="min-w-[22px] rounded-full bg-brand-500/20 px-2 py-0.5 text-center text-[10px] font-bold text-brand-400">
+                              {item.badge > 99 ? "99+" : item.badge}
+                            </span>
+                          )}
+                          {collapsed && item.badge && item.badge > 0 && (
+                            <span className="absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full bg-brand-500" />
+                          )}
+                        </Link>
+                      );
+                    })}
                   </div>
-                  {!collapsed && <span className="flex-1">{item.label}</span>}
-                  {!collapsed && item.badge && item.badge > 0 && (
-                    <span className="rounded-full bg-brand-500/20 px-2 py-0.5 text-[10px] font-bold text-brand-400 min-w-[22px] text-center">
-                      {item.badge > 99 ? "99+" : item.badge}
-                    </span>
-                  )}
-                </Link>
+                </div>
               );
             })}
           </nav>
 
-          {/* ─── Bottom: User profile + actions ─────────────── */}
-          <div className="border-t border-white/5 p-3 space-y-1">
-            {/* View website */}
-            {!collapsed && (
-              <Link
-                href="/"
-                className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/40 hover:bg-white/5 hover:text-white transition-all"
-              >
-                <Globe className="h-[18px] w-[18px]" />
-                <span>View Website</span>
-              </Link>
-            )}
-
-            {/* User profile section */}
-            <div
+          {/* ─── Bottom: collapse toggle + sign out ─────────── */}
+          <div className="space-y-1 border-t border-white/10 p-3">
+            <button
+              onClick={() => setCollapsed(!collapsed)}
               className={cn(
-                "rounded-xl transition-all",
-                collapsed ? "p-0" : "bg-white/5 border border-white/5 p-3"
+                "hidden w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/45 transition-all hover:bg-white/5 hover:text-white/80 md:flex",
+                collapsed && "justify-center px-0"
               )}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
-              {collapsed ? (
-                <div className="flex justify-center">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500/20 text-brand-400 text-xs font-bold">
-                    {adminName.charAt(0).toUpperCase()}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/20 text-brand-400 text-sm font-bold shrink-0">
-                    {adminName.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-white truncate">
-                      {adminName}
-                    </p>
-                    <p className="text-[10px] text-white/40 truncate">
-                      {adminEmail || "admin@chinasuuq.com"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-[9px] font-bold text-brand-400 uppercase">
-                      <Circle className="h-1.5 w-1.5 fill-current" />
-                      {adminRole.replace("_", " ")}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
+              <ChevronLeft
+                className={cn(
+                  "h-[18px] w-[18px] transition-transform",
+                  collapsed && "rotate-180"
+                )}
+              />
+              {!collapsed && <span>Collapse</span>}
+            </button>
 
-            {/* Sign out */}
             <button
               onClick={handleSignOut}
               className={cn(
-                "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-white/40 hover:bg-white/5 hover:text-white transition-all",
+                "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-rose-300/80 transition-all hover:bg-rose-400/10 hover:text-rose-200",
                 collapsed && "justify-center px-0"
               )}
             >
@@ -554,7 +438,104 @@ export default function ProtectedLayout({
 
         {/* ─── Main content ─────────────────────────────────── */}
         <main className="flex-1 overflow-auto">
-          <div className="p-6 md:p-8 md:pt-16 lg:pt-8">{children}</div>
+          {/* Topbar */}
+          <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-dark-900/[0.06] bg-warm-50/80 px-5 backdrop-blur-md md:gap-4 md:px-8">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-dark-900/60 transition-colors hover:bg-dark-900/5 hover:text-dark-900 md:hidden"
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+
+            {/* Breadcrumb */}
+            <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+              <span className="hidden font-medium text-dark-900/35 sm:inline">
+                Mission Control
+              </span>
+              <span className="hidden text-dark-900/20 sm:inline">/</span>
+              <span className="truncate font-bold text-dark-900">
+                {currentPageTitle}
+              </span>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+              {/* Global search */}
+              <div className="relative" ref={searchRef}>
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30" />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  placeholder="Search pages…"
+                  className="admin-input h-9 w-28 pl-9 transition-all focus:w-56 sm:w-64 sm:focus:w-80"
+                />
+                {/* Search dropdown */}
+                {searchFocused && searchResults.length > 0 && (
+                  <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-dark-900/10 bg-white shadow-xl shadow-dark-900/10">
+                    {searchResults.map((r) => {
+                      const Icon = r.icon;
+                      return (
+                        <Link
+                          key={r.href}
+                          href={r.href}
+                          onClick={() => {
+                            setSearchQuery("");
+                            setSearchFocused(false);
+                            setSidebarOpen(false);
+                          }}
+                          className="flex items-center gap-3 px-3 py-2.5 text-sm text-dark-900/70 transition-colors hover:bg-warm-100 hover:text-dark-900"
+                        >
+                          <Icon className="h-4 w-4 shrink-0 text-brand-500" />
+                          <span className="flex-1 truncate">{r.label}</span>
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-dark-900/30">
+                            {r.section}
+                          </span>
+                          <ChevronRight className="h-3 w-3 opacity-30" />
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Notification bell */}
+              <Link
+                href="/admin/orders"
+                aria-label="Notifications"
+                className="relative flex h-10 w-10 items-center justify-center rounded-xl text-dark-900/50 transition-colors hover:bg-dark-900/5 hover:text-dark-900"
+              >
+                <Bell className="h-[18px] w-[18px]" />
+                {notifCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand-500 px-1 text-[9px] font-bold text-white ring-2 ring-warm-50">
+                    {notifCount > 99 ? "99+" : notifCount}
+                  </span>
+                )}
+              </Link>
+
+              {/* Admin chip */}
+              <div
+                className="hidden items-center gap-3 sm:flex"
+                title={adminEmail || "admin@chinasuuq.com"}
+              >
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500 text-xs font-bold text-white shadow-sm shadow-brand-500/30">
+                  {adminName.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <p className="truncate text-sm font-semibold text-dark-900">
+                    {adminName}
+                  </p>
+                  <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-dark-900/40">
+                    <Circle className="h-1.5 w-1.5 fill-current text-emerald-500" />
+                    {adminRole.replace("_", " ")}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          {/* Page content */}
+          <div className="px-5 py-6 md:px-8 md:py-8">{children}</div>
         </main>
       </div>
     </ToastProvider>

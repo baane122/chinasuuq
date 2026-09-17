@@ -28,6 +28,7 @@ import { useAuthStore } from "@/store/auth";
 import { useI18n } from "@/lib/i18n";
 import { ProductCard } from "@/components/home/ProductCard";
 import { CategoryChips } from "@/components/home/CategoryChips";
+import { ShopByCategory } from "@/components/home/ShopByCategory";
 import { WhatsAppCard } from "@/components/home/WhatsAppCard";
 import { ProductCardSkeleton } from "@/components/ui/SkeletonLoader";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
@@ -37,7 +38,7 @@ import { MARKETPLACES } from "@/lib/marketplaces";
 import type { Product } from "@/types";
 
 // Brand assets — clean circular app icon (NOT the busy promo image)
-const LOGO = require("../../assets/images/icon.png");
+const LOGO = require("../../assets/images/logo.jpg");
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -293,7 +294,12 @@ export default function HomeTab() {
           ))}
         </View>
 
-        {/* ── Categories ── */}
+        {/* ── Shop by category — icon grid, opens 1688 searches ── */}
+        <View style={styles.section}>
+          <ShopByCategory />
+        </View>
+
+        {/* ── Category filter chips ── */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { paddingHorizontal: SPACING.lg, marginBottom: SPACING.md }]}>
             {t("home.categories")}

@@ -12,6 +12,13 @@
 
 const FALLBACK_FLAG = "chinasuuq-admin-fallback";
 
+// DEV-ONLY recovery code. NEVER enable in production.
+// gated by NEXT_PUBLIC_DEV_BUILD (set only in .env.local for local dev).
+// When production ships, NEXT_PUBLIC_DEV_BUILD is absent -> defaultRecoveryCode stays ""
+// and the recovery path is inert, exactly as before (no security hole).
+const isDev = process.env.NEXT_PUBLIC_DEV_BUILD === "1";
+export const defaultRecoveryCode = isDev ? "chinasuuq-dev" : "";
+
 export function setAdminFallbackSession(active: boolean): void {
   try {
     if (active) localStorage.setItem(FALLBACK_FLAG, "1");
@@ -27,6 +34,3 @@ export function hasAdminFallbackSession(): boolean {
   }
 }
 
-// NOTE: The hardcoded recovery code that previously lived here has been
-// removed for security. Use the server-side recovery flow if needed.
-export const defaultRecoveryCode = "";

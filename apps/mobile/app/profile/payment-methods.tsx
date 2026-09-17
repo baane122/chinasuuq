@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Image } from "expo-image";
 import {
   ArrowLeft,
   CreditCard,
@@ -28,6 +29,8 @@ import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
 import { supabase } from "@/lib/supabase";
 import { getPaymentsByUser, type PaymentRecord } from "@/db/index";
+
+const PAYMENT_IMG = require("../../assets/screens/payment_methods.png");
 
 const PREF_KEY = "chinasuuq-preferred-payment";
 
@@ -154,6 +157,11 @@ export default function PaymentMethodsScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 80 }}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <View style={styles.heroWrap}>
+            <Image source={PAYMENT_IMG} style={styles.heroImg} contentFit="contain" transition={150} />
+          </View>
+        }
         data={[
           { key: "methods", title: locale === "en" ? "Choose your preferred method" : "Dooro habkaaga" },
           ...(user
@@ -340,6 +348,8 @@ export default function PaymentMethodsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.warmWhite },
+  heroWrap: { alignItems: "center", marginBottom: SPACING.sm },
+  heroImg: { width: 220, height: 150 },
   header: {
     flexDirection: "row",
     alignItems: "center",

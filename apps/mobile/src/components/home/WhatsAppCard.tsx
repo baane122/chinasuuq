@@ -1,7 +1,9 @@
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Linking } from "react-native";
-import { MessageCircle } from "lucide-react-native";
+import { Image } from "expo-image";
 import { COLORS, SPACING, RADIUS, FONTS, WHATSAPP_LINK } from "@/lib/theme";
+
+const WA_ICON = require("../../../assets/brand/whatsapp.png");
 
 export function WhatsAppCard() {
   return (
@@ -11,7 +13,7 @@ export function WhatsAppCard() {
       onPress={() => Linking.openURL(WHATSAPP_LINK)}
     >
       <View style={styles.iconWrapper}>
-        <MessageCircle size={24} color={COLORS.white} fill={COLORS.white} />
+        <Image source={WA_ICON} style={styles.waIcon} contentFit="contain" />
       </View>
       <View style={styles.textBlock}>
         <Text style={styles.title}>Can't find what you need?</Text>
@@ -43,7 +45,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.whatsapp,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
+  waIcon: { width: 28, height: 28 },
   textBlock: {
     flex: 1,
   },

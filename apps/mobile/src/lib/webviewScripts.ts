@@ -414,9 +414,17 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
       "[class*='tabbar' i]",
       "[class*='tab-bar' i]",
       "[class*='fixed-bottom' i]",
-      "nav[class*='bottom' i]"
+      "nav[class*='bottom' i]",
+      "[class*='float-btn' i]",
+      "[class*='floatBtn' i]",
+      "[class*='floating-btn' i]",
+      "[class*='dock' i]",
+      "[class*='side-bar' i]",
+      "[class*='sidebar' i]"
     ];
+    var dockText = /^(我的|进货|进货单|购物车|推|开团)$|进货单|开团/;
     function hideKnownBars() {
+      // 1) Class-pattern bottom bars
       var nodes = document.querySelectorAll(selectors.join(","));
       for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i];
@@ -425,6 +433,29 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
         if (!rect || rect.height > 120 || rect.width < window.innerWidth * 0.55) continue;
         el.setAttribute("data-cs-market-nav", "1");
         el.style.setProperty("display", "none", "important");
+      }
+      // 2) Floating bottom-right docks labeled with marketplace words
+      //    (e.g. 1688's 我的 / 推 / 进货单 cluster, Taobao's 购物车 etc.)
+      var anchors = document.querySelectorAll("a, div, li, span");
+      for (var j = 0; j < anchors.length; j++) {
+        var el2 = anchors[j];
+        if (!el2 || el2.getAttribute("data-cs-market-nav") === "1") continue;
+        var txt = (el2.innerText || "").trim();
+        if (!txt || txt.length > 40) continue;
+        var r = el2.getBoundingClientRect ? el2.getBoundingClientRect() : null;
+        if (!r || r.height < 34 || r.height > 150) continue;
+        if (r.top < window.innerHeight * 0.66) continue; // bottom region only
+        var hit = dockText.test(txt);
+        if (!hit) continue;
+        // Only kill leaf-ish nodes; skip huge wrappers
+        if (r.width > window.innerWidth * 0.8 && el2.children.length > 6) continue;
+        el2.setAttribute("data-cs-market-nav", "1");
+        el2.style.setProperty("display", "none", "important");
+        var p = el2.parentElement;
+        if (p && p.children.length <= 8 && !p.getAttribute("data-cs-market-nav")) {
+          p.setAttribute("data-cs-market-nav", "1");
+          p.style.setProperty("display", "none", "important");
+        }
       }
     }
     hideKnownBars();

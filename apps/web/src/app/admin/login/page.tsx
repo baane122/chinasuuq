@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { setAdminFallbackSession, hasAdminFallbackSession, defaultRecoveryCode } from "@/lib/adminSession";
-import { Eye, EyeOff, Loader2, LogIn, Lock, Mail, ShieldCheck, AlertTriangle, ChevronRight, Globe, Package, Truck, CreditCard, TrendingUp, KeyRound } from "lucide-react";
+import { Eye, EyeOff, Loader2, LogIn, Lock, Mail, ShieldCheck, AlertTriangle, Globe, Package, Truck, CreditCard, TrendingUp, KeyRound } from "lucide-react";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -95,9 +95,9 @@ export default function AdminLoginPage() {
   ];
 
   return (
-    <div className="flex min-h-screen bg-dark-950">
+    <div className="flex min-h-screen bg-warm-50">
       {/* ── Left brand panel (desktop) ── */}
-      <div className="relative hidden lg:flex w-[45%] flex-col justify-between overflow-hidden bg-gradient-to-br from-brand-600 via-brand-500 to-orange-700 p-12">
+      <div className="relative hidden w-[45%] flex-col overflow-hidden bg-gradient-to-br from-brand-600 via-brand-500 to-orange-700 p-12 lg:flex">
         {/* Decorative */}
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute -top-24 -right-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
@@ -108,9 +108,11 @@ export default function AdminLoginPage() {
           />
         </div>
 
+        {/* Logo row */}
         <div className="relative flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
-            <ShieldCheck className="h-6 w-6 text-white" />
+          <div className="flex h-11 items-center justify-center rounded-xl bg-white/15 p-1.5 backdrop-blur">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/admin/logo.jpg" alt="ChinaSuuq" className="h-full w-auto object-contain" />
           </div>
           <div>
             <p className="text-lg font-bold text-white">ChinaSuuq</p>
@@ -118,7 +120,8 @@ export default function AdminLoginPage() {
           </div>
         </div>
 
-        <div className="relative">
+        {/* Headline + features */}
+        <div className="relative mt-14">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-xs font-medium text-white/90 backdrop-blur">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             Advanced Admin Platform
@@ -131,13 +134,16 @@ export default function AdminLoginPage() {
             Manage products, marketplaces, orders, payments, and logistics — all from one mission-critical dashboard.
           </p>
 
-          <div className="mt-8 space-y-4">
+          <div className="mt-8 space-y-3">
             {featureItems.map((f, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 backdrop-blur">
-                  <f.icon className="h-4.5 w-4.5 text-white" />
+              <div
+                key={i}
+                className="flex items-center gap-4 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15">
+                  <f.icon className="h-5 w-5 text-white" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-semibold text-white">{f.label}</p>
                   <p className="text-xs text-white/60">{f.sub}</p>
                 </div>
@@ -146,66 +152,72 @@ export default function AdminLoginPage() {
           </div>
         </div>
 
-        <p className="relative text-xs text-white/50">© 2026 ChinaSuuq · Hargeisa → China</p>
+        {/* Hero + footer */}
+        <div className="relative mt-auto pt-12">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/admin/login_hero.png"
+            alt="ChinaSuuq Mission Control"
+            className="mx-auto w-full max-w-md drop-shadow-2xl"
+          />
+          <p className="mt-6 text-center text-xs text-white/50">© 2026 ChinaSuuq · Hargeisa → China</p>
+        </div>
       </div>
 
-      {/* ── Right login form ── */}
-      <div className="flex flex-1 items-center justify-center bg-dark-950 p-6">
+      {/* ── Right login panel ── */}
+      <div className="flex flex-1 items-center justify-center p-6">
         <div className="w-full max-w-md">
-          {/* Mobile logo */}
-          <div className="mb-10 flex flex-col items-center lg:items-start">
-            <div className="mb-4 flex items-center gap-3 lg:hidden">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500">
-                <ShieldCheck className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <p className="text-lg font-bold text-white">ChinaSuuq</p>
-                <p className="text-xs text-dark-400">Mission Control</p>
-              </div>
+          {/* Mobile brand strip */}
+          <div className="mb-8 flex items-center justify-center gap-3 lg:hidden">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 p-1.5 shadow-sm ring-1 ring-dark-900/10">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/admin/logo.jpg" alt="ChinaSuuq" className="h-full w-full object-contain" />
             </div>
-            <h2 className="text-2xl font-bold text-white">Welcome back, Admin</h2>
-            <p className="mt-1 text-sm text-dark-400">Sign in to manage your ChinaSuuq platform</p>
+            <div>
+              <p className="text-base font-bold text-dark-900">ChinaSuuq</p>
+              <p className="text-xs text-dark-900/50">Mission Control</p>
+            </div>
           </div>
 
-          {/* Error banner */}
-          {error && (
-            <div
-              className={cn(
-                "mb-5 rounded-xl border px-4 py-3 text-sm",
-                errorType === "backend"
-                  ? "border-amber-400/30 bg-amber-500/10 text-amber-300"
-                  : errorType === "network"
-                  ? "border-slate-400/30 bg-slate-500/10 text-slate-300"
-                  : "border-red-400/30 bg-red-500/10 text-red-300"
-              )}
-            >
-              <div className="flex items-start gap-2.5">
+          {/* Login card */}
+          <div className="rounded-3xl bg-white p-8 shadow-xl shadow-dark-900/[0.04] ring-1 ring-dark-900/[0.06] sm:p-10">
+            {/* Logo + heading */}
+            <div className="mb-8 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-warm-50 p-2 shadow ring-1 ring-dark-900/10">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/admin/logo.jpg" alt="ChinaSuuq" className="h-full w-full object-contain" />
+              </div>
+              <h1 className="mt-5 text-2xl font-bold tracking-tight text-dark-900">Mission Control</h1>
+              <p className="mt-1.5 text-sm text-dark-900/50">Sign in to manage ChinaSuuq</p>
+            </div>
+
+            {/* Error banner */}
+            {error && (
+              <div className="mb-5 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div>
-                  <p className="font-medium">
+                <div className="min-w-0">
+                  <p className="font-semibold">
                     {errorType === "backend" ? "Authentication service issue" : errorType === "network" ? "Connection issue" : "Unable to sign in"}
                   </p>
                   <p className="mt-0.5 opacity-80">{error}</p>
                   {errorType === "backend" && (
-                    <p className="mt-1.5 text-xs opacity-70">
-                      The Supabase auth schema may need repair. Run <code className="rounded bg-black/20 px-1">supabase link</code> + <code className="rounded bg-black/20 px-1">supabase db push</code> or contact Supabase support.
+                    <p className="mt-1.5 opacity-70">
+                      The Supabase auth schema may need repair. Run <code className="rounded bg-rose-100 px-1">supabase link</code> + <code className="rounded bg-rose-100 px-1">supabase db push</code> or contact Supabase support.
                     </p>
                   )}
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Login card */}
-          <div className="rounded-2xl bg-dark-900 p-8 shadow-2xl ring-1 ring-white/5">
-            <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Login form */}
+            <form onSubmit={handleSubmit} className="space-y-4">
               {/* Email */}
               <div>
-                <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-dark-300">
+                <label htmlFor="email" className="admin-label">
                   Email address
                 </label>
                 <div className="relative">
-                  <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-dark-500" />
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30" />
                   <input
                     id="email"
                     type="email"
@@ -213,23 +225,23 @@ export default function AdminLoginPage() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="admin@chinasuuq.com"
                     autoComplete="username"
-                    className="h-11 w-full rounded-xl border border-dark-700 bg-dark-950 pl-11 pr-4 text-sm text-white placeholder:text-dark-500 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
+                    className="admin-input h-11 pl-10"
                   />
                 </div>
               </div>
 
               {/* Password */}
               <div>
-                <div className="mb-1.5 flex items-center justify-between">
-                  <label htmlFor="password" className="text-sm font-medium text-dark-300">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="password" className="admin-label">
                     Password
                   </label>
-                  <button type="button" className="text-xs text-brand-400 hover:text-brand-300">
+                  <button type="button" className="text-xs font-medium text-dark-900/40 transition-colors hover:text-brand-500">
                     Forgot password?
                   </button>
                 </div>
                 <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-dark-500" />
+                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30" />
                   <input
                     id="password"
                     type={showPassword ? "text" : "password"}
@@ -237,12 +249,13 @@ export default function AdminLoginPage() {
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter your password"
                     autoComplete="current-password"
-                    className="h-11 w-full rounded-xl border border-dark-700 bg-dark-950 pl-11 pr-11 text-sm text-white placeholder:text-dark-500 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
+                    className="admin-input h-11 pl-10 pr-10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-dark-400 hover:text-dark-200"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-dark-900/35 transition-colors hover:text-dark-900"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
@@ -254,16 +267,14 @@ export default function AdminLoginPage() {
                 type="submit"
                 disabled={!canSubmit}
                 className={cn(
-                  "flex h-12 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold text-white shadow-md transition-all duration-200 active:scale-[0.98]",
-                  canSubmit
-                    ? "bg-brand-500 hover:bg-brand-600 shadow-brand-500/30"
-                    : "cursor-not-allowed bg-dark-700 text-dark-400"
+                  "admin-btn-primary h-11 w-full",
+                  !canSubmit && "cursor-not-allowed opacity-50"
                 )}
               >
                 {isLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Signing in...
+                    Signing in…
                   </>
                 ) : (
                   <>
@@ -276,45 +287,45 @@ export default function AdminLoginPage() {
 
             {/* Recovery access divider */}
             <div className="my-5 flex items-center gap-3">
-              <div className="h-px flex-1 bg-dark-700" />
-              <span className="text-[11px] font-medium text-dark-500">or</span>
-              <div className="h-px flex-1 bg-dark-700" />
+              <div className="h-px flex-1 bg-dark-900/[0.08]" />
+              <span className="text-[11px] font-medium uppercase tracking-wider text-dark-900/30">or</span>
+              <div className="h-px flex-1 bg-dark-900/[0.08]" />
             </div>
 
             {!showRecovery ? (
               <button
                 type="button"
                 onClick={() => setShowRecovery(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dark-700 px-4 py-2.5 text-sm font-medium text-dark-300 hover:border-brand-500/40 hover:text-white transition-colors"
+                className="flex w-full items-center justify-center gap-2 text-xs font-medium text-dark-900/40 transition-colors hover:text-brand-500"
               >
-                <KeyRound className="h-4 w-4 text-brand-400" />
+                <KeyRound className="h-3.5 w-3.5" />
                 Use recovery code
               </button>
             ) : (
               <form onSubmit={submitRecovery} className="space-y-3">
                 <div>
-                  <label htmlFor="recovery" className="mb-1.5 block text-sm font-medium text-dark-300">
+                  <label htmlFor="recovery" className="admin-label">
                     Recovery code
                   </label>
                   <div className="relative">
-                    <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-dark-500" />
+                    <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30" />
                     <input
                       id="recovery"
                       type="password"
                       value={recoveryCode}
                       onChange={(e) => setRecoveryCode(e.target.value)}
                       placeholder="Enter recovery code"
-                      className="h-11 w-full rounded-xl border border-dark-700 bg-dark-950 pl-11 pr-4 text-sm text-white placeholder:text-dark-500 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all"
+                      className="admin-input h-11 pl-10"
                     />
                   </div>
-                  <p className="mt-1.5 text-[11px] text-dark-500">
+                  <p className="mt-1.5 text-[11px] text-dark-900/40">
                     Recovery code is a fallback when the auth service is unavailable. Set/change it in Admin Settings.
                   </p>
                 </div>
                 <button
                   type="submit"
                   disabled={!recoveryCode.trim()}
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-brand-500 text-sm font-semibold text-white shadow-md hover:bg-brand-600 transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                  className="admin-btn-primary h-11 w-full"
                 >
                   <ShieldCheck className="h-4 w-4" />
                   Access Mission Control
@@ -323,9 +334,9 @@ export default function AdminLoginPage() {
             )}
 
             {/* Quick access hint */}
-            <div className="mt-6 flex items-center gap-2 rounded-xl bg-dark-950/50 px-4 py-3">
-              <TrendingUp className="h-4 w-4 text-brand-400" />
-              <p className="text-xs text-dark-400">
+            <div className="mt-6 flex items-center gap-2 rounded-xl bg-warm-50 px-4 py-3">
+              <TrendingUp className="h-4 w-4 shrink-0 text-brand-500" />
+              <p className="text-xs text-dark-900/50">
                 Full access to products, orders, marketplaces & payments
               </p>
             </div>
@@ -333,13 +344,13 @@ export default function AdminLoginPage() {
 
           {/* Footer */}
           <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-between">
-            <p className="text-center text-xs text-dark-500">
+            <p className="text-center text-xs text-dark-900/40">
               Need help?{" "}
-              <a href="https://wa.me/8615277074143" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:text-brand-300">
+              <a href="https://wa.me/8615277074143" target="_blank" rel="noopener noreferrer" className="font-medium text-brand-500 hover:text-brand-600">
                 Contact support
               </a>
             </p>
-            <div className="flex items-center gap-1.5 text-xs text-dark-500">
+            <div className="flex items-center gap-1.5 text-xs text-dark-900/40">
               <Globe className="h-3.5 w-3.5" />
               ChinaSuuq · Secure Admin Access
             </div>

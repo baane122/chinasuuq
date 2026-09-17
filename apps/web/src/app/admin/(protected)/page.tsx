@@ -7,7 +7,6 @@ import {
   AlertCircle,
   ArrowDownRight,
   ArrowUpRight,
-  BarChart3,
   Boxes,
   Calendar,
   CheckCircle2,
@@ -16,7 +15,8 @@ import {
   CreditCard,
   DollarSign,
   Download,
-  Globe,
+  Globe2,
+  Layers,
   Package,
   Plus,
   RefreshCw,
@@ -28,7 +28,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { KPICard } from "@/components/admin/KPICard";
+import { PageHeader, StatCard, PageGrid, SectionCard } from "@/components/admin/ui";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { supabase } from "@/lib/supabase";
 import { formatUSD } from "@/lib/utils";
@@ -90,6 +90,22 @@ interface TopProduct {
   marketplace: string;
   sales_count: number;
   price_usd_estimated: number;
+  source_images?: string[] | null;
+}
+
+interface TopCategory {
+  id: string;
+  name: string;
+  slug: string;
+  image_url: string | null;
+  product_count: number;
+}
+
+interface LiveOps {
+  inTransit: number;
+  lowStock: number;
+  pendingSourcing: number;
+  unreadNotifications: number;
 }
 
 interface MarketplaceRevenue {
@@ -375,6 +391,13 @@ export default function AdminDashboard() {
   const [dailyRevenue, setDailyRevenue] = useState<DailyRevenue[]>([]);
   const [orderStatusCounts, setOrderStatusCounts] = useState<OrderStatusCount[]>([]);
   const [marketplaceRevenue, setMarketplaceRevenue] = useState<MarketplaceRevenue[]>([]);
+  const [topCategories, setTopCategories] = useState<TopCategory[]>([]);
+  const [ops, setOps] = useState<LiveOps>({
+    inTransit: 0,
+    lowStock: 0,
+    pendingSourcing: 0,
+    unreadNotifications: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -516,6 +539,31 @@ export default function AdminDashboard() {
     })();
   }, []);
 
+  /* Live ops counters + popular categories (cheap parallel head-counts) */
+  useEffect(() => {
+    (async () => {
+      const [ship, stock, src, notif, cats] = await Promise.all([
+        supabase.from("shipments").select("id", { count: "exact", head: true }).eq("status", "in_transit"),
+        supabase.from("source_products").select("id", { count: "exact", head: true }).eq("stock_status", "low_stock"),
+        supabase.from("sourcing_requests").select("id", { count: "exact", head: true }).eq("status", "pending"),
+        supabase.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null),
+        supabase
+          .from("categories")
+          .select("id, name, slug, image_url, product_count")
+          .eq("is_active", true)
+          .order("product_count", { ascending: false })
+          .limit(8),
+      ]);
+      setOps({
+        inTransit: ship.count || 0,
+        lowStock: stock.count || 0,
+        pendingSourcing: src.count || 0,
+        unreadNotifications: notif.count || 0,
+      });
+      if (!cats.error && cats.data) setTopCategories(cats.data as TopCategory[]);
+    })();
+  }, []);
+
   const unread = useMemo(
     () => activities.filter((a) => a.type === "order").length,
     [activities]
@@ -524,40 +572,46 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       {/* ─── Header ─────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-2xl font-bold text-dark-900">Dashboard</h1>
+      <PageHeader
+        title="Dashboard"
+        subtitle="Mission Control — live overview of ChinaSuuq operations"
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 uppercase">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               Live
             </span>
+            {/* Quick actions */}
+            <a
+              href="/admin/orders"
+              className="admin-btn-primary h-9 px-3.5 text-xs"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New Order
+            </a>
+            <button className="admin-btn-outline h-9 px-3 text-xs">
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </button>
+            <a
+              href="/admin/settings"
+              className="admin-btn-ghost h-9 w-9 px-0"
+              aria-label="Settings"
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </a>
+            <a
+              href="/marketplaces"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="admin-btn-outline h-9 px-3 text-xs"
+            >
+              <Globe2 className="h-3.5 w-3.5" />
+              Public site
+            </a>
           </div>
-          <p className="text-sm text-dark-900/50">
-            ChinaSuuq Mission Control — real-time operations overview
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Quick actions */}
-          <a
-            href="/admin/orders"
-            className="inline-flex items-center gap-1.5 rounded-xl bg-brand-500 px-3.5 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition-colors shadow-sm shadow-brand-500/30"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New Order
-          </a>
-          <button className="inline-flex items-center gap-1.5 rounded-xl border border-dark-900/10 bg-white px-3 py-2 text-xs font-semibold text-dark-900/70 hover:bg-dark-50 transition-colors">
-            <Download className="h-3.5 w-3.5" />
-            Export
-          </button>
-          <a
-            href="/admin/settings"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-dark-900/10 bg-white px-3 py-2 text-xs font-semibold text-dark-900/70 hover:bg-dark-50 transition-colors"
-          >
-            <Settings className="h-3.5 w-3.5" />
-          </a>
-        </div>
-      </div>
+        }
+      />
 
       {/* ─── Error banner ───────────────────────────────────── */}
       <AnimatePresence>
@@ -578,120 +632,77 @@ export default function AdminDashboard() {
       </AnimatePresence>
 
       {/* ─── KPI Cards ──────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard
-          title="Total Revenue"
+      <PageGrid className="grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Total Revenue"
           value={`$${animRevenue.toLocaleString()}`}
           icon={DollarSign}
-          color="emerald"
-          change={12}
-          changeLabel="vs last week"
+          tone="brand"
+          delta={12}
+          deltaLabel="vs last week"
           delay={0}
         />
-        <KPICard
-          title="Total Orders"
+        <StatCard
+          label="Total Orders"
           value={animOrders}
           icon={ShoppingCart}
-          color="brand"
-          change={8}
-          changeLabel="vs last week"
+          tone="info"
+          delta={8}
+          deltaLabel="vs last week"
           delay={1}
         />
-        <KPICard
-          title="Customers"
+        <StatCard
+          label="Customers"
           value={animCustomers}
           icon={Users}
-          color="violet"
-          change={15}
-          changeLabel="growing"
+          tone="violet"
+          delta={15}
+          deltaLabel="growing"
           delay={2}
         />
-        <KPICard
-          title="Active Shipments"
+        <StatCard
+          label="Active Shipments"
           value={animShipments}
           icon={Ship}
-          color="sky"
+          tone="success"
           delay={3}
         />
-      </div>
+      </PageGrid>
 
       {/* ─── Secondary KPI row ──────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50">
-              <Clock3 className="h-4.5 w-4.5 text-amber-600" />
-            </div>
-            <div>
-              <p className="text-xs text-dark-900/50">Today&apos;s Orders</p>
-              <p className="text-lg font-bold text-dark-900">
-                {kpis?.todaysOrders ?? 0}
-              </p>
-            </div>
-          </div>
-        </motion.div>
+      <PageGrid className="grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Today's Orders" value={kpis?.todaysOrders ?? 0} icon={Clock3} tone="warning" delay={4} />
+        <StatCard label="Today's Revenue" value={`$${(kpis?.todaysRevenue ?? 0).toLocaleString()}`} icon={TrendingUp} tone="success" delay={5} />
+        <StatCard label="Pending Sourcing" value={kpis?.pendingSourcing ?? 0} icon={Package} tone="error" delay={6} />
+        <StatCard label="Avg Order Value" value={`$${(kpis?.avgOrderValue ?? 0).toFixed(0)}`} icon={DollarSign} tone="violet" delay={7} />
+      </PageGrid>
 
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50">
-              <TrendingUp className="h-4.5 w-4.5 text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-xs text-dark-900/50">Today&apos;s Revenue</p>
-              <p className="text-lg font-bold text-dark-900">
-                ${(kpis?.todaysRevenue ?? 0).toLocaleString()}
+      {/* ─── Live Ops pulse strip ───────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: "In transit", value: ops.inTransit, href: "/admin/shipments", dot: "bg-info-500", icon: Ship },
+          { label: "Low stock items", value: ops.lowStock, href: "/admin/products", dot: "bg-warning-500", icon: Package },
+          { label: "Pending sourcing", value: ops.pendingSourcing, href: "/admin/sourcing", dot: "bg-error-500", icon: Clock3 },
+          { label: "Unread alerts", value: ops.unreadNotifications, href: "/admin/settings", dot: "bg-success-500", icon: Activity },
+        ].map((chip, i) => (
+          <motion.a
+            key={chip.label}
+            href={chip.href}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 + i * 0.05 }}
+            className="group flex items-center gap-3 rounded-2xl border border-dark-900/[0.06] bg-white px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+          >
+            <span className={`h-2 w-2 shrink-0 animate-pulse rounded-full ${chip.dot}`} />
+            <div className="min-w-0">
+              <p className="text-lg font-bold leading-none text-dark-900">{chip.value}</p>
+              <p className="mt-1 truncate text-[11px] font-medium uppercase tracking-wide text-dark-900/40">
+                {chip.label}
               </p>
             </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
-              <Package className="h-4.5 w-4.5 text-rose-600" />
-            </div>
-            <div>
-              <p className="text-xs text-dark-900/50">Pending Sourcing</p>
-              <p className="text-lg font-bold text-dark-900">
-                {kpis?.pendingSourcing ?? 0}
-              </p>
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-4 shadow-sm hover:shadow-md transition-shadow"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50">
-              <DollarSign className="h-4.5 w-4.5 text-brand-600" />
-            </div>
-            <div>
-              <p className="text-xs text-dark-900/50">Avg Order Value</p>
-              <p className="text-lg font-bold text-dark-900">
-                ${(kpis?.avgOrderValue ?? 0).toFixed(0)}
-              </p>
-            </div>
-          </div>
-        </motion.div>
+            <chip.icon className="ml-auto h-4 w-4 shrink-0 text-dark-900/25 transition-colors group-hover:text-brand-500" />
+          </motion.a>
+        ))}
       </div>
 
       {/* ─── Revenue Chart + Order Status Donut ─────────────── */}
@@ -701,29 +712,25 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.15 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm lg:col-span-2"
+          className="lg:col-span-2"
         >
-          <div className="mb-5 flex items-center justify-between">
-            <div>
-              <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-                <BarChart3 className="h-4 w-4 text-dark-900/40" />
-                Revenue — Last 7 Days
-              </h3>
-              <p className="text-xs text-dark-900/40 mt-1">
-                Daily revenue trend
-              </p>
-            </div>
+        <SectionCard
+          title="Revenue — Last 7 Days"
+          subtitle="Daily revenue trend"
+          actions={
             <div className="flex items-center gap-1.5 text-xs text-dark-900/50">
               <Calendar className="h-3.5 w-3.5" />
               {dailyRevenue.length > 0 &&
                 `${dailyRevenue[0].label} — ${dailyRevenue[dailyRevenue.length - 1].label}`}
             </div>
-          </div>
+          }
+        >
           {loading ? (
             <div className="h-40 animate-pulse rounded-xl bg-dark-50" />
           ) : (
             <RevenueBarChart data={dailyRevenue} />
           )}
+        </SectionCard>
         </motion.div>
 
         {/* Order status donut */}
@@ -731,17 +738,8 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
         >
-          <div className="mb-4">
-            <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-              <BarChart3 className="h-4 w-4 text-dark-900/40" />
-              Order Status
-            </h3>
-            <p className="text-xs text-dark-900/40 mt-1">
-              Current pipeline
-            </p>
-          </div>
+        <SectionCard title="Order Status" subtitle="Current pipeline">
           {loading ? (
             <div className="h-40 animate-pulse rounded-xl bg-dark-50" />
           ) : orderStatusCounts.length > 0 ? (
@@ -751,6 +749,7 @@ export default function AdminDashboard() {
               No order data
             </p>
           )}
+        </SectionCard>
         </motion.div>
       </div>
 
@@ -759,35 +758,34 @@ export default function AdminDashboard() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.25 }}
-        className="rounded-2xl border border-dark-900/5 bg-white shadow-sm"
       >
-        <div className="flex items-center justify-between p-5 pb-0">
-          <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-            <Package className="h-4 w-4 text-dark-900/40" />
-            Recent Orders
-          </h3>
+      <SectionCard
+        title="Recent Orders"
+        actions={
           <a
             href="/admin/orders"
-            className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:text-brand-700 transition-colors"
+            className="admin-btn-ghost h-7 px-2 text-xs"
           >
             View all
             <ChevronRight className="h-3.5 w-3.5" />
           </a>
-        </div>
+        }
+        bodyClassName="p-0"
+      >
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm mt-4">
+          <table className="admin-table w-full">
             <thead>
-              <tr className="border-b border-dark-900/5 bg-dark-50/50 text-[11px] font-semibold uppercase tracking-wider text-dark-900/40">
-                <th className="px-5 py-3">Order</th>
-                <th className="px-5 py-3">Customer</th>
-                <th className="px-5 py-3 hidden md:table-cell">City</th>
-                <th className="px-5 py-3">Total</th>
-                <th className="px-5 py-3">Status</th>
-                <th className="px-5 py-3 hidden lg:table-cell">Payment</th>
-                <th className="px-5 py-3 hidden lg:table-cell">Date</th>
+              <tr>
+                <th>Order</th>
+                <th>Customer</th>
+                <th className="hidden md:table-cell">City</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th className="hidden lg:table-cell">Payment</th>
+                <th className="hidden lg:table-cell">Date</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-dark-900/5">
+            <tbody className="divide-y divide-dark-900/[0.04]">
               {loading
                 ? Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}>
@@ -842,7 +840,61 @@ export default function AdminDashboard() {
             No orders yet
           </p>
         )}
+      </SectionCard>
       </motion.div>
+
+      {/* ─── Popular Categories ─────────────────────────────── */}
+      {topCategories.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.28 }}
+        >
+          <SectionCard
+            title="Popular Categories"
+            subtitle="Live catalog breadth — ranked by product count"
+            actions={
+              <a href="/admin/products" className="admin-btn-ghost h-7 px-2 text-xs">
+                All products
+                <ChevronRight className="h-3.5 w-3.5" />
+              </a>
+            }
+          >
+            <div className="scrollbar-slim -mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
+              {topCategories.map((c, i) => (
+                <motion.div
+                  key={c.id}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.3 + i * 0.04 }}
+                  className="group w-36 shrink-0"
+                >
+                  <div className="relative h-24 overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 to-warm-100 ring-1 ring-dark-900/[0.04]">
+                    {c.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={c.image_url}
+                        alt={c.name}
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center">
+                        <Layers className="h-7 w-7 text-brand-500/40" />
+                      </div>
+                    )}
+                    <span className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-bold text-dark-900 shadow-sm">
+                      {c.product_count ?? 0}
+                    </span>
+                  </div>
+                  <p className="mt-2 truncate text-xs font-semibold capitalize text-dark-900">
+                    {c.name}
+                  </p>
+                </motion.div>
+              ))}
+            </div>
+          </SectionCard>
+        </motion.div>
+      )}
 
       {/* ─── Bottom row: Top Products + Marketplace + Activity */}
       <div className="grid gap-6 lg:grid-cols-3">
@@ -851,20 +903,18 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
         >
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-              <Package className="h-4 w-4 text-dark-900/40" />
-              Top Products
-            </h3>
+        <SectionCard
+          title="Top Products"
+          actions={
             <a
               href="/admin/products"
-              className="text-xs font-semibold text-brand-600 hover:text-brand-700 transition-colors"
+              className="admin-btn-ghost h-7 px-2 text-xs"
             >
               View all →
             </a>
-          </div>
+          }
+        >
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 4 }).map((_, i) => (
@@ -873,7 +923,9 @@ export default function AdminDashboard() {
             </div>
           ) : topProducts.length > 0 ? (
             <div className="space-y-2">
-              {topProducts.map((p, i) => (
+              {topProducts.map((p, i) => {
+                const img = p.source_images?.[0];
+                return (
                 <motion.div
                   key={p.id}
                   initial={{ opacity: 0, x: -8 }}
@@ -881,9 +933,21 @@ export default function AdminDashboard() {
                   transition={{ delay: 0.35 + i * 0.04 }}
                   className="flex items-center gap-3 rounded-xl p-2.5 hover:bg-dark-50/50 transition-colors"
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-xs font-bold text-brand-600 shrink-0">
-                    #{i + 1}
-                  </div>
+                  <span className="w-4 shrink-0 text-center text-[10px] font-bold text-dark-900/35">
+                    {i + 1}
+                  </span>
+                  {img ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={img}
+                      alt={p.title_english || p.title}
+                      className="h-10 w-10 shrink-0 rounded-xl object-cover ring-1 ring-dark-900/[0.06]"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 ring-1 ring-dark-900/[0.06]">
+                      <Boxes className="h-4 w-4 text-brand-500/60" />
+                    </div>
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-dark-900 truncate">
                       {p.title_english || p.title || "Untitled"}
@@ -899,13 +963,15 @@ export default function AdminDashboard() {
                     <p className="text-[10px] text-dark-900/40">sales</p>
                   </div>
                 </motion.div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <p className="text-center text-sm text-dark-900/40 py-8">
               No products yet
             </p>
           )}
+        </SectionCard>
         </motion.div>
 
         {/* Marketplace Revenue Breakdown */}
@@ -913,17 +979,8 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
         >
-          <div className="mb-4">
-            <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-              <Globe className="h-4 w-4 text-dark-900/40" />
-              Revenue by Marketplace
-            </h3>
-            <p className="text-xs text-dark-900/40 mt-1">
-              Source distribution
-            </p>
-          </div>
+        <SectionCard title="Revenue by Marketplace" subtitle="Source distribution">
           {loading ? (
             <div className="space-y-4">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -937,6 +994,7 @@ export default function AdminDashboard() {
               No marketplace data
             </p>
           )}
+        </SectionCard>
         </motion.div>
 
         {/* Live Activity Feed */}
@@ -944,18 +1002,16 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
-          className="rounded-2xl border border-dark-900/5 bg-white p-5 shadow-sm"
         >
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="flex items-center gap-2 font-semibold text-dark-900">
-              <Activity className="h-4 w-4 text-dark-900/40" />
-              Activity Feed
-            </h3>
+        <SectionCard
+          title="Activity Feed"
+          actions={
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               LIVE
             </span>
-          </div>
+          }
+        >
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 5 }).map((_, i) => (
@@ -965,6 +1021,7 @@ export default function AdminDashboard() {
           ) : (
             <ActivityFeed events={activities} />
           )}
+        </SectionCard>
         </motion.div>
       </div>
     </div>

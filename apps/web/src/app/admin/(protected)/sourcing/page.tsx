@@ -4,14 +4,14 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatUSD, formatCNY } from "@/lib/utils";
 import {
-  Search, ClipboardList, Loader2, Plus, Edit3, Trash2, ExternalLink,
-  Filter, Download, BarChart3, ArrowUpRight, Clock, CheckCircle2,
-  AlertCircle, Smartphone, ShoppingCart, MapPin, ChevronDown, Check, X
+  ClipboardList, Loader2, Plus, Edit3, Trash2, ExternalLink,
+  Download, BarChart3, ArrowUpRight, Clock, CheckCircle2,
+  Smartphone, ShoppingCart, MapPin, Check, X
 } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
-import Modal from "@/components/admin/Modal";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import FormInput from "@/components/admin/FormInput";
+import { PageHeader, StatCard, PageGrid, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Types ─────────────────────────────────────────────────────── */
@@ -339,87 +339,51 @@ export default function SourcingPage() {
     toast.success(`Exported ${filteredRequests.length} requests`);
   };
 
-  /* ── Loading / Error ────────────────────────────────────────── */
-
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading sourcing requests...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{error}</p>
-        <button onClick={() => window.location.reload()} className="mt-3 text-sm font-medium text-brand-500 hover:underline">Retry</button>
-      </div>
-    );
-  }
-
   /* ── Render ─────────────────────────────────────────────────── */
 
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Sourcing Requests</h1>
-          <p className="text-sm text-dark-400">Manage product sourcing from Chinese marketplaces</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <a
-            href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20have%20a%20sourcing%20request"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 rounded-xl border border-dark-100 bg-white px-4 py-2.5 text-sm font-medium text-dark-600 hover:bg-dark-50 transition-colors"
-          >
-            <Smartphone className="h-4 w-4" />
-            Mobile Capture
-          </a>
-          <button
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-brand-600 transition-all"
-          >
-            <Plus className="h-4 w-4" />
-            New Request
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Sourcing"
+        subtitle="Customer requests — quote, approve and purchase from suppliers"
+        actions={
+          <div className="flex items-center gap-2">
+            <a
+              href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20have%20a%20sourcing%20request"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="admin-btn-outline"
+            >
+              <Smartphone className="h-4 w-4" />
+              Mobile Capture
+            </a>
+            <button onClick={openCreate} className="admin-btn-primary">
+              <Plus className="h-4 w-4" />
+              New Request
+            </button>
+          </div>
+        }
+      />
 
       {/* ── KPIs ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[
-          { label: "Total Requests", value: kpis.total, color: "text-dark-900" },
-          { label: "Pending", value: kpis.pending, color: "text-amber-600" },
-          { label: "Quoted", value: kpis.quoted, color: "text-purple-600" },
-          { label: "Purchased", value: kpis.purchased, color: "text-indigo-600" },
-        ].map((kpi) => (
-          <div key={kpi.label} className="rounded-xl border border-dark-100/50 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs font-medium text-dark-400">{kpi.label}</p>
-            <p className={cn("mt-1 text-2xl font-bold", kpi.color)}>{kpi.value}</p>
-          </div>
-        ))}
-      </div>
+      <PageGrid className="grid-cols-2 sm:grid-cols-4">
+        <StatCard label="Total Requests" value={kpis.total} icon={ClipboardList} tone="brand" delay={0} />
+        <StatCard label="Pending" value={kpis.pending} icon={Clock} tone="warning" delay={1} />
+        <StatCard label="Quoted" value={kpis.quoted} icon={BarChart3} tone="violet" delay={2} />
+        <StatCard label="Purchased" value={kpis.purchased} icon={CheckCircle2} tone="success" delay={3} />
+      </PageGrid>
 
       {/* ── Search + Controls ── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative max-w-md flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-          <input
-            type="text"
-            placeholder="Search by customer, marketplace, or city..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by customer, marketplace, or city..."
+          className="max-w-md flex-1"
+        />
         <div className="flex items-center gap-3">
-          <button onClick={handleExport} className="flex items-center gap-2 rounded-xl border border-dark-100 bg-white px-3 py-2 text-xs font-medium text-dark-600 hover:bg-dark-50">
+          <button onClick={handleExport} className="admin-btn-outline">
             <Download className="h-3 w-3" /> Export
           </button>
           <span className="text-xs text-dark-400">
@@ -431,65 +395,48 @@ export default function SourcingPage() {
         </div>
       </div>
 
-      {/* ── Status tabs ── */}
-      <div className="flex items-center gap-1 rounded-xl bg-dark-50 p-1 overflow-x-auto">
-        {["All", ...Object.values(statusLabels)].map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setStatusFilter(tab)}
-            className={cn(
-              "whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-all",
-              statusFilter === tab
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-400 hover:text-dark-600"
-            )}
-          >
-            {tab}
-            {statusCounts[tab] !== undefined && (
-              <span className={cn(
-                "ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs",
-                statusFilter === tab ? "bg-brand-500 text-white" : "bg-dark-200/50 text-dark-500"
-              )}>
-                {statusCounts[tab]}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* ── Status chips ── */}
+      <FilterChips<string>
+        options={["All", ...Object.values(statusLabels)].map((tab) => ({
+          value: tab,
+          label: tab,
+          count: statusCounts[tab],
+        }))}
+        value={statusFilter}
+        onChange={setStatusFilter}
+      />
 
       {/* ── Table ── */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
+      <TableShell
+        isLoading={isLoading}
+        error={error}
+        errorRetry={fetchRequests}
+        hasData={filteredRequests.length > 0}
+        filtered={!!search || statusFilter !== "All"}
+        emptyImage={EMPTY_IMAGES.sourcing}
+        emptyTitle="No sourcing requests"
+        emptySubtitle="New customer sourcing requests will land here."
+        emptyAction={
+          <button onClick={openCreate} className="admin-btn-primary">Create your first request</button>
+        }
+      >
+      <div className="rounded-2xl bg-white border border-dark-900/[0.06] shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="admin-table w-full">
             <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Customer</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Marketplace</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Product</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Qty</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Destination</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400 hidden lg:table-cell">Date</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">Actions</th>
+              <tr>
+                <th>Customer</th>
+                <th>Marketplace</th>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Destination</th>
+                <th>Status</th>
+                <th className="hidden lg:table-cell">Date</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredRequests.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center">
-                    <ClipboardList className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search || statusFilter !== "All" ? "No requests match your filters" : "No sourcing requests yet"}
-                    </p>
-                    {!search && statusFilter === "All" && (
-                      <button onClick={openCreate} className="mt-3 text-sm font-medium text-brand-500 hover:underline">
-                        Create your first request
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ) : (
-                filteredRequests.map((req) => (
+            <tbody className="divide-y divide-dark-900/[0.04]">
+              {filteredRequests.map((req) => (
                   <tr
                     key={req.id}
                     onClick={() => setSelected(req)}
@@ -573,17 +520,17 @@ export default function SourcingPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
             </tbody>
           </table>
         </div>
         {filteredRequests.length > 0 && (
-          <div className="border-t border-dark-50 px-4 py-2.5 text-xs text-dark-400">
+          <div className="border-t border-dark-900/[0.04] px-4 py-2.5 text-xs text-dark-400">
             Showing {filteredRequests.length} of {requests.length} requests
           </div>
         )}
       </div>
+      </TableShell>
 
       {/* ── Detail Drawer with Price Comparison ── */}
       <AnimatePresence>
@@ -757,14 +704,22 @@ export default function SourcingPage() {
         )}
       </AnimatePresence>
 
-      {/* ── Add/Edit Modal ── */}
-      <Modal
+      {/* ── Add/Edit Panel ── */}
+      <SidePanel
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title={editId ? "Edit Sourcing Request" : "New Sourcing Request"}
-        onConfirm={handleSave}
-        confirmText={editId ? "Update" : "Create Request"}
-        confirmLoading={saving}
+        subtitle="Request details, quantity and destination"
+        width="max-w-xl"
+        footer={
+          <>
+            <button onClick={() => setModalOpen(false)} className="admin-btn-ghost">Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="admin-btn-primary">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {editId ? "Update" : "Create Request"}
+            </button>
+          </>
+        }
       >
         <div className="space-y-4">
           <FormInput
@@ -821,15 +776,21 @@ export default function SourcingPage() {
             />
           </div>
         </div>
-      </Modal>
+      </SidePanel>
 
-      {/* ── Add Quote Modal ── */}
-      <Modal
+      {/* ── Add Quote Panel ── */}
+      <SidePanel
         open={showQuoteModal}
         onClose={() => setShowQuoteModal(false)}
         title="Add Supplier Quote"
-        onConfirm={saveQuote}
-        confirmText="Add Quote"
+        subtitle="Compare supplier prices for this request"
+        width="max-w-xl"
+        footer={
+          <>
+            <button onClick={() => setShowQuoteModal(false)} className="admin-btn-ghost">Cancel</button>
+            <button onClick={saveQuote} className="admin-btn-primary">Add Quote</button>
+          </>
+        }
       >
         <div className="space-y-4">
           <FormInput
@@ -891,7 +852,7 @@ export default function SourcingPage() {
             />
           </div>
         </div>
-      </Modal>
+      </SidePanel>
 
       {/* ── Delete Confirm ── */}
       <ConfirmDialog

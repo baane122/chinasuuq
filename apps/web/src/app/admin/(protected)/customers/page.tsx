@@ -4,14 +4,15 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatUSD, formatDateTime } from "@/lib/utils";
 import {
-  Search, Users, Loader2, AlertCircle, Mail, Phone, MapPin,
-  X, Edit3, Save, MessageSquare, Package, DollarSign, CalendarDays,
-  Download, Filter, ChevronDown, ShoppingCart, User as UserIcon
+  Users, Loader2, Mail, Phone, MapPin,
+  X, Save, MessageSquare, Package, DollarSign, CalendarDays,
+  Download, Filter, User as UserIcon
 } from "lucide-react";
 import { listCustomers, listOrders } from "@/lib/admin/supabase-data";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/components/admin/Toast";
 import { StatusBadge } from "@/components/admin/StatusBadge";
+import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES } from "@/components/admin/ui";
 
 const typeFilters = ["All", "Individual", "Business"] as const;
 
@@ -202,42 +203,28 @@ export default function CustomersPage() {
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Customers</h1>
-          <p className="text-sm text-dark-900/50">Manage and view all ChinaSuuq buyers</p>
-        </div>
-        <button
-          onClick={handleExportCSV}
-          className="flex items-center gap-2 rounded-xl border border-dark-100 bg-white px-4 py-2 text-sm font-medium text-dark-600 hover:bg-dark-50 transition-colors"
-        >
-          <Download className="h-4 w-4" />
-          Export CSV
-        </button>
-      </div>
+      <PageHeader
+        title="Customers"
+        subtitle="Everyone who buys through ChinaSuuq"
+        actions={
+          <button onClick={handleExportCSV} className="admin-btn-outline">
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
+        }
+      />
 
       {/* ── KPI Cards ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[
-          { label: "Total Customers", value: kpis.total, icon: Users, color: "text-dark-900" },
-          { label: "Business", value: kpis.business, icon: Package, color: "text-violet-600" },
-          { label: "Individual", value: kpis.individual, icon: UserIcon, color: "text-sky-600" },
-          { label: "Total Revenue", value: formatUSD(kpis.totalRevenue), icon: DollarSign, color: "text-emerald-600" },
-        ].map((kpi) => (
-          <div key={kpi.label} className="rounded-xl border border-dark-100/50 bg-white px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-2">
-              <kpi.icon className="h-4 w-4 text-dark-300" />
-              <p className="text-xs font-medium text-dark-400">{kpi.label}</p>
-            </div>
-            <p className={cn("mt-1 text-xl font-bold", kpi.color)}>{kpi.value}</p>
-          </div>
-        ))}
-      </div>
+      <PageGrid className="grid-cols-2 sm:grid-cols-4">
+        <StatCard label="Total Customers" value={kpis.total} icon={Users} tone="brand" delay={0} />
+        <StatCard label="Business" value={kpis.business} icon={Package} tone="violet" delay={1} />
+        <StatCard label="Individual" value={kpis.individual} icon={UserIcon} tone="info" delay={2} />
+        <StatCard label="Total Revenue" value={formatUSD(kpis.totalRevenue)} icon={DollarSign} tone="success" delay={3} />
+      </PageGrid>
 
       {/* ── Top Cities ── */}
       {kpis.topCities.length > 0 && (
-        <div className="rounded-xl border border-dark-100/50 bg-white px-4 py-3 shadow-sm">
-          <p className="text-xs font-semibold text-dark-400 uppercase tracking-wider mb-2">Top Cities</p>
+        <SectionCard title="Top Cities" subtitle="Where your customers are — tap to filter">
           <div className="flex flex-wrap gap-2">
             {kpis.topCities.map(([city, count]) => (
               <button
@@ -247,38 +234,34 @@ export default function CustomersPage() {
                   "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-all",
                   cityFilter === city
                     ? "border-brand-500 bg-brand-50 text-brand-700"
-                    : "border-dark-100 bg-dark-50 text-dark-600 hover:border-brand-300"
+                    : "border-dark-900/[0.06] bg-warm-100 text-dark-600 hover:border-brand-300"
                 )}
               >
                 <MapPin className="h-3 w-3" />
                 {city}
-                <span className="text-dark-400">({count})</span>
+                <span className="text-dark-900/40">({count})</span>
               </button>
             ))}
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* ── Search + Filters ── */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/40" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, email, phone, city…"
-              className="w-full rounded-xl border border-dark-900/10 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search by name, email, phone, city…"
+            className="flex-1 max-w-md"
+          />
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={cn(
               "flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors",
               showFilters || cityFilter || dateFrom || dateTo
                 ? "border-brand-500 bg-brand-50 text-brand-600"
-                : "border-dark-100 bg-white text-dark-500 hover:bg-dark-50"
+                : "border-dark-900/[0.06] bg-white text-dark-500 hover:bg-warm-100"
             )}
           >
             <Filter className="h-4 w-4" />
@@ -343,58 +326,39 @@ export default function CustomersPage() {
         </AnimatePresence>
 
         {/* Type filter chips */}
-        <div className="flex flex-wrap gap-2">
-          {typeFilters.map((s) => (
-            <button
-              key={s}
-              onClick={() => setTypeFilter(s)}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs font-semibold transition",
-                typeFilter === s
-                  ? "border-brand-500 bg-brand-500 text-white"
-                  : "border-dark-900/10 bg-white text-dark-900/60 hover:border-brand-500/30"
-              )}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        <FilterChips<string>
+          options={typeFilters.map((s) => ({ value: s, label: s }))}
+          value={typeFilter}
+          onChange={setTypeFilter}
+        />
       </div>
 
-      {error ? (
-        <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-          <AlertCircle className="mt-0.5 h-4 w-4" />
-          <span>{error}</span>
-        </div>
-      ) : null}
-
       {/* ── Customer Table ── */}
-      {isLoading ? (
-        <div className="flex items-center gap-2 p-6 text-sm text-dark-900/50">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading customers…
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-dark-900/10 bg-white p-12 text-center text-sm text-dark-900/40">
-          <Users className="mx-auto mb-3 h-10 w-10 text-dark-900/20" />
-          <p>No customers found.</p>
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-2xl border border-dark-900/5 bg-white">
-          <table className="min-w-full divide-y divide-dark-900/5 text-sm">
-            <thead className="bg-dark-50/50">
-              <tr className="text-left text-xs font-semibold uppercase tracking-wider text-dark-900/50">
-                <th className="px-4 py-3">Customer</th>
-                <th className="hidden px-4 py-3 sm:table-cell">Contact</th>
-                <th className="hidden px-4 py-3 md:table-cell">City</th>
-                <th className="px-4 py-3">Tier</th>
-                <th className="hidden px-4 py-3 md:table-cell">Orders</th>
-                <th className="hidden px-4 py-3 md:table-cell">Spent</th>
-                <th className="hidden px-4 py-3 lg:table-cell">Joined</th>
-                <th className="hidden px-4 py-3 lg:table-cell">Notes</th>
+      <TableShell
+        isLoading={isLoading}
+        error={error}
+        errorRetry={() => load(search)}
+        hasData={filtered.length > 0}
+        filtered={!!search || typeFilter !== "All" || !!cityFilter || !!dateFrom || !!dateTo}
+        emptyImage={EMPTY_IMAGES.customers}
+        emptyTitle="No customers yet"
+        emptySubtitle="Customer profiles appear here after the first order."
+      >
+        <div className="overflow-hidden rounded-2xl border border-dark-900/[0.06] bg-white">
+          <table className="admin-table min-w-full w-full">
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th className="hidden sm:table-cell">Contact</th>
+                <th className="hidden md:table-cell">City</th>
+                <th>Tier</th>
+                <th className="hidden md:table-cell">Orders</th>
+                <th className="hidden md:table-cell">Spent</th>
+                <th className="hidden lg:table-cell">Joined</th>
+                <th className="hidden lg:table-cell">Notes</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-dark-900/5">
+            <tbody className="divide-y divide-dark-900/[0.04]">
               {filtered.map((c) => (
                 <tr
                   key={c.id}
@@ -458,7 +422,7 @@ export default function CustomersPage() {
             </tbody>
           </table>
         </div>
-      )}
+      </TableShell>
 
       {/* ── Customer Detail Drawer ── */}
       <AnimatePresence>

@@ -4,14 +4,14 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatUSD, formatDate, formatDateTime } from "@/lib/utils";
 import {
-  Search, CreditCard, Loader2, CheckCircle2, XCircle, Clock, Plus, Pencil, Trash2,
-  DollarSign, TrendingUp, AlertCircle, Download, Filter, Check, X, RefreshCw, ArrowUpRight, ArrowDownRight
+  Loader2, CheckCircle2, XCircle, Clock, Plus, Pencil, Trash2,
+  TrendingUp, Download, Check, RefreshCw
 } from "lucide-react";
 import type { Payment } from "@/types";
-import Modal from "@/components/admin/Modal";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
+import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -307,119 +307,60 @@ export default function PaymentsPage() {
     success(`Exported ${filteredPayments.length} payments`);
   };
 
-  /* ── Loading / Error ────────────────────────────────────────── */
-
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading payments...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (fetchError) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{fetchError}</p>
-        <button onClick={() => window.location.reload()} className="mt-3 text-sm font-medium text-brand-500 hover:underline">Retry</button>
-      </div>
-    );
-  }
-
   /* ── Render ─────────────────────────────────────────────────── */
 
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Payments</h1>
-          <p className="text-sm text-dark-400">Review, verify, and reconcile customer payments</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 rounded-xl border border-dark-100 bg-white px-4 py-2.5 text-sm font-medium text-dark-600 hover:bg-dark-50 transition-colors"
-          >
-            <Download className="h-4 w-4" />
-            Export
-          </button>
-          <button
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-all shadow-sm"
-          >
-            <Plus className="h-4 w-4" />
-            Record Payment
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Payments"
+        subtitle="Customer payments — Zaad, Edahab, EVC Plus, bank transfer & crypto"
+        actions={
+          <div className="flex items-center gap-2">
+            <button onClick={handleExport} className="admin-btn-outline">
+              <Download className="h-4 w-4" />
+              Export
+            </button>
+            <button onClick={openCreate} className="admin-btn-primary">
+              <Plus className="h-4 w-4" />
+              Record Payment
+            </button>
+          </div>
+        }
+      />
 
       {/* ── KPI Stats ── */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: "Pending Verification", value: kpis.pending, sub: formatUSD(kpis.totalPending), icon: Clock, color: "amber" },
-          { label: "Confirmed Revenue", value: formatUSD(kpis.totalConfirmed), sub: `${kpis.confirmed} payments`, icon: CheckCircle2, color: "emerald" },
-          { label: "Failed", value: kpis.failed, sub: formatUSD(kpis.totalFailed), icon: XCircle, color: "rose" },
-          { label: "Today's Revenue", value: formatUSD(kpis.todayTotal), sub: `${kpis.todayCount} payments`, icon: TrendingUp, color: "brand" },
-        ].map((kpi) => (
-          <div key={kpi.label} className="rounded-xl border border-dark-100/50 bg-white px-5 py-4 shadow-sm">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-xs font-medium text-dark-400">{kpi.label}</p>
-                <p className={cn("mt-1 text-2xl font-bold",
-                  kpi.color === "amber" ? "text-amber-600"
-                    : kpi.color === "emerald" ? "text-emerald-600"
-                    : kpi.color === "rose" ? "text-red-600"
-                    : "text-brand-600"
-                )}>{kpi.value}</p>
-                {kpi.sub && <p className="text-xs text-dark-400 mt-0.5">{kpi.sub}</p>}
-              </div>
-              <div className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-xl",
-                kpi.color === "amber" ? "bg-amber-50 text-amber-600"
-                  : kpi.color === "emerald" ? "bg-emerald-50 text-emerald-600"
-                  : kpi.color === "rose" ? "bg-red-50 text-red-600"
-                  : "bg-brand-50 text-brand-600"
-              )}>
-                <kpi.icon className="h-5 w-5" />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      <PageGrid>
+        <StatCard label="Pending Verification" value={formatUSD(kpis.totalPending)} deltaLabel={`${kpis.pending} payments awaiting review`} icon={Clock} tone="warning" delay={0} />
+        <StatCard label="Confirmed Revenue" value={formatUSD(kpis.totalConfirmed)} deltaLabel={`${kpis.confirmed} payments verified`} icon={CheckCircle2} tone="success" delay={1} />
+        <StatCard label="Failed" value={kpis.failed} deltaLabel={formatUSD(kpis.totalFailed)} icon={XCircle} tone="error" delay={2} />
+        <StatCard label="Today's Revenue" value={formatUSD(kpis.todayTotal)} deltaLabel={`${kpis.todayCount} payments today`} icon={TrendingUp} tone="brand" delay={3} />
+      </PageGrid>
 
       {/* ── Revenue by Method ── */}
-      <div className="rounded-xl border border-dark-100/50 bg-white px-5 py-4 shadow-sm">
-        <p className="text-xs font-semibold text-dark-400 uppercase tracking-wider mb-3">Confirmed Revenue by Method</p>
+      <SectionCard title="Confirmed Revenue by Method" subtitle="Where your verified revenue comes from">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           {METHODS.map((m) => {
             const data = kpis.byMethod[m] || { count: 0, total: 0 };
             return (
-              <div key={m} className="rounded-lg bg-dark-50 px-3 py-2 text-center">
-                <p className="text-[10px] font-semibold text-dark-400 uppercase">{methodLabels[m]}</p>
+              <div key={m} className="rounded-lg bg-warm-100 px-3 py-2 text-center">
+                <p className="text-[10px] font-semibold text-dark-900/40 uppercase">{methodLabels[m]}</p>
                 <p className="text-sm font-bold text-dark-900 mt-1">{formatUSD(data.total)}</p>
-                <p className="text-[10px] text-dark-300">{data.count} txns</p>
+                <p className="text-[10px] text-dark-900/30">{data.count} txns</p>
               </div>
             );
           })}
         </div>
-      </div>
+      </SectionCard>
 
       {/* ── Search + Controls ── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative max-w-md flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-          <input
-            type="text"
-            placeholder="Search by reference, order ID, or method..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by reference, order ID, or method..."
+          className="max-w-md flex-1"
+        />
         <div className="flex items-center gap-2">
           {reconcileMode ? (
             <>
@@ -434,16 +375,13 @@ export default function PaymentsPage() {
               </button>
               <button
                 onClick={() => { setReconcileMode(false); setReconcileSelected(new Set()); }}
-                className="rounded-lg bg-dark-50 px-3 py-1.5 text-xs font-medium text-dark-500 hover:bg-dark-100"
+                className="admin-btn-ghost"
               >
                 Cancel
               </button>
             </>
           ) : (
-            <button
-              onClick={() => setReconcileMode(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-dark-100 bg-white px-3 py-2 text-xs font-medium text-dark-600 hover:bg-dark-50"
-            >
+            <button onClick={() => setReconcileMode(true)} className="admin-btn-outline">
               <RefreshCw className="h-3 w-3" />
               Reconcile
             </button>
@@ -451,61 +389,42 @@ export default function PaymentsPage() {
         </div>
       </div>
 
-      {/* ── Status tabs ── */}
-      <div className="flex items-center gap-1 rounded-xl bg-dark-50 p-1 overflow-x-auto">
-        {statusTabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={cn(
-              "whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-all",
-              activeTab === tab
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-400 hover:text-dark-600"
-            )}
-          >
-            {tab}
-            {tabCounts[tab] !== undefined && (
-              <span className={cn(
-                "ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs",
-                activeTab === tab ? "bg-brand-500 text-white" : "bg-dark-200/50 text-dark-500"
-              )}>
-                {tabCounts[tab]}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* ── Status chips ── */}
+      <FilterChips<string>
+        options={statusTabs.map((tab) => ({ value: tab, label: tab, count: tabCounts[tab] }))}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* ── Payments table ── */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
+      <TableShell
+        isLoading={isLoading}
+        error={fetchError}
+        errorRetry={fetchPayments}
+        hasData={filteredPayments.length > 0}
+        filtered={!!search || activeTab !== "All"}
+        emptyImage={EMPTY_IMAGES.payments}
+        emptyTitle="No payments recorded"
+        emptySubtitle="Payments appear here as customers pay for their orders."
+      >
+      <div className="rounded-2xl bg-white border border-dark-900/[0.06] shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="admin-table w-full">
             <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                {reconcileMode && <th className="w-10 px-4 py-3" />}
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Reference</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Order</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Amount</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Method</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400 hidden lg:table-cell">Verified</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Date</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">Actions</th>
+              <tr>
+                {reconcileMode && <th className="w-10" />}
+                <th>Reference</th>
+                <th>Order</th>
+                <th>Amount</th>
+                <th>Method</th>
+                <th>Status</th>
+                <th className="hidden lg:table-cell">Verified</th>
+                <th>Date</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredPayments.length === 0 ? (
-                <tr>
-                  <td colSpan={reconcileMode ? 9 : 8} className="px-6 py-12 text-center">
-                    <CreditCard className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search || activeTab !== "All" ? "No payments match your filters" : "No payments yet"}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                filteredPayments.map((payment) => (
+            <tbody className="divide-y divide-dark-900/[0.04]">
+              {filteredPayments.map((payment) => (
                   <tr
                     key={payment.id}
                     className={cn(
@@ -594,13 +513,12 @@ export default function PaymentsPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
             </tbody>
           </table>
         </div>
         {filteredPayments.length > 0 && (
-          <div className="border-t border-dark-50 px-4 py-2.5 flex items-center justify-between text-xs text-dark-400">
+          <div className="border-t border-dark-900/[0.04] px-4 py-2.5 flex items-center justify-between text-xs text-dark-400">
             <span>Showing {filteredPayments.length} of {payments.length} payments</span>
             <span className="font-semibold text-emerald-600">
               Total: {formatUSD(filteredPayments.reduce((s, p) => s + (p.status === "confirmed" ? p.amount : 0), 0))}
@@ -608,15 +526,24 @@ export default function PaymentsPage() {
           </div>
         )}
       </div>
+      </TableShell>
 
-      {/* ── Create / Edit Modal ── */}
-      <Modal
+      {/* ── Create / Edit Panel ── */}
+      <SidePanel
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         title={modalMode === "create" ? "Record Payment" : "Edit Payment"}
-        onConfirm={handleFormSubmit}
-        confirmText={modalMode === "create" ? "Record Payment" : "Save Changes"}
-        confirmLoading={formLoading}
+        subtitle="Amount, method and verification details"
+        width="max-w-xl"
+        footer={
+          <>
+            <button onClick={() => setModalOpen(false)} className="admin-btn-ghost">Cancel</button>
+            <button onClick={handleFormSubmit} disabled={formLoading} className="admin-btn-primary">
+              {formLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {modalMode === "create" ? "Record Payment" : "Save Changes"}
+            </button>
+          </>
+        }
       >
         <div className="space-y-4">
           <FormInput
@@ -680,7 +607,7 @@ export default function PaymentsPage() {
             </select>
           </div>
         </div>
-      </Modal>
+      </SidePanel>
 
       {/* ── Delete Confirm Dialog ── */}
       <ConfirmDialog

@@ -18,6 +18,8 @@ import { useAuthStore } from "@/store/auth";
 import { supabase } from "@/lib/supabase";
 import { EmptyState } from "@/components/EmptyState";
 
+const EMPTY_NOTIF_IMG = require("../../assets/screens/empty_notifications.png");
+
 interface Notification {
   id: string;
   title: string;
@@ -162,7 +164,7 @@ export default function NotificationsScreen() {
       {!user ? (
         <View style={styles.guestWrap}>
           <EmptyState
-            icon={<Bell size={48} color={COLORS.gray300} />}
+            image={EMPTY_NOTIF_IMG}
             title={locale === "en" ? "Sign in to see notifications" : "Soo gal si aad u aragto ogeysiisyada"}
             subtitle={
               locale === "en"
@@ -179,7 +181,7 @@ export default function NotificationsScreen() {
         </View>
       ) : items.length === 0 ? (
         <EmptyState
-          icon={<Bell size={48} color={COLORS.gray300} />}
+          image={EMPTY_NOTIF_IMG}
           title={locale === "en" ? "No notifications yet" : "Weli ogeysiis ma jiro"}
           subtitle={
             locale === "en"

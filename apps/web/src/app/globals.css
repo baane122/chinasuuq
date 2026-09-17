@@ -1,17 +1,41 @@
 @import "tailwindcss";
 
 @theme {
+  /* ── Brand scale (ChinaSuuq orange — matches mobile app) ── */
+  --color-brand-50: #FFF7ED;
+  --color-brand-100: #FFEDD5;
+  --color-brand-200: #FED7AA;
+  --color-brand-300: #FDBA74;
+  --color-brand-400: #FB923C;
   --color-brand-500: #FF5A0A;
   --color-brand-600: #E84400;
-  --color-brand-400: #FB923C;
-  --color-dark-900: #111111;
+  --color-brand-700: #C2410C;
+  --color-brand-800: #9A3412;
+  --color-brand-900: #7C2D12;
+
+  /* ── Dark (charcoal) neutral scale ── */
+  --color-dark-50: #F8F8F8;
+  --color-dark-100: #E9E5E1;
+  --color-dark-200: #D1CCC7;
+  --color-dark-300: #A8A29E;
+  --color-dark-400: #78716C;
+  --color-dark-500: #57534E;
+  --color-dark-600: #44403C;
+  --color-dark-700: #292524;
   --color-dark-800: #1C1917;
+  --color-dark-900: #111111;
+  --color-dark-950: #0A0A0A;
+
+  /* ── Warm surfaces ── */
   --color-warm-50: #FFFCF8;
   --color-warm-100: #FFF8F0;
   --color-warm-200: #FFF3E9;
+
   --color-whatsapp: #25D366;
   --color-success: #12B76A;
+  --color-warning: #F79009;
   --color-error: #D92D20;
+  --color-info: #2970FF;
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --radius-sm: 10px;
   --radius-lg: 18px;
@@ -160,4 +184,58 @@ body {
   body {
     font-variant-ligatures: common-ligatures;
   }
+}
+
+/* ═══ Admin (Mission Control) ═══ */
+@layer components {
+  .admin-input {
+    @apply h-10 w-full rounded-xl border border-dark-900/10 bg-white px-3.5 text-sm text-dark-900 placeholder:text-dark-900/35 transition-all focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10;
+  }
+  .admin-label {
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-dark-900/45;
+  }
+  .admin-btn-primary {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-500 px-4 text-sm font-semibold text-white shadow-sm transition-all hover:bg-brand-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .admin-btn-ghost {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-dark-900/60 transition-all hover:bg-dark-900/5 hover:text-dark-900 active:scale-[0.98];
+  }
+  .admin-btn-outline {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-dark-900/12 bg-white px-4 text-sm font-semibold text-dark-900/80 transition-all hover:border-dark-900/25 hover:text-dark-900 active:scale-[0.98];
+  }
+  .admin-btn-danger {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-error/20 bg-error/5 px-4 text-sm font-semibold text-error transition-all hover:bg-error/10 active:scale-[0.98];
+  }
+}
+
+/* Table row polish for admin tables */
+.admin-table th {
+  @apply whitespace-nowrap bg-dark-50/80 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-dark-900/40;
+}
+.admin-table td {
+  @apply border-t border-dark-900/[0.06] px-4 py-3.5 align-middle text-sm text-dark-900;
+}
+.admin-table tbody tr {
+  @apply transition-colors hover:bg-brand-50/40;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #f1efed 25%, #e7e4e1 50%, #f1efed 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: 10px;
+}
+
+/* Thin dark scrollbar for sidebar */
+.scrollbar-slim::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-slim::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
 }

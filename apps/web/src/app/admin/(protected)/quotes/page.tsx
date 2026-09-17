@@ -3,9 +3,17 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatCNY, formatUSD, formatDate } from "@/lib/utils";
-import { BadgeDollarSign, Search, Loader2, Plus, Pencil, Trash2 } from "lucide-react";
+import { BadgeDollarSign, Loader2, Plus, Pencil, Trash2, Send } from "lucide-react";
+import {
+  PageHeader,
+  PageGrid,
+  StatCard,
+  SearchInput,
+  TableShell,
+  SidePanel,
+  EMPTY_IMAGES,
+} from "@/components/admin/ui";
 import { useToast } from "@/components/admin/Toast";
-import Modal from "@/components/admin/Modal";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import FormInput from "@/components/admin/FormInput";
 
@@ -24,12 +32,13 @@ interface QuoteRow {
 
 const QUOTE_STATUSES = ["draft", "sent", "approved", "rejected", "expired"] as const;
 
+/* Aligned with the shared StatusBadge palette */
 const statusColors: Record<string, string> = {
-  draft: "bg-dark-100 text-dark-600",
-  sent: "bg-blue-50 text-blue-600",
-  approved: "bg-green-50 text-green-600",
-  rejected: "bg-red-50 text-red-600",
-  expired: "bg-amber-50 text-amber-600",
+  draft: "bg-gray-100 text-gray-700",
+  sent: "bg-blue-50 text-blue-700",
+  approved: "bg-emerald-50 text-emerald-700",
+  rejected: "bg-rose-50 text-rose-700",
+  expired: "bg-gray-100 text-gray-500",
 };
 
 const EMPTY_FORM = {
@@ -48,12 +57,12 @@ export default function QuotesPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  // Create modal
+  // Create panel
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [creating, setCreating] = useState(false);
 
-  // Edit modal
+  // Edit panel
   const [editOpen, setEditOpen] = useState(false);
   const [editQuote, setEditQuote] = useState<QuoteRow | null>(null);
   const [editForm, setEditForm] = useState({ ...EMPTY_FORM });
@@ -199,164 +208,175 @@ export default function QuotesPage() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading quotes...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{error}</p>
-        <button onClick={() => window.location.reload()} className="mt-3 text-sm font-medium text-brand-500 hover:underline">
-          Retry
-        </button>
-      </div>
-    );
-  }
+  const totalQuotes = quotes.length;
+  const sentCount = quotes.filter((q) => q.status === "sent").length;
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Quotes</h1>
-          <p className="text-sm text-dark-400">Build and manage customer quotes</p>
-        </div>
-        <button
-          onClick={() => setCreateOpen(true)}
-          className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          New Quote
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Quotes"
+        subtitle="Price quotes issued to customers"
+        actions={
+          <button onClick={() => setCreateOpen(true)} className="admin-btn-primary">
+            <Plus className="h-4 w-4" />
+            New Quote
+          </button>
+        }
+      />
 
-      {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-        <input
-          type="text"
-          placeholder="Search by request ID..."
+      {!isLoading && !error && (
+        <PageGrid>
+          <StatCard
+            label="Total Quotes"
+            value={totalQuotes}
+            icon={BadgeDollarSign}
+            tone="brand"
+            delay={0}
+          />
+          <StatCard label="Sent" value={sentCount} icon={Send} tone="info" delay={1} />
+        </PageGrid>
+      )}
+
+      <div className="space-y-4">
+        <SearchInput
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+          onChange={setSearch}
+          placeholder="Search by request ID…"
+          className="w-full sm:max-w-sm"
         />
-      </div>
 
-      {/* Quotes table */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Request ID</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Total CNY</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Total USD</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Rate</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Fees</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Freight</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Valid Until</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Status</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredQuotes.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center">
-                    <BadgeDollarSign className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search ? "No quotes match your search" : "No quotes yet"}
-                    </p>
-                    {!search && (
-                      <p className="text-xs text-dark-300 mt-1">Create your first quote to get started</p>
-                    )}
-                  </td>
-                </tr>
-              ) : (
-                filteredQuotes.map((quote) => (
-                  <tr key={quote.id} className="hover:bg-dark-50/50 transition-colors">
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-brand-500">{quote.request_id}</span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-700">{formatCNY(Number(quote.total_cny) || 0)}</span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-dark-900">{formatUSD(Number(quote.total_usd) || 0)}</span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-600">{Number(quote.exchange_rate) || "—"}</span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-600">{formatUSD(Number(quote.fees) || 0)}</span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-600">{formatUSD(Number(quote.freight_estimate) || 0)}</span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-400">
-                        {quote.valid_until ? formatDate(quote.valid_until) : "—"}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <select
-                        value={quote.status}
-                        disabled={updatingStatus === quote.id}
-                        onChange={(e) => handleStatusChange(quote, e.target.value as QuoteRow["status"])}
-                        className={cn(
-                          "cursor-pointer rounded-full border-0 px-2.5 py-1 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:opacity-50",
-                          statusColors[quote.status] || "bg-dark-50 text-dark-500"
-                        )}
-                      >
-                        {QUOTE_STATUSES.map((s) => (
-                          <option key={s} value={s} className="bg-white text-dark-900">
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => openEdit(quote)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-dark-50 hover:text-brand-500 transition-all"
-                          aria-label="Edit quote"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteQuote(quote)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-red-50 hover:text-red-500 transition-all"
-                          aria-label="Delete quote"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
+        <TableShell
+          isLoading={isLoading}
+          error={error}
+          hasData={filteredQuotes.length > 0}
+          filtered={search !== ""}
+          emptyImage={EMPTY_IMAGES.generic}
+          emptyTitle="No quotes yet"
+          emptySubtitle="Create a quote from a sourcing request to get started."
+          emptyAction={
+            <button onClick={() => setCreateOpen(true)} className="admin-btn-primary">
+              <Plus className="h-4 w-4" />
+              New Quote
+            </button>
+          }
+          errorRetry={fetchQuotes}
+        >
+          <div className="overflow-hidden rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="admin-table w-full">
+                <thead>
+                  <tr>
+                    <th>Request ID</th>
+                    <th>Total CNY</th>
+                    <th>Total USD</th>
+                    <th>Rate</th>
+                    <th>Fees</th>
+                    <th>Freight</th>
+                    <th>Valid Until</th>
+                    <th>Status</th>
+                    <th className="text-right!">Actions</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {filteredQuotes.map((quote) => (
+                    <tr key={quote.id}>
+                      <td>
+                        <span className="font-mono text-[13px] font-semibold text-brand-600">
+                          {quote.request_id}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="text-dark-600">{formatCNY(Number(quote.total_cny) || 0)}</span>
+                      </td>
+                      <td>
+                        <span className="font-semibold text-dark-900">
+                          {formatUSD(Number(quote.total_usd) || 0)}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="text-dark-500">{Number(quote.exchange_rate) || "—"}</span>
+                      </td>
+                      <td>
+                        <span className="text-dark-600">{formatUSD(Number(quote.fees) || 0)}</span>
+                      </td>
+                      <td>
+                        <span className="text-dark-600">
+                          {formatUSD(Number(quote.freight_estimate) || 0)}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="text-dark-900/45">
+                          {quote.valid_until ? formatDate(quote.valid_until) : "—"}
+                        </span>
+                      </td>
+                      <td>
+                        <select
+                          value={quote.status}
+                          disabled={updatingStatus === quote.id}
+                          onChange={(e) =>
+                            handleStatusChange(quote, e.target.value as QuoteRow["status"])
+                          }
+                          className={cn(
+                            "cursor-pointer rounded-full border-0 px-2.5 py-1 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:opacity-50",
+                            statusColors[quote.status] || "bg-dark-50 text-dark-500"
+                          )}
+                        >
+                          {QUOTE_STATUSES.map((s) => (
+                            <option key={s} value={s} className="bg-white text-dark-900">
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openEdit(quote)}
+                            className="rounded-lg p-1.5 text-dark-900/40 transition-all hover:bg-dark-900/5 hover:text-brand-600"
+                            aria-label="Edit quote"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteQuote(quote)}
+                            className="rounded-lg p-1.5 text-dark-900/40 transition-all hover:bg-error/10 hover:text-error"
+                            aria-label="Delete quote"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {filteredQuotes.length > 0 && (
+              <div className="border-t border-dark-900/[0.06] px-4 py-2.5 text-xs text-dark-900/40">
+                Showing {filteredQuotes.length} of {quotes.length} quotes
+              </div>
+            )}
+          </div>
+        </TableShell>
       </div>
 
-      {/* Create Modal */}
-      <Modal
+      {/* Create panel */}
+      <SidePanel
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         title="New Quote"
-        onConfirm={handleCreate}
-        confirmText="Create Quote"
-        confirmLoading={creating}
+        subtitle="Create a draft quote for a sourcing request"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setCreateOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button type="button" onClick={handleCreate} disabled={creating} className="admin-btn-primary">
+              {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+              Create Quote
+            </button>
+          </div>
+        }
       >
         <div className="space-y-4">
           <FormInput
@@ -412,16 +432,25 @@ export default function QuotesPage() {
             placeholder="YYYY-MM-DD"
           />
         </div>
-      </Modal>
+      </SidePanel>
 
-      {/* Edit Modal */}
-      <Modal
+      {/* Edit panel */}
+      <SidePanel
         open={editOpen}
         onClose={() => setEditOpen(false)}
         title="Edit Quote"
-        onConfirm={handleEdit}
-        confirmText="Save Changes"
-        confirmLoading={savingEdit}
+        subtitle={editQuote ? `Request ${editQuote.request_id}` : undefined}
+        footer={
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setEditOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button type="button" onClick={handleEdit} disabled={savingEdit} className="admin-btn-primary">
+              {savingEdit && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save Changes
+            </button>
+          </div>
+        }
       >
         <div className="space-y-4">
           <FormInput
@@ -472,9 +501,9 @@ export default function QuotesPage() {
             placeholder="YYYY-MM-DD"
           />
         </div>
-      </Modal>
+      </SidePanel>
 
-      {/* Delete Dialog */}
+      {/* Delete dialog */}
       <ConfirmDialog
         open={!!deleteQuote}
         title="Delete quote"

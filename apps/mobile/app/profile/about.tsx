@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Image } from "expo-image";
 import {
   ArrowLeft,
   ExternalLink,
@@ -20,6 +21,9 @@ import {
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
+
+const ABOUT_IMG = require("../../assets/screens/about_hero.png");
+const LOGO = require("../../assets/images/logo.jpg");
 
 export default function AboutScreen() {
   const { t, locale } = useI18n();
@@ -48,9 +52,8 @@ export default function AboutScreen() {
       >
         {/* App Logo / Brand */}
         <View style={styles.brandCard}>
-          <View style={styles.logoWrap}>
-            <Text style={styles.logoText}>CS</Text>
-          </View>
+          <Image source={ABOUT_IMG} style={styles.heroImg} contentFit="contain" transition={150} />
+          <Image source={LOGO} style={styles.logoImg} contentFit="contain" transition={150} />
           <Text style={styles.appName}>ChinaSuuq</Text>
           <Text style={styles.version}>Version 1.0.0</Text>
         </View>
@@ -243,19 +246,15 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     marginBottom: SPACING.lg,
   },
-  logoWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: RADIUS.xl,
-    backgroundColor: COLORS.primary,
-    alignItems: "center",
-    justifyContent: "center",
+  heroImg: {
+    width: 200,
+    height: 160,
     marginBottom: SPACING.md,
   },
-  logoText: {
-    fontSize: 28,
-    fontFamily: FONTS.bold,
-    color: COLORS.white,
+  logoImg: {
+    width: 96,
+    height: 84,
+    marginBottom: SPACING.sm,
   },
   appName: {
     fontSize: 22,

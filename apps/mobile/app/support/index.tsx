@@ -28,6 +28,9 @@ import { WHATSAPP_LINK } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
 import { createSupportTicket } from "@/db";
 import { useAuthStore } from "@/store/auth";
+import { Image } from "expo-image";
+
+const SUPPORT_HERO = require("../../assets/screens/support_hero.png");
 
 const FAQ_ITEMS = [
   {
@@ -128,6 +131,12 @@ export default function SupportScreen() {
         style={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
+        {/* Support Hero Illustration */}
+        <View style={styles.heroWrap}>
+          <Image source={SUPPORT_HERO} style={styles.heroImg} contentFit="contain" />
+          <Text style={styles.heroTitle}>How can we help?</Text>
+        </View>
+
         {/* WhatsApp Contact Card */}
         <Pressable
           style={styles.whatsappCard}
@@ -279,6 +288,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.warmWhite,
+  },
+  heroWrap: {
+    alignItems: "center",
+    paddingTop: SPACING.xl,
+    paddingBottom: SPACING.lg,
+  },
+  heroImg: {
+    width: 160,
+    height: 160,
+    marginBottom: SPACING.md,
+  },
+  heroTitle: {
+    fontSize: 22,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
   },
   header: {
     flexDirection: "row",

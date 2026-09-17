@@ -4,23 +4,35 @@ import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import {
-  Loader2,
   Plus,
-  KeyRound,
-  Globe,
-  Link2,
-  Trash2,
-  Pencil,
-  ShieldCheck,
   Eye,
   EyeOff,
+  Pencil,
+  Trash2,
   RefreshCw,
-  AlertTriangle,
-  Store,
   ExternalLink,
+  Globe,
+  Globe2,
+  ShieldCheck,
+  Loader2,
+  Store,
   CheckCircle2,
-  DollarSign,
+  LayoutGrid,
+  KeyRound,
 } from "lucide-react";
+import {
+  PageHeader,
+  PageGrid,
+  StatCard,
+  SectionCard,
+  TableShell,
+  SidePanel,
+  Field,
+  EMPTY_IMAGES,
+} from "@/components/admin/ui";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { useToast } from "@/components/admin/Toast";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
 
 const MARKETPLACES = [
   { id: "1688", name: "1688", home: "https://www.1688.com", color: "#FF5000", stat: "50M+ items" },
@@ -45,33 +57,34 @@ interface MarketplaceAccount {
   created_at: string;
 }
 
+const emptyForm = {
+  marketplace_type: "1688",
+  account_label: "",
+  username: "",
+  password_encrypted: "",
+  phone: "",
+  email: "",
+  notes: "",
+  is_shared: true,
+  is_active: true,
+};
+
 export default function AdminMarketplacesPage() {
+  const toast = useToast();
   const [accounts, setAccounts] = useState<MarketplaceAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showPasswordIds, setShowPasswordIds] = useState<Set<string>>(new Set());
-  const [modalOpen, setModalOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<MarketplaceAccount | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+
+  // Delete confirmation
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Form state
-  const [form, setForm] = useState({
-    marketplace_type: "1688",
-    account_label: "",
-    username: "",
-    password_encrypted: "",
-    phone: "",
-    email: "",
-    notes: "",
-    is_shared: true,
-    is_active: true,
-  });
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
-  };
+  const [form, setForm] = useState(emptyForm);
 
   const fetchAccounts = useCallback(async () => {
     try {
@@ -92,21 +105,11 @@ export default function AdminMarketplacesPage() {
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
 
   const resetForm = () => {
-    setForm({
-      marketplace_type: "1688",
-      account_label: "",
-      username: "",
-      password_encrypted: "",
-      phone: "",
-      email: "",
-      notes: "",
-      is_shared: true,
-      is_active: true,
-    });
+    setForm(emptyForm);
     setEditing(null);
   };
 
-  const openCreate = () => { resetForm(); setModalOpen(true); };
+  const openCreate = () => { resetForm(); setPanelOpen(true); };
   const openEdit = (acc: MarketplaceAccount) => {
     setEditing(acc);
     setForm({
@@ -120,11 +123,11 @@ export default function AdminMarketplacesPage() {
       is_shared: acc.is_shared,
       is_active: acc.is_active,
     });
-    setModalOpen(true);
+    setPanelOpen(true);
   };
 
   const handleSave = async () => {
-    if (!form.account_label.trim()) { showToast("Give this account a label"); return; }
+    if (!form.account_label.trim()) { toast.info("Give this account a label"); return; }
     setSaving(true);
     setError(null);
     try {
@@ -134,34 +137,39 @@ export default function AdminMarketplacesPage() {
           .update(form)
           .eq("id", editing.id);
         if (error) throw error;
-        showToast("Account updated");
+        toast.success("Account updated");
       } else {
         const { error } = await supabase
           .from("marketplace_accounts")
           .insert(form);
         if (error) throw error;
-        showToast("Account created");
+        toast.success("Account created");
       }
-      setModalOpen(false);
+      setPanelOpen(false);
       resetForm();
       fetchAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save account.");
-      showToast("Save failed");
+      toast.error("Save failed");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Delete this marketplace account?")) return;
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    setDeleting(true);
     try {
-      const { error } = await supabase.from("marketplace_accounts").delete().eq("id", id);
+      const { error } = await supabase.from("marketplace_accounts").delete().eq("id", deleteId);
       if (error) throw error;
-      setAccounts((prev) => prev.filter((a) => a.id !== id));
-      showToast("Account deleted");
+      setAccounts((prev) => prev.filter((a) => a.id !== deleteId));
+      toast.success("Account deleted");
+      setDeleteId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete account.");
+      toast.error("Delete failed");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -181,7 +189,7 @@ export default function AdminMarketplacesPage() {
         .eq("id", acc.id);
       if (error) throw error;
       fetchAccounts();
-      showToast(acc.is_shared ? "Account unshared" : "Account shared with users");
+      toast.success(acc.is_shared ? "Account unshared" : "Account shared with users");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update.");
     }
@@ -190,110 +198,139 @@ export default function AdminMarketplacesPage() {
   const marketplaceMeta = (id: string) =>
     MARKETPLACES.find((m) => m.id === id) || { id, name: id, home: "", color: "#667085", stat: "" };
 
+  const activeCount = accounts.filter((a) => a.is_active).length;
+  const sharedCount = accounts.filter((a) => a.is_shared).length;
+  const platformsUsed = new Set(accounts.map((a) => a.marketplace_type)).size;
+
   return (
-    <div className="space-y-6">
-      {/* Toast */}
-      {toast && (
-        <div className="fixed right-6 top-6 z-50 flex items-center gap-2 rounded-xl bg-dark-900 px-4 py-3 text-sm text-white shadow-xl">
-          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-          {toast}
+    <div>
+      <PageHeader
+        title="Marketplaces"
+        subtitle="Connected seller accounts and platform status"
+        actions={
+          <>
+            <button onClick={fetchAccounts} className="admin-btn-outline">
+              <RefreshCw className="h-4 w-4" /> Refresh
+            </button>
+            <button onClick={openCreate} className="admin-btn-primary">
+              <Plus className="h-4 w-4" /> Add Account
+            </button>
+          </>
+        }
+      />
+
+      {/* Stats */}
+      <PageGrid>
+        <StatCard label="Total Accounts" value={accounts.length} icon={Store} tone="brand" delay={0} />
+        <StatCard label="Active" value={activeCount} icon={CheckCircle2} tone="success" delay={1} />
+        <StatCard label="Shared" value={sharedCount} icon={ShieldCheck} tone="info" delay={2} />
+        <StatCard label="Platforms Used" value={platformsUsed} icon={LayoutGrid} tone="violet" delay={3} />
+      </PageGrid>
+
+      {/* Non-blocking error (save / delete / update) */}
+      {accounts.length > 0 && error && (
+        <div className="mb-6 flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
+          <KeyRound className="h-4 w-4 shrink-0" /> {error}
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Marketplace Accounts</h1>
-          <p className="text-sm text-dark-400">
-            Manage shared marketplace logins used across the ChinaSuuq app.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={fetchAccounts}
-            className="flex items-center gap-2 rounded-xl border border-dark-200 bg-white px-4 py-2 text-sm font-medium text-dark-600 hover:bg-dark-50 transition-colors"
-          >
-            <RefreshCw className="h-4 w-4" /> Refresh
-          </button>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white shadow-md hover:bg-brand-600 transition-colors"
-          >
-            <Plus className="h-4 w-4" /> Add Account
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 rounded-2xl bg-red-50 border border-red-200 p-4 text-sm text-red-600">
-          <AlertTriangle className="h-4 w-4" /> {error}
-        </div>
-      )}
-
-      {/* Marketplace overview strip */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {MARKETPLACES.map((m) => {
-          const count = accounts.filter((a) => a.marketplace_type === m.id).length;
-          return (
-            <div key={m.id} className="rounded-2xl bg-white border border-dark-100/50 p-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl text-xs font-bold text-white" style={{ backgroundColor: m.color }}>
-                  {m.name.slice(0, 2)}
+      {/* Platform coverage strip */}
+      <SectionCard
+        title="Platform coverage"
+        subtitle="Seller accounts grouped by marketplace"
+        className="mb-6"
+        bodyClassName="p-4"
+      >
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {MARKETPLACES.map((m) => {
+            const count = accounts.filter((a) => a.marketplace_type === m.id).length;
+            return (
+              <div
+                key={m.id}
+                className="rounded-xl border border-dark-900/[0.06] bg-warm-50 p-3.5 transition-colors hover:border-brand-500/30"
+              >
+                <div className="flex items-center justify-between">
+                  <div
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-[11px] font-bold text-white"
+                    style={{ backgroundColor: m.color }}
+                  >
+                    {m.name.slice(0, 2)}
+                  </div>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-dark-900/40">
+                    {count} acct{count === 1 ? "" : "s"}
+                  </span>
                 </div>
-                <span className="text-[10px] font-medium text-dark-400">{count} acct</span>
+                <p className="mt-2 text-sm font-bold text-dark-900">{m.name}</p>
+                <p className="text-[11px] text-dark-900/40">{m.stat}</p>
               </div>
-              <p className="mt-2 text-sm font-bold text-dark-900">{m.name}</p>
-              <p className="text-[11px] text-dark-400">{m.stat}</p>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </SectionCard>
 
       {/* Accounts list */}
-      {isLoading ? (
-        <div className="flex h-40 items-center justify-center">
-          <Loader2 className="h-7 w-7 animate-spin text-brand-500" />
-        </div>
-      ) : accounts.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-dark-200 bg-white p-12 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-warm-100">
-            <KeyRound className="h-6 w-6 text-brand-500" />
-          </div>
-          <p className="text-sm font-medium text-dark-600">No marketplace accounts yet</p>
-          <p className="mt-1 text-sm text-dark-400">Add shared logins so users can browse marketplaces directly.</p>
-          <button onClick={openCreate} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600">
+      <TableShell
+        isLoading={isLoading}
+        error={accounts.length === 0 ? error : null}
+        errorRetry={fetchAccounts}
+        hasData={accounts.length > 0}
+        filtered={false}
+        emptyImage={EMPTY_IMAGES.products}
+        emptyTitle="No marketplace accounts connected"
+        emptySubtitle="Add shared logins so users can browse marketplaces directly."
+        emptyAction={
+          <button onClick={openCreate} className="admin-btn-primary">
             <Plus className="h-4 w-4" /> Add your first account
           </button>
-        </div>
-      ) : (
+        }
+      >
         <div className="grid gap-4 lg:grid-cols-2">
-          {accounts.map((acc) => {
+          {accounts.map((acc, i) => {
             const meta = marketplaceMeta(acc.marketplace_type);
             const showPw = showPasswordIds.has(acc.id);
             return (
-              <div key={acc.id} className={cn("rounded-2xl bg-white border shadow-sm p-5", acc.is_active ? "border-dark-100/50" : "border-dark-200 opacity-70")}>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl text-sm font-bold text-white" style={{ backgroundColor: meta.color }}>
+              <div
+                key={acc.id}
+                style={{ animationDelay: `${Math.min(i, 8) * 0.04}s` }}
+                className={cn(
+                  "rounded-2xl border bg-white p-5 shadow-sm transition-all hover:shadow-md",
+                  acc.is_active ? "border-dark-900/[0.06]" : "border-dark-900/[0.06] opacity-70"
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
+                      style={{ backgroundColor: meta.color }}
+                    >
                       {meta.name.slice(0, 2)}
                     </div>
-                    <div>
-                      <p className="flex items-center gap-2 text-sm font-bold text-dark-900">
+                    <div className="min-w-0">
+                      <p className="flex items-center gap-2 truncate text-sm font-bold text-dark-900">
                         {acc.account_label || meta.name}
                         {acc.is_shared && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">
                             <ShieldCheck className="h-3 w-3" /> Shared
                           </span>
                         )}
                       </p>
-                      <p className="text-xs text-dark-400">{meta.name} · {meta.stat}</p>
+                      <p className="truncate text-xs text-dark-900/45">{meta.name} · {meta.stat}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => openEdit(acc)} className="rounded-lg p-2 text-dark-400 hover:bg-dark-50 hover:text-dark-700">
+                  <div className="flex shrink-0 items-center gap-2">
+                    <StatusBadge status={acc.is_active ? "active" : "inactive"} />
+                    <button
+                      onClick={() => openEdit(acc)}
+                      className="rounded-lg p-2 text-dark-900/40 transition-colors hover:bg-dark-50 hover:text-dark-700"
+                      title="Edit account"
+                    >
                       <Pencil className="h-4 w-4" />
                     </button>
-                    <button onClick={() => handleDelete(acc.id)} className="rounded-lg p-2 text-dark-400 hover:bg-red-50 hover:text-red-600">
+                    <button
+                      onClick={() => setDeleteId(acc.id)}
+                      className="rounded-lg p-2 text-dark-900/40 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                      title="Delete account"
+                    >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
@@ -302,16 +339,20 @@ export default function AdminMarketplacesPage() {
                 <div className="mt-4 space-y-2">
                   {acc.username && (
                     <div className="flex items-center justify-between rounded-lg bg-dark-50 px-3 py-2">
-                      <span className="text-xs text-dark-500">Username</span>
-                      <span className="text-sm font-medium text-dark-800">{acc.username}</span>
+                      <span className="text-xs text-dark-900/45">Username</span>
+                      <span className="truncate text-sm font-medium text-dark-800">{acc.username}</span>
                     </div>
                   )}
                   {acc.password_encrypted && (
                     <div className="flex items-center justify-between rounded-lg bg-dark-50 px-3 py-2">
-                      <span className="text-xs text-dark-500">Password</span>
+                      <span className="text-xs text-dark-900/45">Password</span>
                       <span className="flex items-center gap-2 text-sm font-medium text-dark-800">
                         {showPw ? acc.password_encrypted : "••••••••"}
-                        <button onClick={() => togglePassword(acc.id)} className="text-dark-400 hover:text-dark-700">
+                        <button
+                          onClick={() => togglePassword(acc.id)}
+                          className="text-dark-900/40 transition-colors hover:text-dark-700"
+                          title={showPw ? "Hide password" : "Show password"}
+                        >
                           {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                         </button>
                       </span>
@@ -319,20 +360,22 @@ export default function AdminMarketplacesPage() {
                   )}
                   {acc.email && (
                     <div className="flex items-center justify-between rounded-lg bg-dark-50 px-3 py-2">
-                      <span className="text-xs text-dark-500">Email</span>
-                      <span className="text-sm font-medium text-dark-800">{acc.email}</span>
+                      <span className="text-xs text-dark-900/45">Email</span>
+                      <span className="truncate text-sm font-medium text-dark-800">{acc.email}</span>
                     </div>
                   )}
                 </div>
 
-                {acc.notes && <p className="mt-3 text-xs text-dark-500">{acc.notes}</p>}
+                {acc.notes && <p className="mt-3 text-xs text-dark-900/50">{acc.notes}</p>}
 
-                <div className="mt-4 flex items-center justify-between">
+                <div className="mt-4 flex items-center justify-between border-t border-dark-900/[0.06] pt-3">
                   <button
                     onClick={() => toggleShared(acc)}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                      acc.is_shared ? "bg-emerald-50 text-emerald-600" : "bg-dark-50 text-dark-500 hover:bg-dark-100"
+                      "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                      acc.is_shared
+                        ? "bg-emerald-50 text-emerald-600"
+                        : "bg-dark-50 text-dark-900/50 hover:bg-dark-100"
                     )}
                   >
                     <Globe className="h-3.5 w-3.5" />
@@ -342,139 +385,143 @@ export default function AdminMarketplacesPage() {
                     href={meta.home}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-brand-500 hover:bg-brand-50"
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-brand-500 transition-colors hover:bg-brand-50"
                   >
                     <ExternalLink className="h-3.5 w-3.5" /> Open {meta.name}
+                  </a>
+                  <a
+                    href={`/marketplaces/${acc.marketplace_type}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-dark-900/50 transition-colors hover:bg-dark-900/5 hover:text-dark-900"
+                  >
+                    <Globe2 className="h-3.5 w-3.5" /> Public page
                   </a>
                 </div>
               </div>
             );
           })}
         </div>
-      )}
+      </TableShell>
 
-      {/* Add/Edit Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-dark-900">{editing ? "Edit Account" : "Add Marketplace Account"}</h2>
-              <button onClick={() => setModalOpen(false)} className="text-dark-400 hover:text-dark-700">
-                <span className="text-xl leading-none">×</span>
-              </button>
-            </div>
+      {/* Add / Edit panel */}
+      <SidePanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        title={editing ? "Edit Account" : "Add Marketplace Account"}
+        subtitle={editing ? `Editing ${editing.account_label || "account"}` : "Connect a shared seller login"}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setPanelOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving} className="admin-btn-primary">
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {editing ? "Save Changes" : "Create Account"}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Marketplace">
+            <select
+              value={form.marketplace_type}
+              onChange={(e) => setForm({ ...form, marketplace_type: e.target.value })}
+              className="admin-input"
+            >
+              {MARKETPLACES.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </Field>
 
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-dark-700">Marketplace</label>
-                <select
-                  value={form.marketplace_type}
-                  onChange={(e) => setForm({ ...form, marketplace_type: e.target.value })}
-                  className="h-11 w-full rounded-xl border border-dark-200 px-3 text-sm focus:border-brand-500 focus:outline-none"
-                >
-                  {MARKETPLACES.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-              </div>
+          <Field label="Account Label" required hint="Shown to staff picking an account for a purchase.">
+            <input
+              value={form.account_label}
+              onChange={(e) => setForm({ ...form, account_label: e.target.value })}
+              placeholder="e.g. Primary YiwuGo account"
+              className="admin-input"
+            />
+          </Field>
 
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-dark-700">Account Label</label>
-                <input
-                  value={form.account_label}
-                  onChange={(e) => setForm({ ...form, account_label: e.target.value })}
-                  placeholder="e.g. Primary YiwuGo account"
-                  className="h-11 w-full rounded-xl border border-dark-200 px-3 text-sm focus:border-brand-500 focus:outline-none"
-                />
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Username">
+              <input
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                className="admin-input"
+              />
+            </Field>
+            <Field label="Password">
+              <input
+                type="text"
+                value={form.password_encrypted}
+                onChange={(e) => setForm({ ...form, password_encrypted: e.target.value })}
+                className="admin-input"
+              />
+            </Field>
+          </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-dark-700">Username</label>
-                  <input
-                    value={form.username}
-                    onChange={(e) => setForm({ ...form, username: e.target.value })}
-                    className="h-11 w-full rounded-xl border border-dark-200 px-3 text-sm focus:border-brand-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-dark-700">Password</label>
-                  <input
-                    type="text"
-                    value={form.password_encrypted}
-                    onChange={(e) => setForm({ ...form, password_encrypted: e.target.value })}
-                    className="h-11 w-full rounded-xl border border-dark-200 px-3 text-sm focus:border-brand-500 focus:outline-none"
-                  />
-                </div>
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Email">
+              <input
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                className="admin-input"
+              />
+            </Field>
+            <Field label="Phone">
+              <input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                className="admin-input"
+              />
+            </Field>
+          </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-dark-700">Email</label>
-                  <input
-                    value={form.email}
-                    onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    className="h-11 w-full rounded-xl border border-dark-200 px-3 text-sm focus:border-brand-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-dark-700">Phone</label>
-                  <input
-                    value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    className="h-11 w-full rounded-xl border border-dark-200 px-3 text-sm focus:border-brand-500 focus:outline-none"
-                  />
-                </div>
-              </div>
+          <Field label="Notes">
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              rows={2}
+              className="admin-input"
+            />
+          </Field>
 
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-dark-700">Notes</label>
-                <textarea
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                  rows={2}
-                  className="w-full rounded-xl border border-dark-200 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 text-sm text-dark-700">
-                  <input
-                    type="checkbox"
-                    checked={form.is_shared}
-                    onChange={(e) => setForm({ ...form, is_shared: e.target.checked })}
-                    className="h-4 w-4 rounded"
-                  />
-                  Share with users
-                </label>
-                <label className="flex items-center gap-2 text-sm text-dark-700">
-                  <input
-                    type="checkbox"
-                    checked={form.is_active}
-                    onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
-                    className="h-4 w-4 rounded"
-                  />
-                  Active
-                </label>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <button onClick={() => setModalOpen(false)} className="rounded-xl border border-dark-200 px-4 py-2 text-sm font-medium text-dark-600 hover:bg-dark-50">
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-              >
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                {editing ? "Save Changes" : "Create Account"}
-              </button>
-            </div>
+          <div className="flex items-center justify-between rounded-xl border border-dark-900/[0.06] bg-warm-50 px-4 py-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-dark-700">
+              <input
+                type="checkbox"
+                checked={form.is_shared}
+                onChange={(e) => setForm({ ...form, is_shared: e.target.checked })}
+                className="h-4 w-4 rounded accent-brand-500"
+              />
+              Share with users
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-dark-700">
+              <input
+                type="checkbox"
+                checked={form.is_active}
+                onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+                className="h-4 w-4 rounded accent-brand-500"
+              />
+              Active
+            </label>
           </div>
         </div>
-      )}
+      </SidePanel>
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={deleteId !== null}
+        title="Delete Marketplace Account"
+        message="Delete this marketplace account? Users will no longer see this login."
+        onCancel={() => setDeleteId(null)}
+        onConfirm={handleDelete}
+        confirmText="Delete"
+        loading={deleting}
+        danger
+      />
     </div>
   );
 }

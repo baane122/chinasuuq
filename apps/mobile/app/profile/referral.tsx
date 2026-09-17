@@ -2,10 +2,13 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, Alert, ScrollView, Share, Clipboard } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ArrowLeft, Gift, Share2, Copy, MessageCircle } from "lucide-react-native";
+import { ArrowLeft, Share2, Copy, MessageCircle } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useAuthStore } from "@/store/auth";
+import { Image } from "expo-image";
+
+const REFERRAL_IMG = require("../../assets/screens/referral.png");
 
 export default function ReferralScreen() {
   const router = useRouter();
@@ -59,7 +62,7 @@ export default function ReferralScreen() {
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: SPACING.lg, paddingBottom: 60 }}>
         {/* Hero */}
         <View style={styles.hero}>
-          <View style={styles.heroIcon}><Gift size={34} color={COLORS.white} /></View>
+          <Image source={REFERRAL_IMG} style={styles.heroIllustration} contentFit="contain" />
           <Text style={styles.heroTitle}>Give $10, Get $10</Text>
           <Text style={styles.heroSub}>Share ChinaSuuq with friends and both of you earn rewards.</Text>
         </View>
@@ -107,6 +110,7 @@ const styles = StyleSheet.create({
   backButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   headerTitle: { fontSize: 17, fontFamily: FONTS.semibold, color: COLORS.black },
   hero: { alignItems: "center", paddingVertical: SPACING.xxl, backgroundColor: COLORS.white, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border },
+  heroIllustration: { width: 120, height: 120, marginBottom: SPACING.md },
   heroIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", marginBottom: SPACING.md },
   heroTitle: { fontSize: 20, fontFamily: FONTS.bold, color: COLORS.black },
   heroSub: { fontSize: 13, fontFamily: FONTS.regular, color: COLORS.textSecondary, textAlign: "center", marginTop: 4, paddingHorizontal: SPACING.lg },

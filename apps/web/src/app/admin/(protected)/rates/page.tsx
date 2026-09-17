@@ -2,12 +2,21 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { cn, formatDateTime } from "@/lib/utils";
-import { Search, Globe, Loader2, Plus, Edit3, Trash2 } from "lucide-react";
+import { formatDateTime } from "@/lib/utils";
+import { Globe, Loader2, Plus, Edit3, Trash2, ArrowLeftRight, Clock, Info } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
-import Modal from "@/components/admin/Modal";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import FormInput from "@/components/admin/FormInput";
+import {
+  PageHeader,
+  PageGrid,
+  StatCard,
+  SectionCard,
+  SearchInput,
+  TableShell,
+  SidePanel,
+  EMPTY_IMAGES,
+} from "@/components/admin/ui";
 
 interface ExchangeRate {
   id: string;
@@ -34,8 +43,8 @@ export default function RatesPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  // Modal state
-  const [modalOpen, setModalOpen] = useState(false);
+  // Panel state
+  const [panelOpen, setPanelOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
@@ -80,7 +89,7 @@ export default function RatesPage() {
   const openCreate = () => {
     setEditId(null);
     setForm(defaultForm);
-    setModalOpen(true);
+    setPanelOpen(true);
   };
 
   const openEdit = (rate: ExchangeRate) => {
@@ -91,7 +100,7 @@ export default function RatesPage() {
       rate: rate.rate,
       reason: rate.reason || "",
     });
-    setModalOpen(true);
+    setPanelOpen(true);
   };
 
   const handleSave = async () => {
@@ -128,7 +137,7 @@ export default function RatesPage() {
         toast.success("Exchange rate added");
       }
 
-      setModalOpen(false);
+      setPanelOpen(false);
       fetchRates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save exchange rate");
@@ -157,133 +166,121 @@ export default function RatesPage() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading exchange rates...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{error}</p>
-        <button onClick={() => window.location.reload()} className="mt-3 text-sm font-medium text-brand-500 hover:underline">
-          Retry
-        </button>
-      </div>
-    );
-  }
+  // Derived stats (client-side only, from the loaded rows)
+  const currentCnyUsd = useMemo(
+    () => rates.find((r) => r.currency_from === "CNY" && r.currency_to === "USD")?.rate,
+    [rates]
+  );
+  const pairCount = useMemo(
+    () => new Set(rates.map((r) => `${r.currency_from}→${r.currency_to}`)).size,
+    [rates]
+  );
+  const lastUpdated = useMemo(
+    () => (rates.length > 0 ? formatDateTime(rates[0].created_at) : "—"),
+    [rates]
+  );
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Exchange Rates</h1>
-          <p className="text-sm text-dark-400">Manage currency conversion rates</p>
-        </div>
-        <button
-          onClick={openCreate}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-brand-600 transition-all"
-        >
-          <Plus className="h-4 w-4" />
-          Add Rate
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Exchange Rates"
+        subtitle="CNY → USD → SOS rates used across the app"
+        actions={
+          <button onClick={openCreate} className="admin-btn-primary">
+            <Plus className="h-4 w-4" /> Add Rate
+          </button>
+        }
+      />
+
+      {/* Stats */}
+      <PageGrid>
+        <StatCard
+          label="Current CNY → USD"
+          value={currentCnyUsd !== undefined ? currentCnyUsd : "—"}
+          icon={ArrowLeftRight}
+          tone="brand"
+          delay={0}
+        />
+        <StatCard label="Rates Recorded" value={rates.length} icon={Globe} tone="info" delay={1} />
+        <StatCard label="Currency Pairs" value={pairCount} icon={ArrowLeftRight} tone="violet" delay={2} />
+        <StatCard label="Last Updated" value={lastUpdated} icon={Clock} tone="success" delay={3} />
+      </PageGrid>
 
       {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-        <input
-          type="text"
-          placeholder="Search by currency or approver..."
+      <div className="mb-4">
+        <SearchInput
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+          onChange={setSearch}
+          placeholder="Search by currency or approver…"
+          className="max-w-md"
         />
       </div>
 
-      {/* Stats bar */}
-      <div className="flex items-center gap-4 text-sm text-dark-400">
-        <div className="flex items-center gap-1.5">
-          <Globe className="h-4 w-4" />
-          <span>{filteredRates.length} rate{filteredRates.length !== 1 ? "s" : ""}</span>
-        </div>
-        {search && (
-          <button onClick={() => setSearch("")} className="text-brand-500 hover:underline">
-            Clear search
-          </button>
-        )}
-      </div>
-
       {/* Rates table */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">From</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">To</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Rate</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Effective</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Approved By</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Reason</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredRates.length === 0 ? (
+      <TableShell
+        isLoading={isLoading}
+        error={error}
+        errorRetry={fetchRates}
+        hasData={filteredRates.length > 0}
+        filtered={!!search}
+        emptyImage={EMPTY_IMAGES.generic}
+        emptyTitle="No rates recorded"
+        emptySubtitle="Add a rate to start converting prices across the app."
+        emptyAction={
+          <button onClick={openCreate} className="admin-btn-primary">
+            <Plus className="h-4 w-4" /> Add Rate
+          </button>
+        }
+      >
+        <SectionCard bodyClassName="p-0">
+          <div className="overflow-x-auto">
+            <table className="admin-table w-full">
+              <thead>
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center">
-                    <Globe className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search ? "No rates match your search" : "No exchange rates yet"}
-                    </p>
-                    {!search && (
-                      <p className="text-xs text-dark-300 mt-1">Click &quot;Add Rate&quot; to create one</p>
-                    )}
-                  </td>
+                  <th>From</th>
+                  <th>To</th>
+                  <th>Rate</th>
+                  <th>Effective</th>
+                  <th>Approved By</th>
+                  <th>Reason</th>
+                  <th className="text-right">Actions</th>
                 </tr>
-              ) : (
-                filteredRates.map((rate) => (
-                  <tr key={rate.id} className="hover:bg-dark-50/50 transition-colors">
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-dark-900">{rate.currency_from}</span>
+              </thead>
+              <tbody>
+                {filteredRates.map((rate) => (
+                  <tr key={rate.id}>
+                    <td>
+                      <span className="text-sm font-semibold text-dark-900">{rate.currency_from}</span>
                     </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-dark-900">{rate.currency_to}</span>
+                    <td>
+                      <span className="text-sm font-semibold text-dark-900">{rate.currency_to}</span>
                     </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm font-semibold text-brand-500">{rate.rate}</span>
+                    <td>
+                      <span className="text-sm font-bold text-brand-500">{rate.rate}</span>
                     </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-400">{formatDateTime(rate.effective_at)}</span>
+                    <td>
+                      <span className="text-sm text-dark-900/50">{formatDateTime(rate.effective_at)}</span>
                     </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-600">{rate.approved_by || "-"}</span>
+                    <td>
+                      <span className="text-sm text-dark-700">{rate.approved_by || "-"}</span>
                     </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-500 max-w-[200px] truncate inline-block">
+                    <td>
+                      <span className="inline-block max-w-[200px] truncate text-sm text-dark-900/55">
                         {rate.reason || "-"}
                       </span>
                     </td>
-                    <td className="px-6 py-3.5">
+                    <td>
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => openEdit(rate)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-dark-50 hover:text-brand-500 transition-all"
+                          className="rounded-lg p-1.5 text-dark-900/40 transition-colors hover:bg-dark-50 hover:text-brand-500"
                           title="Edit"
                         >
                           <Edit3 className="h-4 w-4" />
                         </button>
                         <button
                           onClick={() => setDeleteId(rate.id)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-red-50 hover:text-red-500 transition-all"
+                          className="rounded-lg p-1.5 text-dark-900/40 transition-colors hover:bg-rose-50 hover:text-rose-500"
                           title="Delete"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -291,21 +288,50 @@ export default function RatesPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="border-t border-dark-900/[0.06] px-5 py-2.5 text-xs text-dark-900/45">
+            Showing {filteredRates.length} of {rates.length} rates
+          </div>
+        </SectionCard>
+      </TableShell>
 
-      {/* Add/Edit Modal */}
-      <Modal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
+      {/* How rates are used */}
+      <SectionCard className="mt-6" bodyClassName="p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+            <Info className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-dark-900">How rates are used</p>
+            <p className="mt-0.5 text-sm text-dark-900/50">
+              Purchasing costs are recorded in CNY and converted to USD with the newest effective
+              CNY → USD rate. Customer checkout then shows prices in SOS using the app-wide
+              CNY → USD → SOS conversion chain, so keeping these rates current keeps quotes accurate.
+            </p>
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* Add / Edit panel */}
+      <SidePanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
         title={editId ? "Edit Exchange Rate" : "Add Exchange Rate"}
-        onConfirm={handleSave}
-        confirmText={editId ? "Update" : "Add Rate"}
-        confirmLoading={saving}
+        subtitle="The new rate becomes effective immediately"
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setPanelOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving} className="admin-btn-primary">
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {editId ? "Update" : "Add Rate"}
+            </button>
+          </div>
+        }
       >
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -347,7 +373,7 @@ export default function RatesPage() {
             rows={2}
           />
         </div>
-      </Modal>
+      </SidePanel>
 
       {/* Delete Confirm */}
       <ConfirmDialog

@@ -2,12 +2,15 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, FlatList, Pressable, ActivityIndicator, RefreshControl } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Image } from "expo-image";
 import { ArrowLeft, ShoppingBag, ChevronRight, Truck, Plane } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
 import { getOrdersByUser, type LocalOrder } from "@/db/index";
+
+const EMPTY_ORDERS_IMG = require("../../assets/screens/empty_orders.png");
 
 const STATUS_COLORS: Record<string, string> = {
   pending: COLORS.warning,
@@ -59,7 +62,7 @@ export default function OrderHistoryScreen() {
         <View style={styles.centerLoading}><ActivityIndicator color={COLORS.primary} /></View>
       ) : orders.length === 0 ? (
         <View style={styles.empty}>
-          <View style={styles.emptyIcon}><ShoppingBag size={40} color={COLORS.primary} /></View>
+          <Image source={EMPTY_ORDERS_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
           <Text style={styles.emptyTitle}>No orders yet</Text>
           <Text style={styles.emptySub}>Your orders from China will appear here with live tracking.</Text>
           <Pressable style={styles.shopBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/(tabs)" as any); }}>
@@ -124,7 +127,7 @@ const styles = StyleSheet.create({
   centerLoading: { flex: 1, alignItems: "center", justifyContent: "center" },
   count: { fontSize: 13, fontFamily: FONTS.medium, color: COLORS.textSecondary, marginBottom: SPACING.sm },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: SPACING.xxxl },
-  emptyIcon: { width: 84, height: 84, borderRadius: 42, backgroundColor: COLORS.softOrange, alignItems: "center", justifyContent: "center", marginBottom: SPACING.lg },
+  emptyImg: { width: 200, height: 200, marginBottom: SPACING.lg },
   emptyTitle: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: 4 },
   emptySub: { fontSize: 14, fontFamily: FONTS.regular, color: COLORS.textSecondary, textAlign: "center" },
   shopBtn: { marginTop: SPACING.lg, backgroundColor: COLORS.primary, paddingHorizontal: SPACING.xxl, paddingVertical: SPACING.md, borderRadius: RADIUS.pill },

@@ -3,10 +3,28 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate } from "@/lib/utils";
-import { UserCog, Search, Loader2, Plus, Pencil, Trash2, ShieldCheck } from "lucide-react";
+import {
+  UserCog,
+  UserCheck,
+  ShieldCheck,
+  Layers,
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+} from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
-import Modal from "@/components/admin/Modal";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import {
+  PageHeader,
+  PageGrid,
+  StatCard,
+  SearchInput,
+  TableShell,
+  SidePanel,
+  EMPTY_IMAGES,
+} from "@/components/admin/ui";
 
 interface StaffRow {
   id: string;
@@ -49,22 +67,6 @@ const PERMISSIONS = [
   "view_sensitive_customer_data",
   "archive",
 ];
-
-const roleColors: Record<string, string> = {
-  super_admin: "bg-red-50 text-red-600",
-  operations_director: "bg-purple-50 text-purple-600",
-  finance_manager: "bg-emerald-50 text-emerald-600",
-  sourcing_manager: "bg-indigo-50 text-indigo-600",
-  sourcing_agent: "bg-blue-50 text-blue-600",
-  purchasing_officer: "bg-cyan-50 text-cyan-600",
-  warehouse_manager: "bg-orange-50 text-orange-600",
-  warehouse_operator: "bg-amber-50 text-amber-600",
-  quality_inspector: "bg-teal-50 text-teal-600",
-  logistics_manager: "bg-sky-50 text-sky-600",
-  support_manager: "bg-pink-50 text-pink-600",
-  support_agent: "bg-rose-50 text-rose-600",
-  content_manager: "bg-violet-50 text-violet-600",
-};
 
 export default function StaffPage() {
   const { toast } = useToast();
@@ -228,13 +230,13 @@ export default function StaffPage() {
     value: string[];
     onChange: React.Dispatch<React.SetStateAction<string[]>>;
   }) => (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-dark-700">Permissions</label>
-      <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto rounded-xl border border-dark-100 p-3">
+    <div>
+      <span className="admin-label">Permissions</span>
+      <div className="grid max-h-56 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border border-dark-900/10 bg-white p-2.5">
         {PERMISSIONS.map((perm) => (
           <label
             key={perm}
-            className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-dark-700 hover:bg-dark-50"
+            className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-dark-900/70 transition-colors hover:bg-dark-900/5"
           >
             <input
               type="checkbox"
@@ -246,102 +248,105 @@ export default function StaffPage() {
           </label>
         ))}
       </div>
+      <p className="mt-1.5 text-[11px] text-dark-900/40">
+        {value.length} of {PERMISSIONS.length} granted
+      </p>
     </div>
   );
 
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading staff...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{error}</p>
-        <button onClick={() => window.location.reload()} className="mt-3 text-sm font-medium text-brand-500 hover:underline">
-          Retry
-        </button>
-      </div>
-    );
-  }
+  const totalStaff = staff.length;
+  const activeStaff = staff.filter((s) => s.is_active).length;
+  const superAdmins = staff.filter((s) => s.is_super_admin).length;
+  const rolesCovered = new Set(staff.map((s) => s.role)).size;
 
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Staff & Roles</h1>
-          <p className="text-sm text-dark-400">Manage team members, roles, and permissions</p>
-        </div>
-        <button
-          onClick={() => setCreateOpen(true)}
-          className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Add Staff
-        </button>
-      </div>
+      <PageHeader
+        title="Staff & Roles"
+        subtitle="Team members, permissions and access"
+        actions={
+          <button onClick={() => setCreateOpen(true)} className="admin-btn-primary">
+            <Plus className="h-4 w-4" />
+            Add Staff
+          </button>
+        }
+      />
+
+      {/* Stats */}
+      {!isLoading && !error && (
+        <PageGrid>
+          <StatCard label="Total Staff" value={totalStaff} icon={UserCog} tone="brand" delay={0} />
+          <StatCard
+            label="Active Members"
+            value={activeStaff}
+            icon={UserCheck}
+            tone="success"
+            delay={1}
+          />
+          <StatCard
+            label="Super Admins"
+            value={superAdmins}
+            icon={ShieldCheck}
+            tone="error"
+            delay={2}
+          />
+          <StatCard
+            label="Roles Covered"
+            value={rolesCovered}
+            icon={Layers}
+            tone="violet"
+            delay={3}
+          />
+        </PageGrid>
+      )}
 
       {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-        <input
-          type="text"
-          placeholder="Search by role..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-        />
-      </div>
+      <SearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Search by role..."
+        className="max-w-md"
+      />
 
       {/* Staff table */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Role</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Permissions</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Super Admin</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Created</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredStaff.length === 0 ? (
+      <TableShell
+        isLoading={isLoading}
+        error={error}
+        errorRetry={fetchStaff}
+        hasData={filteredStaff.length > 0}
+        filtered={search.length > 0}
+        emptyImage={EMPTY_IMAGES.customers}
+        emptyTitle="No team members"
+        emptySubtitle="Invite your operations, finance and support team."
+        emptyAction={
+          <button onClick={() => setCreateOpen(true)} className="admin-btn-primary">
+            <Plus className="h-4 w-4" />
+            Add Staff
+          </button>
+        }
+      >
+        <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="admin-table w-full">
+              <thead>
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
-                    <UserCog className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search ? "No staff match your search" : "No staff yet"}
-                    </p>
-                    {!search && (
-                      <p className="text-xs text-dark-300 mt-1">Add your first staff member to assign roles</p>
-                    )}
-                  </td>
+                  <th>Role</th>
+                  <th>Permissions</th>
+                  <th>Super Admin</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th className="text-right">Actions</th>
                 </tr>
-              ) : (
-                filteredStaff.map((member) => (
-                  <tr key={member.id} className="hover:bg-dark-50/50 transition-colors">
-                    <td className="px-6 py-3.5">
-                      <span
-                        className={cn(
-                          "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium capitalize",
-                          roleColors[member.role] || "bg-dark-50 text-dark-500"
-                        )}
-                      >
-                        {member.role.replace(/_/g, " ")}
-                      </span>
+              </thead>
+              <tbody>
+                {filteredStaff.map((member) => (
+                  <tr key={member.id}>
+                    <td>
+                      <StatusBadge status={member.role} />
                     </td>
-                    <td className="px-6 py-3.5">
-                      <div className="flex flex-wrap gap-1 max-w-xs">
+                    <td>
+                      <div className="flex max-w-xs flex-wrap gap-1">
                         {(Array.isArray(member.permissions) ? member.permissions : [])
                           .slice(0, 4)
                           .map((perm) => (
@@ -353,30 +358,30 @@ export default function StaffPage() {
                             </span>
                           ))}
                         {Array.isArray(member.permissions) && member.permissions.length > 4 && (
-                          <span className="inline-flex items-center rounded-md bg-dark-100 px-2 py-0.5 text-[11px] font-medium text-dark-500">
+                          <span className="inline-flex items-center rounded-md bg-dark-900/[0.06] px-2 py-0.5 text-[11px] font-medium text-dark-900/50">
                             +{member.permissions.length - 4} more
                           </span>
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-3.5">
+                    <td>
                       {member.is_super_admin ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-600">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold text-rose-700">
                           <ShieldCheck className="h-3.5 w-3.5" />
                           Yes
                         </span>
                       ) : (
-                        <span className="text-sm text-dark-400">No</span>
+                        <span className="text-sm text-dark-900/40">No</span>
                       )}
                     </td>
-                    <td className="px-6 py-3.5">
+                    <td>
                       <button
                         onClick={() => handleToggleActive(member)}
                         disabled={togglingId === member.id}
                         aria-label={`Toggle ${member.role} active status`}
                         className={cn(
                           "relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50",
-                          member.is_active ? "bg-green-500" : "bg-dark-200"
+                          member.is_active ? "bg-emerald-500" : "bg-dark-200"
                         )}
                       >
                         <span
@@ -387,23 +392,23 @@ export default function StaffPage() {
                         />
                       </button>
                     </td>
-                    <td className="px-6 py-3.5">
-                      <span className="text-sm text-dark-400">
+                    <td>
+                      <span className="text-sm text-dark-900/50">
                         {member.created_at ? formatDate(member.created_at) : "—"}
                       </span>
                     </td>
-                    <td className="px-6 py-3.5">
+                    <td>
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => openEdit(member)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-dark-50 hover:text-brand-500 transition-all"
+                          className="rounded-lg p-1.5 text-dark-900/40 transition-all hover:bg-dark-900/5 hover:text-brand-500"
                           aria-label="Edit staff"
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
                         <button
                           onClick={() => setDeleteStaff(member)}
-                          className="rounded-lg p-1.5 text-dark-400 hover:bg-red-50 hover:text-red-500 transition-all"
+                          className="rounded-lg p-1.5 text-dark-900/40 transition-all hover:bg-rose-50 hover:text-rose-600"
                           aria-label="Delete staff"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -411,32 +416,41 @@ export default function StaffPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      </TableShell>
 
-      {/* Create Modal */}
-      <Modal
+      {/* Create Panel */}
+      <SidePanel
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         title="Add Staff Member"
-        onConfirm={handleCreate}
-        confirmText="Create Staff"
-        confirmLoading={creating}
+        subtitle="Assign a role and permissions to a new team member"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button onClick={() => setCreateOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button onClick={handleCreate} disabled={creating} className="admin-btn-primary">
+              {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+              Create Staff
+            </button>
+          </div>
+        }
       >
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor="staff-role" className="block text-sm font-medium text-dark-700">
+        <div className="space-y-5">
+          <div>
+            <label htmlFor="staff-role" className="admin-label">
               Role
             </label>
             <select
               id="staff-role"
               value={createRole}
               onChange={(e) => setCreateRole(e.target.value)}
-              className="w-full rounded-xl border border-dark-200 bg-white px-3.5 py-2.5 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+              className="admin-input"
             >
               {ROLES.map((role) => (
                 <option key={role} value={role}>
@@ -447,27 +461,36 @@ export default function StaffPage() {
           </div>
           <PermCheckboxGroup value={createPerms} onChange={setCreatePerms} />
         </div>
-      </Modal>
+      </SidePanel>
 
-      {/* Edit Modal */}
-      <Modal
+      {/* Edit Panel */}
+      <SidePanel
         open={editOpen}
         onClose={() => setEditOpen(false)}
         title="Edit Staff Member"
-        onConfirm={handleEdit}
-        confirmText="Save Changes"
-        confirmLoading={savingEdit}
+        subtitle={editStaff ? `Updating ${editStaff.role.replace(/_/g, " ")}` : undefined}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button onClick={() => setEditOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button onClick={handleEdit} disabled={savingEdit} className="admin-btn-primary">
+              {savingEdit && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save Changes
+            </button>
+          </div>
+        }
       >
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor="staff-edit-role" className="block text-sm font-medium text-dark-700">
+        <div className="space-y-5">
+          <div>
+            <label htmlFor="staff-edit-role" className="admin-label">
               Role
             </label>
             <select
               id="staff-edit-role"
               value={editRole}
               onChange={(e) => setEditRole(e.target.value)}
-              className="w-full rounded-xl border border-dark-200 bg-white px-3.5 py-2.5 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+              className="admin-input"
             >
               {ROLES.map((role) => (
                 <option key={role} value={role}>
@@ -478,7 +501,7 @@ export default function StaffPage() {
           </div>
           <PermCheckboxGroup value={editPerms} onChange={setEditPerms} />
         </div>
-      </Modal>
+      </SidePanel>
 
       {/* Delete Dialog */}
       <ConfirmDialog

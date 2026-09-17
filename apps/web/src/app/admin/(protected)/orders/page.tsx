@@ -2,10 +2,10 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { DataTable, Column } from "@/components/admin/DataTable";
 import { StatusBadge } from "@/components/admin/StatusBadge";
-import { KPICard } from "@/components/admin/KPICard";
+import { PageHeader, StatCard, PageGrid, FilterChips, TableShell, EMPTY_IMAGES } from "@/components/admin/ui";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  X, Package, CreditCard, MapPin, Clock3, Loader2, AlertCircle,
+  X, Package, CreditCard, MapPin, Clock3, Loader2,
   CheckSquare, Square, Printer, Truck, User, Phone, CalendarDays,
   ChevronRight, ExternalLink, RefreshCw, Check, ArrowRight
 } from "lucide-react";
@@ -367,45 +367,38 @@ export default function OrdersPage() {
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Orders</h1>
-          <p className="text-sm text-dark-900/50">Track and manage customer orders</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
-            placeholder="From"
-          />
-          <span className="text-dark-300 text-xs">to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
-            placeholder="To"
-          />
-        </div>
-      </div>
+      <PageHeader
+        title="Orders"
+        subtitle="Manage and fulfil customer orders from China to Somalia"
+        actions={
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+              placeholder="From"
+            />
+            <span className="text-dark-300 text-xs">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+              placeholder="To"
+            />
+          </div>
+        }
+      />
 
       {/* ── KPIs ── */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <KPICard title="Total Orders" value={kpis.total} icon={Package} color="brand" delay={0} />
-        <KPICard title="Pending" value={kpis.pending} icon={Clock3} color="amber" delay={1} />
-        <KPICard title="Active" value={kpis.active} icon={RefreshCw} color="sky" delay={2} />
-        <KPICard title="Delivered" value={kpis.delivered} icon={Check} color="emerald" delay={3} />
-        <KPICard title="Revenue" value={formatUSD(kpis.revenue)} icon={CreditCard} color="violet" delay={4} />
-      </div>
-
-      {error ? (
-        <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-          <AlertCircle className="mt-0.5 h-4 w-4" />
-          <span>{error}</span>
-        </div>
-      ) : null}
+      <PageGrid className="sm:grid-cols-2 lg:grid-cols-5">
+        <StatCard label="Total Orders" value={kpis.total} icon={Package} tone="brand" delay={0} />
+        <StatCard label="Pending" value={kpis.pending} icon={Clock3} tone="warning" delay={1} />
+        <StatCard label="Active" value={kpis.active} icon={RefreshCw} tone="info" delay={2} />
+        <StatCard label="Delivered" value={kpis.delivered} icon={Check} tone="success" delay={3} />
+        <StatCard label="Revenue" value={formatUSD(kpis.revenue)} icon={CreditCard} tone="violet" delay={4} />
+      </PageGrid>
 
       {/* ── Bulk Actions ── */}
       <AnimatePresence>
@@ -451,48 +444,35 @@ export default function OrdersPage() {
         )}
       </AnimatePresence>
 
-      {/* ── Status filter tabs ── */}
-      <div className="flex flex-wrap gap-2">
-        {STATUSES.map((s) => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition",
-              statusFilter === s
-                ? "border-brand-500 bg-brand-500 text-white"
-                : "border-dark-900/10 bg-white text-dark-900/60 hover:border-brand-500/30"
-            )}
-          >
-            {s === "all" ? "All" : s.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
-            {statusCounts[s] !== undefined && (
-              <span
-                className={cn(
-                  "rounded-full px-1.5 py-0.5 text-[10px]",
-                  statusFilter === s ? "bg-white/20" : "bg-dark-900/5"
-                )}
-              >
-                {statusCounts[s]}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* ── Status filter chips ── */}
+      <FilterChips<string>
+        options={STATUSES.map((s) => ({
+          value: s,
+          label: s === "all" ? "All" : s.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          count: statusCounts[s],
+        }))}
+        value={statusFilter}
+        onChange={setStatusFilter}
+      />
 
       {/* ── Table ── */}
-      {loading ? (
-        <div className="flex items-center gap-2 p-6 text-sm text-dark-900/50">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading orders…
-        </div>
-      ) : (
+      <TableShell
+        isLoading={loading}
+        error={error}
+        errorRetry={() => load(statusFilter)}
+        hasData={filtered.length > 0}
+        filtered={statusFilter !== "all" || !!dateFrom || !!dateTo}
+        emptyImage={EMPTY_IMAGES.orders}
+        emptyTitle="No orders yet"
+        emptySubtitle="Orders placed by customers will appear here in real time."
+      >
         <DataTable
           columns={columns}
           data={filtered}
           searchKeys={["order_number", "reference", "customer_name", "city", "phone", "recipient_name"]}
           onRowClick={setSelected}
         />
-      )}
+      </TableShell>
 
       {/* ── Order Detail Drawer ── */}
       <AnimatePresence>

@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Image } from "expo-image";
 import {
   ArrowLeft,
   ChevronDown,
@@ -25,6 +26,8 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { WHATSAPP_LINK } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
+
+const HELP_IMG = require("../../assets/screens/help_hero.png");
 
 type FAQItem = {
   q_en: string;
@@ -137,6 +140,15 @@ export default function HelpScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        {/* Hero */}
+        <View style={styles.heroWrap}>
+          <Image source={HELP_IMG} style={styles.heroImg} contentFit="contain" transition={150} />
+          <Text style={styles.heroTitle}>{locale === "en" ? "How can we help?" : "Sideen ku caawin karnaa?"}</Text>
+          <Text style={styles.heroSub}>
+            {locale === "en" ? "We're here to help you 24/7" : "Waxaan halkan u joognaa inaan ku caawinno 24/7"}
+          </Text>
+        </View>
+
         {/* Contact Options */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>
@@ -144,8 +156,8 @@ export default function HelpScreen() {
           </Text>
           <Text style={styles.sectionSubtitle}>
             {locale === "en"
-              ? "We're here to help you 24/7"
-              : "Waxaan halkan u joognaa inaan ku caawinno 24/7"}
+              ? "Reach us on your favourite channel"
+              : "Nala soo xiriir kanaalka aad jeceshahay"}
           </Text>
 
           {/* WhatsApp */}
@@ -341,6 +353,28 @@ const styles = StyleSheet.create({
     marginRight: 44,
   },
   content: { padding: SPACING.lg },
+
+  // Hero section
+  heroWrap: {
+    alignItems: "center",
+    marginBottom: SPACING.lg,
+  },
+  heroImg: {
+    width: 220,
+    height: 160,
+    marginBottom: SPACING.sm,
+  },
+  heroTitle: {
+    fontSize: 22,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+    marginBottom: 4,
+  },
+  heroSub: {
+    fontSize: 14,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+  },
 
   // Contact section
   sectionCard: {

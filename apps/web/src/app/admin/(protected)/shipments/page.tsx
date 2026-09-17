@@ -4,14 +4,14 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 import {
-  Search, Truck, Loader2, Plane, Ship, Package, MapPin, Plus, Pencil, Trash2,
-  Calendar, Clock, Check, AlertTriangle, BarChart3, ArrowRight, Navigation, X
+  Truck, Loader2, Plane, Ship, Package, MapPin, Plus, Pencil, Trash2,
+  Calendar, Clock, Check, AlertTriangle, ArrowRight, Navigation, X
 } from "lucide-react";
 import type { Shipment } from "@/types";
-import Modal from "@/components/admin/Modal";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
+import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -287,82 +287,32 @@ export default function ShipmentsPage() {
     return "text-dark-600";
   };
 
-  /* ── Loading / Error ────────────────────────────────────────── */
-
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading shipments...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{error}</p>
-        <button onClick={() => window.location.reload()} className="mt-3 text-sm font-medium text-brand-500 hover:underline">Retry</button>
-      </div>
-    );
-  }
-
   /* ── Render ─────────────────────────────────────────────────── */
 
   return (
     <div className="space-y-6">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Shipments</h1>
-          <p className="text-sm text-dark-400">Track shipments from China to Somalia</p>
-        </div>
-        <button
-          onClick={openCreate}
-          className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-colors shadow-sm"
-        >
-          <Plus className="h-4 w-4" />
-          Create Shipment
-        </button>
-      </div>
+      <PageHeader
+        title="Shipments"
+        subtitle="Consolidated freight from Guangzhou to Somalia — air & sea"
+        actions={
+          <button onClick={openCreate} className="admin-btn-primary">
+            <Plus className="h-4 w-4" />
+            Create Shipment
+          </button>
+        }
+      />
 
       {/* ── KPI Stats ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-dark-100/50 bg-white px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Package className="h-4 w-4 text-brand-500" />
-            <p className="text-xs font-medium text-dark-400">Total Shipments</p>
-          </div>
-          <p className="mt-1 text-2xl font-bold text-dark-900">{kpis.total}</p>
-        </div>
-        <div className="rounded-xl border border-dark-100/50 bg-white px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Navigation className="h-4 w-4 text-cyan-500" />
-            <p className="text-xs font-medium text-dark-400">In Transit</p>
-          </div>
-          <p className="mt-1 text-2xl font-bold text-cyan-600">{kpis.inTransit}</p>
-        </div>
-        <div className="rounded-xl border border-dark-100/50 bg-white px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
-            <p className="text-xs font-medium text-dark-400">In Customs</p>
-          </div>
-          <p className="mt-1 text-2xl font-bold text-amber-600">{kpis.customs}</p>
-        </div>
-        <div className="rounded-xl border border-dark-100/50 bg-white px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <Check className="h-4 w-4 text-emerald-500" />
-            <p className="text-xs font-medium text-dark-400">Delivered</p>
-          </div>
-          <p className="mt-1 text-2xl font-bold text-emerald-600">{kpis.delivered}</p>
-        </div>
-      </div>
+      <PageGrid className="grid-cols-2 sm:grid-cols-4">
+        <StatCard label="Total Shipments" value={kpis.total} icon={Package} tone="brand" delay={0} />
+        <StatCard label="In Transit" value={kpis.inTransit} icon={Navigation} tone="info" delay={1} />
+        <StatCard label="In Customs" value={kpis.customs} icon={AlertTriangle} tone="warning" delay={2} />
+        <StatCard label="Delivered" value={kpis.delivered} icon={Check} tone="success" delay={3} />
+      </PageGrid>
 
       {/* ── Transport Breakdown ── */}
-      <div className="rounded-xl border border-dark-100/50 bg-white px-5 py-4 shadow-sm">
-        <p className="text-xs font-semibold text-dark-400 uppercase tracking-wider mb-3">Transport Mode Breakdown</p>
+      <SectionCard title="Transport Mode Breakdown" subtitle="Current fleet split across air, sea and land">
         <div className="flex items-center gap-6">
           {[
             { label: "Air", count: kpis.airCount, icon: Plane, color: "bg-blue-500" },
@@ -390,53 +340,32 @@ export default function ShipmentsPage() {
             )}
           </div>
         </div>
-      </div>
+      </SectionCard>
 
       {/* ── Search ── */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-        <input
-          type="text"
-          placeholder="Search by reference, tracking, or route..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-        />
-      </div>
+      <SearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Search by reference, tracking, or route..."
+        className="max-w-md"
+      />
 
-      {/* ── Status tabs ── */}
-      <div className="flex items-center gap-1 rounded-xl bg-dark-50 p-1 overflow-x-auto">
-        {statusTabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={cn(
-              "whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-all",
-              activeTab === tab
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-400 hover:text-dark-600"
-            )}
-          >
-            {tab} {tabCounts[tab] !== undefined && (
-              <span className="ml-1 text-xs text-dark-400">({tabCounts[tab]})</span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* ── Status chips ── */}
+      <FilterChips<string>
+        options={statusTabs.map((tab) => ({ value: tab, label: tab, count: tabCounts[tab] }))}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* ── Upcoming ETAs ── */}
       {kpis.upcomingETA.length > 0 && (
-        <div className="rounded-xl border border-dark-100/50 bg-white px-5 py-4 shadow-sm">
-          <p className="text-xs font-semibold text-dark-400 uppercase tracking-wider mb-3">
-            <Clock className="h-3 w-3 inline mr-1" />
-            Upcoming Arrivals
-          </p>
+        <SectionCard title="Upcoming Arrivals" subtitle="Nearest estimated arrivals across active shipments">
           <div className="flex gap-3 overflow-x-auto pb-1">
             {kpis.upcomingETA.slice(0, 6).map((s) => (
               <button
                 key={s.id}
                 onClick={() => setSelected(s)}
-                className="flex shrink-0 flex-col rounded-xl border border-dark-100 px-4 py-3 hover:border-brand-300 hover:bg-brand-50/30 transition-all min-w-[160px]"
+                className="flex shrink-0 flex-col rounded-xl border border-dark-900/[0.06] px-4 py-3 hover:border-brand-300 hover:bg-brand-50/30 transition-all min-w-[160px]"
               >
                 <span className="text-xs font-semibold text-dark-900">{s.reference}</span>
                 <span className="text-[10px] text-dark-400">{s.origin} → {s.destination}</span>
@@ -447,38 +376,38 @@ export default function ShipmentsPage() {
               </button>
             ))}
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* ── Shipments table ── */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
+      <TableShell
+        isLoading={isLoading}
+        error={error}
+        errorRetry={fetchShipments}
+        hasData={filteredShipments.length > 0}
+        filtered={!!search || activeTab !== "All"}
+        emptyImage={EMPTY_IMAGES.shipments}
+        emptyTitle="No shipments yet"
+        emptySubtitle="Shipments appear here once packages are consolidated."
+      >
+      <div className="rounded-2xl bg-white border border-dark-900/[0.06] shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="admin-table w-full">
             <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Reference</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Method</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Route</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Packages</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Departure</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">ETA</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Tracking</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">Actions</th>
+              <tr>
+                <th>Reference</th>
+                <th>Method</th>
+                <th>Route</th>
+                <th>Packages</th>
+                <th>Status</th>
+                <th>Departure</th>
+                <th>ETA</th>
+                <th>Tracking</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredShipments.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center">
-                    <Truck className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search || activeTab !== "All" ? "No shipments match your filters" : "No shipments yet"}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                filteredShipments.map((shipment) => {
+            <tbody className="divide-y divide-dark-900/[0.04]">
+              {filteredShipments.map((shipment) => {
                   const MethodIcon = methodIcons[shipment.method] || Truck;
                   return (
                     <tr
@@ -566,18 +495,18 @@ export default function ShipmentsPage() {
                         </div>
                       </td>
                     </tr>
-                  );
-                })
-              )}
+                   );
+                 })}
             </tbody>
           </table>
         </div>
         {filteredShipments.length > 0 && (
-          <div className="border-t border-dark-50 px-4 py-2.5 text-xs text-dark-400">
+          <div className="border-t border-dark-900/[0.04] px-4 py-2.5 text-xs text-dark-400">
             Showing {filteredShipments.length} of {shipments.length} shipments
           </div>
         )}
       </div>
+      </TableShell>
 
       {/* ── Shipment Detail Drawer ── */}
       <AnimatePresence>
@@ -713,14 +642,22 @@ export default function ShipmentsPage() {
         )}
       </AnimatePresence>
 
-      {/* ── Create / Edit Modal ── */}
-      <Modal
+      {/* ── Create / Edit Panel ── */}
+      <SidePanel
         open={isModalOpen}
         onClose={() => { setIsModalOpen(false); setEditingId(null); }}
         title={editingId ? "Edit Shipment" : "Create Shipment"}
-        onConfirm={handleSave}
-        confirmText={editingId ? "Update" : "Create"}
-        confirmLoading={saving}
+        subtitle="Route, schedule and tracking details"
+        width="max-w-xl"
+        footer={
+          <>
+            <button onClick={() => { setIsModalOpen(false); setEditingId(null); }} className="admin-btn-ghost">Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="admin-btn-primary">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {editingId ? "Update" : "Create"}
+            </button>
+          </>
+        }
       >
         <div className="space-y-4">
           <FormInput label="Reference" name="reference" value={form.reference} onChange={updateField("reference")} placeholder="e.g. SHP-2024-001" required />
@@ -746,7 +683,7 @@ export default function ShipmentsPage() {
           </div>
           <FormInput label="Tracking Number" name="tracking_number" value={form.tracking_number} onChange={updateField("tracking_number")} placeholder="e.g. SF123456789" />
         </div>
-      </Modal>
+      </SidePanel>
 
       {/* ── Delete ConfirmDialog ── */}
       <ConfirmDialog

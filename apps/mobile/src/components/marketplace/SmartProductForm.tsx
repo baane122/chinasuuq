@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from "react";
+// SmartProductForm — capture + MOQ-aware review flow for ChinaSuuq
+// Now integrated with the MOQ engine and the 5-section ProductReviewSheet
+
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,6 +10,7 @@ import {
   TextInput,
   ScrollView,
   Alert,
+  Linking,
 } from "react-native";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -16,6 +20,15 @@ import { useCartStore } from "@/store/cart";
 import type { Marketplace, Product } from "@/types";
 import { getCnyPerUsd } from "@/lib/exchange";
 import { saveSourcingCapture } from "@/db";
+import { whatsappOrderLink } from "@/lib/utils";
+import {
+  type OrderRules,
+  validateMOQ,
+  calculateTierPrice,
+  getSuggestedQuantities,
+  createDefaultRules,
+} from "@/lib/moq";
+import ProductReviewSheet from "./ProductReviewSheet";
 
 export interface CapturedListing {
   title: string;
@@ -35,7 +48,6 @@ interface SmartProductFormProps {
 
 // Common specs a customer may pick per category — freeform so any market item works
 const COMMON_SPECS = ["Color", "Size", "Model", "Material", "Length", "Weight"];
-const QTY_STEPS = [1, 2, 5, 10, 20, 50, 100];
 
 export default function SmartProductForm({ visible, listing, onClose }: SmartProductFormProps) {
   const addItem = useCartStore((s) => s.addItem);
@@ -48,6 +60,50 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
   const [rate, setRate] = useState(7.25);
   const [estKg, setEstKg] = useState("");
   const [estCbm, setEstCbm] = useState("");
+  const [showReviewSheet, setShowReviewSheet] = useState(false);
+
+  // Build a stable Product object from the listing (memoized for the review sheet)
+  const product = useMemo<Product | null>(() => {
+    if (!listing) return null;
+    return {
+      id: "web-" + (listing.sourceId || "capture"),
+      marketplace: (listing.platform as Marketplace) || "1688",
+      source_product_id: listing.sourceId || listing.url,
+      source_url: listing.url,
+      title_original: listing.title,
+      title_english: listing.title,
+      title_somali: listing.title,
+      images: listing.image ? [listing.image] : [],
+      category: "",
+      attributes: specs,
+      variants: [],
+      moq: 1,
+      price_cny_min: priceCny,
+      price_cny_max: priceCny,
+      price_usd_estimated: usd,
+      domestic_shipping_cny: 0,
+      stock_status: "in_stock",
+      supplier_rating: 0,
+      sales_count: 0,
+      last_synced_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+  }, [listing, specs, priceCny, usd]);
+
+  // MOQ rules derived from the product
+  const moqRules = useMemo<OrderRules>(() => {
+    if (!product) return { productMoq: 1, tiers: [] };
+    return createDefaultRules(product);
+  }, [product]);
+
+  // MOQ validation
+  const validation = useMemo(() => validateMOQ(moqRules, qty), [moqRules, qty]);
+
+  // Current tier
+  const tier = useMemo(() => calculateTierPrice(moqRules, qty), [moqRules, qty]);
+
+  // Suggested quick-buy quantities
+  const suggested = useMemo(() => getSuggestedQuantities(moqRules), [moqRules]);
 
   useEffect(() => {
     if (!listing) return;
@@ -66,10 +122,14 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
   if (!listing) return null;
 
   const handleAdd = () => {
+    if (!validation.valid) {
+      Alert.alert("Quantity Issue", validation.message);
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     // Feed the admin sourcing mission-control (local-first, syncs to sourcing_requests when online)
     void saveSourcingCapture({
-      id: `src-${Date.now()}`,
+      id: "src-" + Date.now(),
       marketplace: listing.platform || "1688",
       product_url: listing.url,
       product_description: listing.title,
@@ -83,199 +143,237 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
       created_at: new Date().toISOString(),
       synced: false,
     });
-    const product: Product = {
-      id: `web-${listing.sourceId || Math.random().toString(36).slice(2, 10)}`,
-      marketplace: (listing.platform as Marketplace) || "1688",
-      source_product_id: listing.sourceId || listing.url,
-      source_url: listing.url,
-      title_original: listing.title,
-      title_english: listing.title, // captured from page; user can edit note
-      title_somali: listing.title,
-      images: listing.image ? [listing.image] : [],
-      category: "",
-      attributes: specs,
-      variants: [],
-      moq: 1,
-      price_cny_min: priceCny,
-      price_cny_max: priceCny,
-      price_usd_estimated: usd,
-      domestic_shipping_cny: 0,
-      stock_status: "in_stock",
-      supplier_rating: 0,
-      sales_count: 0,
-      last_synced_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
-    addItem(product, qty, specs, {
-      estimated_kg: parseFloat(estKg) || undefined,
-      estimated_cbm: parseFloat(estCbm) || undefined,
-      exchange_rate: rate || undefined,
-    });
-    Alert.alert("Added to ChinaSuuq Cart", `${listing.title.slice(0, 60)} (×${qty})\n\nFully translated & converted — continue in your cart.`, [
-      { text: "Noted" },
-    ]);
+    if (product) {
+      addItem(product, qty, specs, {
+        estimated_kg: parseFloat(estKg) || undefined,
+        estimated_cbm: parseFloat(estCbm) || undefined,
+        exchange_rate: rate || undefined,
+      });
+    }
+    Alert.alert(
+      "Added to ChinaSuuq Cart",
+      listing.title.slice(0, 60) + " (x" + qty + ")\n\nFully translated & converted — continue in your cart.",
+      [{ text: "Noted" }],
+    );
     onClose();
   };
 
-  return (
-    <BottomSheet visible={visible} onClose={onClose} height={460}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Captured preview */}
-        <View style={styles.previewRow}>
-          {listing.image ? (
-            <Image source={{ uri: listing.image }} style={styles.thumb} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-          ) : null}
-          <View style={styles.previewInfo}>
-            <Text style={styles.previewTitle} numberOfLines={2}>{listing.title}</Text>
-            <Text style={styles.priceLine}>
-              <Text style={styles.priceCny}>¥{priceCny.toFixed(2)}</Text>
-              <Text style={styles.priceSep}>  ·  </Text>
-              <Text style={styles.priceUsd}>${usd.toFixed(2)} USD</Text>
-              <Text style={styles.rateHint}>  @ 1:{rate.toFixed(2)}</Text>
-            </Text>
-            <Text style={styles.sourceTag}>{listing.platform.toUpperCase()}</Text>
-          </View>
-          <View style={styles.priceEditWrap}>
-            <Text style={styles.priceEditLabel}>Price (CNY)</Text>
-            <View style={styles.priceEditRow}>
-              <Text style={styles.priceEditPrefix}>¥</Text>
-              <TextInput
-                style={styles.priceEditInput}
-                value={priceCny ? String(priceCny) : ""}
-                onChangeText={(t) => {
-                  const v = parseFloat(t.replace(/[^\d.]/g, "")) || 0;
-                  setPriceCny(v);
-                  setUsd(v > 0 ? v / rate : 0);
-                }}
-                keyboardType="decimal-pad"
-                placeholder="0.00"
-                placeholderTextColor={COLORS.gray400}
-              />
-            </View>
-            <Text style={styles.priceEditHint}>
-              {priceCny > 0 ? `≈ $${(priceCny / rate).toFixed(2)} USD` : "Enter price if auto-detect missed it"}
-            </Text>
-          </View>
-        </View>
+  const handleReview = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setShowReviewSheet(true);
+  };
 
-        {/* Quantity stepper */}
-        <View style={styles.block}>
-          <Text style={styles.blockLabel}>Quantity</Text>
-          <View style={styles.qtyWrap}>
-            <TouchableOpacity
-              style={[styles.qtyBtn, qty <= 1 && styles.disabled]}
-              onPress={() => qty > 1 && (Haptics.selectionAsync(), setQty(qty - 1))}
-              disabled={qty <= 1}
-            >
-              <Text style={styles.qtyBtnText}>−</Text>
-            </TouchableOpacity>
-            <Text style={styles.qtyValue}>{qty}</Text>
-            <TouchableOpacity style={styles.qtyBtn} onPress={() => (Haptics.selectionAsync(), setQty(qty + 1))}>
-              <Text style={styles.qtyBtnText}>+</Text>
-            </TouchableOpacity>
-            <View style={styles.qtyQuick}>
-              {QTY_STEPS.map((s, i) =>
-                i < 4 ? (
+  const handleAskSmallerQty = () => {
+    const link = whatsappOrderLink(
+      "Hello ChinaSuuq! I would like to order a smaller quantity of: " + listing.title + " | " + listing.url
+    );
+    if (link) void Linking.openURL(link);
+  };
+
+  return (
+    <>
+      <BottomSheet visible={visible && !showReviewSheet} onClose={onClose} height={460}>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Captured preview */}
+          <View style={styles.previewRow}>
+            {listing.image ? (
+              <Image source={{ uri: listing.image }} style={styles.thumb} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+            ) : null}
+            <View style={styles.previewInfo}>
+              <Text style={styles.previewTitle} numberOfLines={2}>{listing.title}</Text>
+              <Text style={styles.priceLine}>
+                <Text style={styles.priceCny}>¥{priceCny.toFixed(2)}</Text>
+                <Text style={styles.priceSep}>  ·  </Text>
+                <Text style={styles.priceUsd}>${usd.toFixed(2)} USD</Text>
+                <Text style={styles.rateHint}>  @ 1:{rate.toFixed(2)}</Text>
+              </Text>
+              <Text style={styles.sourceTag}>{listing.platform.toUpperCase()}</Text>
+            </View>
+            <View style={styles.priceEditWrap}>
+              <Text style={styles.priceEditLabel}>Price (CNY)</Text>
+              <View style={styles.priceEditRow}>
+                <Text style={styles.priceEditPrefix}>¥</Text>
+                <TextInput
+                  style={styles.priceEditInput}
+                  value={priceCny ? String(priceCny) : ""}
+                  onChangeText={(t) => {
+                    const v = parseFloat(t.replace(/[^\\d.]/g, "")) || 0;
+                    setPriceCny(v);
+                    setUsd(v > 0 ? v / rate : 0);
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor={COLORS.gray400}
+                />
+              </View>
+              <Text style={styles.priceEditHint}>
+                {priceCny > 0 ? "≈ $" + (priceCny / rate).toFixed(2) + " USD" : "Enter price if auto-detect missed it"}
+              </Text>
+            </View>
+          </View>
+
+          {/* Quantity with MOQ awareness */}
+          <View style={styles.block}>
+            <Text style={styles.blockLabel}>
+              Quantity{"  "}
+              <Text style={styles.moqHint}>(MOQ: {moqRules.productMoq} pcs)</Text>
+            </Text>
+            <View style={styles.qtyWrap}>
+              <TouchableOpacity
+                style={[styles.qtyBtn, qty <= moqRules.productMoq && styles.disabled]}
+                onPress={() => qty > moqRules.productMoq && (Haptics.selectionAsync(), setQty(qty - 1))}
+                disabled={qty <= moqRules.productMoq}
+              >
+                <Text style={styles.qtyBtnText}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.qtyValue}>{qty}</Text>
+              <TouchableOpacity style={styles.qtyBtn} onPress={() => (Haptics.selectionAsync(), setQty(qty + 1))}>
+                <Text style={styles.qtyBtnText}>+</Text>
+              </TouchableOpacity>
+              <View style={styles.qtyQuick}>
+                {suggested.slice(0, 4).map((s) => (
                   <TouchableOpacity key={s} style={[styles.qtyChip, qty === s && styles.qtyChipActive]} onPress={() => setQty(s)}>
                     <Text style={[styles.qtyChipText, qty === s && styles.qtyChipTextActive]}>{s}</Text>
                   </TouchableOpacity>
-                ) : null
+                ))}
+              </View>
+            </View>
+            {!validation.valid ? (
+              <View style={styles.validationRow}>
+                <Text style={styles.validationText}>⚠️ {validation.message}</Text>
+                {validation.suggestedQty ? (
+                  <TouchableOpacity onPress={() => setQty(validation.suggestedQty!)} style={styles.fixBtn}>
+                    <Text style={styles.fixBtnText}>Use {validation.suggestedQty}</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : tier ? (
+              <View style={styles.tierRow}>
+                <Text style={styles.tierText}>
+                  💰 {tier.label || "Tier"} price: ¥{tier.priceCny.toFixed(2)}/pc
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Estimated weight / volume (for shipping quote) */}
+          <View style={styles.block}>
+            <Text style={styles.blockLabel}>Shipping estimate <Text style={styles.optional}>(optional — used for air/sea quote)</Text></Text>
+            <View style={styles.wtRow}>
+              <View style={styles.wtField}>
+                <TextInput
+                  style={styles.wtInput}
+                  placeholder="Weight / kg"
+                  placeholderTextColor={COLORS.textMuted}
+                  keyboardType="decimal-pad"
+                  value={estKg}
+                  onChangeText={setEstKg}
+                />
+                <Text style={styles.wtUnit}>kg</Text>
+              </View>
+              <View style={styles.wtField}>
+                <TextInput
+                  style={styles.wtInput}
+                  placeholder="Volume"
+                  placeholderTextColor={COLORS.textMuted}
+                  keyboardType="decimal-pad"
+                  value={estCbm}
+                  onChangeText={setEstCbm}
+                />
+                <Text style={styles.wtUnit}>CBM</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Smart specs */}
+          <View style={styles.block}>
+            <Text style={styles.blockLabel}>Specifications <Text style={styles.optional}>(pick what the customer sees — all added to cart)</Text></Text>
+            <ScrollView
+              horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.specTabs}
+            >
+              {COMMON_SPECS.map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  style={[styles.specTab, activeSpec === s && styles.specTabActive]}
+                  onPress={() => { setActiveSpec(s); Haptics.selectionAsync(); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.specTabText, activeSpec === s && styles.specTabTextActive]}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <View style={styles.specInputRow}>
+              <TextInput
+                style={styles.specInput}
+                placeholder={`Enter ${activeSpec.toLowerCase()} (e.g. Red / XL / ABS)`}
+                placeholderTextColor={COLORS.textMuted}
+                value={specs[activeSpec] || ""}
+                onChangeText={(t) => setSpecs((p) => ({ ...p, [activeSpec]: t }))}
+              />
+              {!!specs[activeSpec] && (
+                <TouchableOpacity onPress={() => setSpecs((p) => { const n = { ...p }; delete n[activeSpec]; return n; })} style={styles.clearBtn}>
+                  <Text style={styles.clearText}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.addedSpecs}>
+              {Object.entries(specs).filter(([, v]) => !!v).map(([k, v]) => (
+                <View key={k} style={styles.specChip}>
+                  <Text style={styles.specChipLabel}>{k}:</Text>
+                  <Text style={styles.specChipValue}>{v}</Text>
+                </View>
+              ))}
+              {Object.values(specs).filter(Boolean).length === 0 && (
+                <Text style={styles.noSpecs}>No specs yet — add to fully configure the item.</Text>
               )}
             </View>
           </View>
-        </View>
 
-        {/* Estimated weight / volume (for shipping quote) */}
-        <View style={styles.block}>
-          <Text style={styles.blockLabel}>Shipping estimate <Text style={styles.optional}>(optional — used for air/sea quote)</Text></Text>
-          <View style={styles.wtRow}>
-            <View style={styles.wtField}>
-              <TextInput
-                style={styles.wtInput}
-                placeholder="Weight / kg"
-                placeholderTextColor={COLORS.textMuted}
-                keyboardType="decimal-pad"
-                value={estKg}
-                onChangeText={setEstKg}
-              />
-              <Text style={styles.wtUnit}>kg</Text>
-            </View>
-            <View style={styles.wtField}>
-              <TextInput
-                style={styles.wtInput}
-                placeholder="Volume"
-                placeholderTextColor={COLORS.textMuted}
-                keyboardType="decimal-pad"
-                value={estCbm}
-                onChangeText={setEstCbm}
-              />
-              <Text style={styles.wtUnit}>CBM</Text>
-            </View>
+          {/* Total */}
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>Estimated Total (USD)</Text>
+            <Text style={styles.totalValue}>${(usd * qty).toFixed(2)}</Text>
           </View>
-        </View>
 
-        {/* Smart specs */}
-        <View style={styles.block}>
-          <Text style={styles.blockLabel}>Specifications <Text style={styles.optional}>(pick what the customer sees — all added to cart)</Text></Text>
-          <ScrollView
-            horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.specTabs}
-          >
-            {COMMON_SPECS.map((s) => (
-              <TouchableOpacity
-                key={s}
-                style={[styles.specTab, activeSpec === s && styles.specTabActive]}
-                onPress={() => { setActiveSpec(s); Haptics.selectionAsync(); }}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.specTabText, activeSpec === s && styles.specTabTextActive]}>{s}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-          <View style={styles.specInputRow}>
-            <TextInput
-              style={styles.specInput}
-              placeholder={`Enter ${activeSpec.toLowerCase()} (e.g. Red / XL / ABS)`}
-              placeholderTextColor={COLORS.textMuted}
-              value={specs[activeSpec] || ""}
-              onChangeText={(t) => setSpecs((p) => ({ ...p, [activeSpec]: t }))}
-            />
-            {!!specs[activeSpec] && (
-              <TouchableOpacity onPress={() => setSpecs((p) => { const n = { ...p }; delete n[activeSpec]; return n; })} style={styles.clearBtn}>
-                <Text style={styles.clearText}>Clear</Text>
-              </TouchableOpacity>
-            )}
+          {/* Actions */}
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={onClose} activeOpacity={0.7}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.addBtn, !validation.valid && styles.disabled]}
+              onPress={handleAdd}
+              disabled={!validation.valid}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.addText}>+ Add {qty} to Cart</Text>
+            </TouchableOpacity>
           </View>
-          <View style={styles.addedSpecs}>
-            {Object.entries(specs).filter(([, v]) => !!v).map(([k, v]) => (
-              <View key={k} style={styles.specChip}>
-                <Text style={styles.specChipLabel}>{k}:</Text>
-                <Text style={styles.specChipValue}>{v}</Text>
-              </View>
-            ))}
-            {Object.values(specs).filter(Boolean).length === 0 && (
-              <Text style={styles.noSpecs}>No specs yet — add to fully configure the item.</Text>
-            )}
-          </View>
-        </View>
 
-        {/* Total */}
-        <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>Estimated Total (USD)</Text>
-          <Text style={styles.totalValue}>${(usd * qty).toFixed(2)}</Text>
-        </View>
-
-        {/* Actions */}
-        <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.cancelBtn} onPress={onClose} activeOpacity={0.7}>
-            <Text style={styles.cancelText}>Cancel</Text>
+          {/* Full review sheet trigger */}
+          <TouchableOpacity style={styles.reviewBtn} onPress={handleReview} activeOpacity={0.8}>
+            <Text style={styles.reviewBtnText}>📋 Review full costs & MOQ details</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.addBtn} onPress={handleAdd} activeOpacity={0.8}>
-            <Text style={styles.addText}>+ Add to ChinaSuuq Cart</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </BottomSheet>
+        </ScrollView>
+      </BottomSheet>
+
+      {/* 5-section product review sheet */}
+      <ProductReviewSheet
+        visible={showReviewSheet}
+        product={product}
+        rules={moqRules}
+        onClose={() => {
+          setShowReviewSheet(false);
+          onClose();
+        }}
+        onAddToCart={() => {
+          setShowReviewSheet(false);
+          onClose();
+        }}
+        onAskSmallerQty={handleAskSmallerQty}
+      />
+    </>
   );
 }
 
@@ -283,8 +381,6 @@ const styles = StyleSheet.create({
   // preview
   previewRow: { flexDirection: "row", gap: SPACING.md, paddingBottom: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   thumb: { width: 84, height: 84, borderRadius: RADIUS.md, backgroundColor: COLORS.gray100 },
-  thumbFallback: { alignItems: "center", justifyContent: "center" },
-  thumbFallbackText: { fontSize: 30, fontFamily: FONTS.bold, color: COLORS.primary },
   previewInfo: { flex: 1, justifyContent: "center" },
   previewTitle: { fontSize: 14, fontFamily: FONTS.semibold, color: COLORS.black, lineHeight: 19 },
   priceLine: { marginTop: 6 },
@@ -304,6 +400,7 @@ const styles = StyleSheet.create({
   block: { paddingVertical: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border, marginBottom: SPACING.sm },
   blockLabel: { fontSize: 13, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: SPACING.sm },
   optional: { fontSize: 11, fontFamily: FONTS.regular, color: COLORS.textMuted },
+  moqHint: { fontSize: 11, fontFamily: FONTS.medium, color: COLORS.primary },
   // qty
   qtyWrap: { flexDirection: "row", alignItems: "center", gap: SPACING.md },
   qtyBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, borderColor: COLORS.border, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.warmWhite },
@@ -315,6 +412,13 @@ const styles = StyleSheet.create({
   qtyChipActive: { backgroundColor: COLORS.primary },
   qtyChipText: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.textSecondary },
   qtyChipTextActive: { color: COLORS.white },
+  // MOQ validation and tier
+  validationRow: { marginTop: SPACING.sm, backgroundColor: COLORS.errorBg, borderRadius: RADIUS.md, padding: SPACING.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  validationText: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.error, flex: 1 },
+  fixBtn: { backgroundColor: COLORS.white, paddingHorizontal: SPACING.sm, paddingVertical: 4, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.error, marginLeft: SPACING.sm },
+  fixBtnText: { fontSize: 11, fontFamily: FONTS.semibold, color: COLORS.error },
+  tierRow: { marginTop: SPACING.sm, backgroundColor: COLORS.successBg, borderRadius: RADIUS.md, padding: SPACING.sm },
+  tierText: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.success },
   // specs
   specTabs: { gap: SPACING.sm, paddingBottom: SPACING.sm },
   specTab: { paddingHorizontal: SPACING.md, paddingVertical: 7, borderRadius: RADIUS.pill, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white },
@@ -355,4 +459,21 @@ const styles = StyleSheet.create({
   cancelText: { fontSize: 15, fontFamily: FONTS.semibold, color: COLORS.textSecondary },
   addBtn: { flex: 2, height: 50, borderRadius: RADIUS.lg, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center" },
   addText: { fontSize: 15, fontFamily: FONTS.bold, color: COLORS.white },
+  // review sheet trigger
+  reviewBtn: {
+    height: 48,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.softOrange,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.lg,
+  },
+  reviewBtnText: {
+    fontSize: 14,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
+  },
 });

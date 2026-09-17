@@ -3,9 +3,18 @@
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate } from "@/lib/utils";
-import { Search, Warehouse, Loader2, Package, CheckCircle2, AlertCircle, Plus, Pencil, Trash2 } from "lucide-react";
+import { Package, CheckCircle2, AlertCircle, Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 import type { WarehousePackage } from "@/types";
-import Modal from "@/components/admin/Modal";
+import {
+  PageHeader,
+  PageGrid,
+  StatCard,
+  SearchInput,
+  FilterChips,
+  TableShell,
+  SidePanel,
+  EMPTY_IMAGES,
+} from "@/components/admin/ui";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
@@ -19,18 +28,12 @@ const statusOptions: WarehousePackage["status"][] = [
   "shipped",
 ];
 
+/* Aligned with the shared StatusBadge palette */
 const statusColors: Record<string, string> = {
-  received: "bg-blue-50 text-blue-600",
-  inspected: "bg-amber-50 text-amber-600",
-  consolidated: "bg-green-50 text-green-600",
-  shipped: "bg-purple-50 text-purple-600",
-};
-
-const statusIcons: Record<string, React.ElementType> = {
-  received: Package,
-  inspected: CheckCircle2,
-  consolidated: CheckCircle2,
-  shipped: Package,
+  received: "bg-violet-50 text-violet-700",
+  inspected: "bg-amber-50 text-amber-700",
+  consolidated: "bg-sky-50 text-sky-700",
+  shipped: "bg-sky-50 text-sky-700",
 };
 
 interface PackageFormState {
@@ -56,12 +59,12 @@ export default function WarehousePage() {
 
   const { success, error: toastError } = useToast();
 
-  // Receive modal
+  // Receive panel
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [receiveForm, setReceiveForm] = useState<PackageFormState>(emptyForm);
   const [receiveLoading, setReceiveLoading] = useState(false);
 
-  // Edit modal
+  // Edit panel
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState<PackageFormState>(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -244,169 +247,105 @@ export default function WarehousePage() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <p className="text-sm text-dark-400">Loading warehouse data...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-center">
-        <p className="text-sm text-red-600">{error}</p>
-        <button onClick={fetchPackages} className="mt-3 text-sm font-medium text-brand-500 hover:underline">
-          Retry
-        </button>
-      </div>
-    );
-  }
+  const filtersActive = search !== "" || activeTab !== "All";
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-dark-900">Warehouse</h1>
-          <p className="text-sm text-dark-400">Manage package intake, inspection, and consolidation</p>
-        </div>
-        <button
-          onClick={() => setReceiveOpen(true)}
-          className="flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Receive Package
-        </button>
-      </div>
-
-      {/* Stats cards */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-2xl bg-white border border-dark-100/50 p-5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-              <Package className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-dark-900">{tabCounts["Received"] || 0}</p>
-              <p className="text-xs text-dark-400">Pending Inspection</p>
-            </div>
-          </div>
-        </div>
-        <div className="rounded-2xl bg-white border border-dark-100/50 p-5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <AlertCircle className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-dark-900">{tabCounts["Inspected"] || 0}</p>
-              <p className="text-xs text-dark-400">Inspection Queue</p>
-            </div>
-          </div>
-        </div>
-        <div className="rounded-2xl bg-white border border-dark-100/50 p-5 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-50 text-green-600">
-              <CheckCircle2 className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-dark-900">{tabCounts["Consolidated"] || 0}</p>
-              <p className="text-xs text-dark-400">Ready to Ship</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-400" />
-        <input
-          type="text"
-          placeholder="Search by barcode, ID, or order..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-full rounded-xl border border-dark-100 bg-white pl-10 pr-4 text-sm text-dark-900 placeholder:text-dark-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-        />
-      </div>
-
-      {/* Status tabs */}
-      <div className="flex items-center gap-1 rounded-xl bg-dark-50 p-1 overflow-x-auto">
-        {statusTabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={cn(
-              "whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-all",
-              activeTab === tab
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-400 hover:text-dark-600"
-            )}
-          >
-            {tab}
-            <span className={cn(
-              "ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs",
-              activeTab === tab ? "bg-brand-500 text-white" : "bg-dark-200/50 text-dark-500"
-            )}>
-              {tabCounts[tab] || 0}
-            </span>
+    <div>
+      <PageHeader
+        title="Warehouse"
+        subtitle="Intake, inspection and consolidation at the Guangzhou hub"
+        actions={
+          <button onClick={() => setReceiveOpen(true)} className="admin-btn-primary">
+            <Plus className="h-4 w-4" />
+            Receive Package
           </button>
-        ))}
-      </div>
+        }
+      />
 
-      {/* Packages table */}
-      <div className="rounded-2xl bg-white border border-dark-100/50 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-dark-50 bg-dark-50/50">
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Barcode
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Weight
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Dimensions
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Photos
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Received
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Notes
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-dark-400">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-dark-50">
-              {filteredPackages.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center">
-                    <Warehouse className="mx-auto h-10 w-10 text-dark-300" />
-                    <p className="mt-2 text-sm font-medium text-dark-400">
-                      {search || activeTab !== "All" ? "No packages match your filters" : "No packages in warehouse yet"}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                filteredPackages.map((pkg) => {
-                  const StatusIcon = statusIcons[pkg.status] || Package;
-                  return (
-                    <tr key={pkg.id} className="hover:bg-dark-50/50 transition-colors">
-                      <td className="px-6 py-3.5">
-                        <span className="text-sm font-mono font-medium text-dark-900">{pkg.barcode}</span>
+      {!isLoading && !error && (
+        <PageGrid>
+          <StatCard
+            label="Pending Inspection"
+            value={tabCounts["Received"] || 0}
+            icon={Package}
+            tone="violet"
+            delay={0}
+          />
+          <StatCard
+            label="Inspection Queue"
+            value={tabCounts["Inspected"] || 0}
+            icon={AlertCircle}
+            tone="info"
+            delay={1}
+          />
+          <StatCard
+            label="Ready to Ship"
+            value={tabCounts["Consolidated"] || 0}
+            icon={CheckCircle2}
+            tone="success"
+            delay={2}
+          />
+        </PageGrid>
+      )}
+
+      <div className="space-y-4">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by barcode, ID, or order…"
+          className="w-full sm:max-w-sm"
+        />
+
+        <FilterChips<string>
+          options={statusTabs.map((tab) => ({
+            value: tab as string,
+            label: tab,
+            count: tabCounts[tab],
+          }))}
+          value={activeTab}
+          onChange={setActiveTab}
+        />
+
+        <TableShell
+          isLoading={isLoading}
+          error={error}
+          hasData={filteredPackages.length > 0}
+          filtered={filtersActive}
+          emptyImage={EMPTY_IMAGES.orders}
+          emptyTitle="Warehouse is clear"
+          emptySubtitle="Packages arrive here after purchase."
+          emptyAction={
+            <button onClick={() => setReceiveOpen(true)} className="admin-btn-primary">
+              <Plus className="h-4 w-4" />
+              Receive Package
+            </button>
+          }
+          errorRetry={fetchPackages}
+        >
+          <div className="overflow-hidden rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="admin-table w-full">
+                <thead>
+                  <tr>
+                    <th>Barcode</th>
+                    <th>Status</th>
+                    <th>Weight</th>
+                    <th>Dimensions</th>
+                    <th>Photos</th>
+                    <th>Received</th>
+                    <th>Notes</th>
+                    <th className="text-right!">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredPackages.map((pkg) => (
+                    <tr key={pkg.id}>
+                      <td>
+                        <span className="font-mono text-[13px] font-semibold text-dark-900">
+                          {pkg.barcode}
+                        </span>
                       </td>
-                      <td className="px-6 py-3.5">
+                      <td>
                         {statusUpdatingId === pkg.id ? (
                           <Loader2 className="h-4 w-4 animate-spin text-brand-500" />
                         ) : (
@@ -416,7 +355,7 @@ export default function WarehousePage() {
                               handleStatusChange(pkg, e.target.value as WarehousePackage["status"])
                             }
                             className={cn(
-                              "rounded-full cursor-pointer border-0 py-0.5 pl-2 pr-7 text-xs font-medium capitalize outline-none focus:ring-2 focus:ring-brand-500/30 transition-colors",
+                              "cursor-pointer rounded-full border-0 py-0.5 pl-2 pr-7 text-xs font-medium capitalize outline-none focus:ring-2 focus:ring-brand-500/30 transition-colors",
                               statusColors[pkg.status] || "bg-dark-50 text-dark-500"
                             )}
                           >
@@ -428,62 +367,83 @@ export default function WarehousePage() {
                           </select>
                         )}
                       </td>
-                      <td className="px-6 py-3.5">
-                        <span className="text-sm text-dark-600">{pkg.weight_kg} kg</span>
+                      <td>
+                        <span className="text-dark-600">{pkg.weight_kg} kg</span>
                       </td>
-                      <td className="px-6 py-3.5">
-                        <span className="text-sm text-dark-500">
+                      <td>
+                        <span className="text-dark-500">
                           {pkg.dimensions.length}×{pkg.dimensions.width}×{pkg.dimensions.height} cm
                         </span>
                       </td>
-                      <td className="px-6 py-3.5">
-                        <span className="text-sm text-dark-500">
+                      <td>
+                        <span className="text-dark-500">
                           {pkg.photos.length} photo{pkg.photos.length !== 1 ? "s" : ""}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5">
-                        <span className="text-sm text-dark-400">{formatDate(pkg.received_at ?? new Date().toISOString())}</span>
+                      <td>
+                        <span className="text-dark-900/45">
+                          {formatDate(pkg.received_at ?? new Date().toISOString())}
+                        </span>
                       </td>
-                      <td className="px-6 py-3.5">
-                        <span className="text-sm text-dark-400 truncate max-w-[150px] block">
+                      <td>
+                        <span className="block max-w-[150px] truncate text-dark-900/45">
                           {pkg.inspection_notes || "—"}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5">
-                        <div className="flex items-center justify-end gap-1.5">
+                      <td className="text-right">
+                        <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => openEdit(pkg)}
-                            className="rounded-lg p-1.5 text-dark-400 hover:bg-dark-50 hover:text-dark-700 transition-colors"
-                            title="Edit"
+                            className="rounded-lg p-1.5 text-dark-900/40 transition-all hover:bg-dark-900/5 hover:text-brand-600"
+                            aria-label="Edit package"
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => setDeleteTarget(pkg)}
-                            className="rounded-lg p-1.5 text-dark-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                            title="Delete"
+                            className="rounded-lg p-1.5 text-dark-900/40 transition-all hover:bg-error/10 hover:text-error"
+                            aria-label="Delete package"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {filteredPackages.length > 0 && (
+              <div className="border-t border-dark-900/[0.06] px-4 py-2.5 text-xs text-dark-900/40">
+                Showing {filteredPackages.length} of {packages.length} packages
+              </div>
+            )}
+          </div>
+        </TableShell>
       </div>
 
-      {/* Receive package modal */}
-      <Modal
+      {/* Receive package panel */}
+      <SidePanel
         open={receiveOpen}
         onClose={() => setReceiveOpen(false)}
         title="Receive Package"
-        confirmText="Receive"
-        confirmLoading={receiveLoading}
-        onConfirm={handleReceive}
+        subtitle="Register a package at intake"
+        footer={
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setReceiveOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleReceive}
+              disabled={receiveLoading}
+              className="admin-btn-primary"
+            >
+              {receiveLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+              Receive
+            </button>
+          </div>
+        }
       >
         <div className="space-y-4">
           <FormInput
@@ -522,16 +482,25 @@ export default function WarehousePage() {
             placeholder="Condition at intake, any damage, quantity check..."
           />
         </div>
-      </Modal>
+      </SidePanel>
 
-      {/* Edit package modal */}
-      <Modal
+      {/* Edit package panel */}
+      <SidePanel
         open={editOpen}
         onClose={() => setEditOpen(false)}
         title="Edit Package"
-        confirmText="Save"
-        confirmLoading={editLoading}
-        onConfirm={handleEdit}
+        subtitle={editingId ? `Package ${editForm.barcode || editingId}` : undefined}
+        footer={
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setEditOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button type="button" onClick={handleEdit} disabled={editLoading} className="admin-btn-primary">
+              {editLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save Changes
+            </button>
+          </div>
+        }
       >
         <div className="space-y-4">
           <FormInput
@@ -570,7 +539,7 @@ export default function WarehousePage() {
             placeholder="Inspection notes..."
           />
         </div>
-      </Modal>
+      </SidePanel>
 
       {/* Delete confirm dialog */}
       <ConfirmDialog

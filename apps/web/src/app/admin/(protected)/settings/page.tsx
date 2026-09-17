@@ -3,10 +3,12 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { Loader2, Save, RefreshCw } from "lucide-react";
+import { Loader2, Save, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { z } from "zod";
+import { AiSettingsTab } from "@/components/admin/AiSettingsTab";
+import { PageHeader, SectionCard, Field } from "@/components/admin/ui";
 
-const tabs = ["General", "Currency", "Shipping", "Staff"] as const;
+const tabs = ["General", "Currency", "Shipping", "Staff", "System Health", "AI Provider"] as const;
 
 const exchangeRateSchema = z.object({
   cny_to_usd: z.number().min(0.0001, "Rate must be positive"),
@@ -49,12 +51,99 @@ export default function SettingsPage() {
   const [staffList, setStaffList] = useState<{ id: string; email: string; full_name: string; role: string }[]>([]);
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
 
+  // AI Provider settings
+  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiBaseUrl, setAiBaseUrl] = useState("https://api.openai.com/v1");
+  const [aiModel, setAiModel] = useState("gpt-4o");
+  const [aiApiKeyMasked, setAiApiKeyMasked] = useState("");
+  const [aiIsConfigured, setAiIsConfigured] = useState(false);
+  const [isLoadingAi, setIsLoadingAi] = useState(false);
+  const [isTestingAi, setIsTestingAi] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // System Health
+  const [health, setHealth] = useState<{
+    latencyMs: number | null;
+    sessionEmail: string | null;
+    lastSignIn: string | null;
+    counts: Record<string, number | "err">;
+  }>({ latencyMs: null, sessionEmail: null, lastSignIn: null, counts: {} });
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
+  const runHealthCheck = async () => {
+    setIsCheckingHealth(true);
+    const t0 = performance.now();
+    try {
+      const countsRes = await Promise.all(
+        (
+          [
+            ["Orders", "admin_orders_view"],
+            ["Products", "source_products"],
+            ["Sourcing", "sourcing_requests"],
+            ["Shipments", "shipments"],
+            ["Payments", "payments"],
+            ["Customers", "admin_customers_view"],
+            ["Notifications", "notifications"],
+            ["Marketplaces", "marketplaces"],
+          ] as const
+        ).map(async ([label, table]) => {
+          const { count, error } = await supabase
+            .from(table)
+            .select("id", { count: "exact", head: true });
+          return [label, error ? ("err" as const) : (count ?? 0)] as const;
+        })
+      );
+      const session = await supabase.auth.getSession();
+      setHealth({
+        latencyMs: Math.round(performance.now() - t0),
+        sessionEmail: session.data.session?.user?.email ?? null,
+        lastSignIn: session.data.session?.user?.last_sign_in_at ?? null,
+        counts: Object.fromEntries(countsRes),
+      });
+    } finally {
+      setIsCheckingHealth(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "System Health") runHealthCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const handlePasswordChange = async () => {
+    if (newPassword.length < 8) {
+      setSaveMessage({ type: "error", text: "Password must be at least 8 characters." });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setSaveMessage({ type: "error", text: "Passwords do not match." });
+      return;
+    }
+    setIsUpdatingPassword(true);
+    setSaveMessage(null);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setIsUpdatingPassword(false);
+    if (error) {
+      setSaveMessage({ type: "error", text: `Password update failed: ${error.message}` });
+    } else {
+      setNewPassword("");
+      setConfirmPassword("");
+      setSaveMessage({ type: "success", text: "Admin password updated successfully." });
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "Currency") {
       fetchExchangeRate();
     }
     if (activeTab === "Staff") {
       fetchStaff();
+    }
+    if (activeTab === "AI Provider") {
+      fetchAiSettings();
     }
   }, [activeTab]);
 
@@ -93,6 +182,80 @@ export default function SettingsPage() {
       // Table may not exist yet
     } finally {
       setIsLoadingStaff(false);
+    }
+  };
+
+  const fetchAiSettings = async () => {
+    setIsLoadingAi(true);
+    setAiTestResult(null);
+    try {
+      const res = await fetch("/api/ai-settings", { method: "GET" });
+      if (!res.ok) throw new Error("fetch failed");
+      const data = await res.json();
+      if (data.ok) {
+        setAiBaseUrl(data.base_url || "");
+        setAiModel(data.model || "");
+        setAiApiKeyMasked(data.api_key_masked || "");
+        setAiIsConfigured(data.is_configured);
+      }
+    } catch {
+      // Settings row may not exist yet — show empty form
+    } finally {
+      setIsLoadingAi(false);
+    }
+  };
+
+  const handleTestAi = async () => {
+    setIsTestingAi(true);
+    setAiTestResult(null);
+    try {
+      const res = await fetch("/api/ai-test-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_url: aiBaseUrl, api_key: aiApiKey, model: aiModel }),
+      });
+      const data = await res.json();
+      setAiTestResult({
+        ok: data.ok,
+        message: data.ok ? (data.note || "Connection successful") : (data.detail || data.error || "Test failed"),
+      });
+    } catch (e) {
+      setAiTestResult({ ok: false, message: "Network error: " + (e as Error).message });
+    } finally {
+      setIsTestingAi(false);
+    }
+  };
+
+  const handleSaveAi = async () => {
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
+      const payload: Record<string, string> = {
+        api_key: aiApiKey || "UNCHANGED",
+        base_url: aiBaseUrl,
+        model: aiModel,
+        updated_by: "admin",
+      };
+      // If user didn't type a new key, send the masked value so the server knows to skip
+      if (!aiApiKey || aiApiKey.length < 10) {
+        payload.api_key = aiApiKeyMasked || "";
+      }
+      const res = await fetch("/api/ai-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSaveMessage({ type: "success", text: "AI provider settings saved" });
+        fetchAiSettings();
+      } else {
+        setSaveMessage({ type: "error", text: data.errors?.join(", ") || data.error || "Save failed" });
+      }
+    } catch (e) {
+      setSaveMessage({ type: "error", text: "Error: " + (e as Error).message });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -185,23 +348,19 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold text-dark-900">Settings</h1>
-        <p className="text-sm text-dark-400">Configure your Mission Control panel</p>
-      </div>
+      <PageHeader title="Settings" subtitle="Platform configuration and preferences" />
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 rounded-xl bg-dark-50 p-1">
+      <div className="flex flex-wrap items-center gap-1 rounded-full bg-dark-50 p-1.5">
         {tabs.map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={cn(
-              "rounded-lg px-4 py-2 text-sm font-medium transition-all",
+              "rounded-full px-4 py-2 text-sm font-semibold transition-all",
               activeTab === tab
-                ? "bg-white text-dark-900 shadow-sm"
-                : "text-dark-400 hover:text-dark-600"
+                ? "bg-dark-900 text-white shadow-sm"
+                : "text-dark-900/50 hover:bg-dark-900/5 hover:text-dark-900"
             )}
           >
             {tab}
@@ -213,235 +372,246 @@ export default function SettingsPage() {
       {saveMessage && (
         <div
           className={cn(
-            "rounded-xl px-4 py-3 text-sm font-medium",
+            "flex items-center gap-2.5 rounded-xl border px-4 py-3 text-sm font-medium",
             saveMessage.type === "success"
-              ? "bg-green-50 text-green-600 border border-green-200"
-              : "bg-red-50 text-red-600 border border-red-200"
+              ? "border-success/20 bg-success/5 text-success"
+              : "border-error/20 bg-error/5 text-error"
           )}
         >
-          {saveMessage.text}
+          {saveMessage.type === "success" ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+          ) : (
+            <AlertCircle className="h-4 w-4 shrink-0" />
+          )}
+          <span>{saveMessage.text}</span>
         </div>
       )}
 
       {/* General Settings */}
       {activeTab === "General" && (
-        <div className="rounded-2xl bg-white border border-dark-100/50 p-6 shadow-sm space-y-6">
-          <h2 className="text-lg font-bold text-dark-900">General Settings</h2>
-
-          <div className="grid gap-6 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-dark-700">Store Name</label>
+        <SectionCard
+          title="General Settings"
+          subtitle="Store identity and contact details"
+          bodyClassName="space-y-6"
+        >
+          <div className="grid gap-x-5 gap-y-1 sm:grid-cols-2">
+            <Field label="Store Name">
               <input
                 type="text"
                 value={storeName}
                 onChange={(e) => setStoreName(e.target.value)}
-                className="h-11 w-full rounded-xl border border-dark-200 bg-white px-4 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+                className="admin-input"
               />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-dark-700">Support Email</label>
+            </Field>
+            <Field label="Support Email">
               <input
                 type="email"
                 value={supportEmail}
                 onChange={(e) => setSupportEmail(e.target.value)}
-                className="h-11 w-full rounded-xl border border-dark-200 bg-white px-4 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+                className="admin-input"
               />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-dark-700">WhatsApp Number</label>
+            </Field>
+            <Field label="WhatsApp Number">
               <input
                 type="text"
                 value={whatsappNumber}
                 onChange={(e) => setWhatsappNumber(e.target.value)}
-                className="h-11 w-full rounded-xl border border-dark-200 bg-white px-4 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+                className="admin-input"
               />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-dark-700">Default Language</label>
+            </Field>
+            <Field label="Default Language">
               <select
                 value={defaultLanguage}
                 onChange={(e) => setDefaultLanguage(e.target.value)}
-                className="h-11 w-full rounded-xl border border-dark-200 bg-white px-4 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+                className="admin-input"
               >
                 <option value="en">English</option>
                 <option value="so">Somali</option>
                 <option value="zh">Chinese</option>
               </select>
-            </div>
+            </Field>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end border-t border-dark-900/[0.06] pt-4">
             <button
               onClick={handleSaveGeneral}
               disabled={isSaving}
-              className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-brand-600 transition-all disabled:opacity-50"
+              className="admin-btn-primary"
             >
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save Changes
             </button>
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* Currency Settings */}
       {activeTab === "Currency" && (
-        <div className="rounded-2xl bg-white border border-dark-100/50 p-6 shadow-sm space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-dark-900">Exchange Rates</h2>
+        <SectionCard
+          title="Exchange Rates"
+          subtitle="Manual rates override the live API rate"
+          bodyClassName="space-y-6"
+          actions={
             <button
               onClick={handleRefreshRate}
               disabled={isLoadingRates}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-dark-200 px-3 py-1.5 text-sm font-medium text-dark-600 hover:bg-dark-50 transition-all disabled:opacity-50"
+              className="admin-btn-outline h-9"
             >
               <RefreshCw className={cn("h-4 w-4", isLoadingRates && "animate-spin")} />
               Fetch Live Rate
             </button>
-          </div>
-
-          <div className="grid gap-6 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-dark-700">CNY → USD Rate</label>
+          }
+        >
+          <div className="grid gap-x-5 gap-y-1 sm:grid-cols-2">
+            <Field label="CNY → USD Rate" hint={`1 CNY = ${exchangeRates.cny_to_usd} USD`}>
               <input
                 type="number"
                 step="0.0001"
                 value={exchangeRates.cny_to_usd}
                 onChange={(e) => setExchangeRates((prev) => ({ ...prev, cny_to_usd: parseFloat(e.target.value) || 0 }))}
                 className={cn(
-                  "h-11 w-full rounded-xl border bg-white px-4 text-sm text-dark-900 focus:outline-none focus:ring-2 transition-all",
-                  rateErrors.cny_to_usd ? "border-red-300 focus:ring-red-500/30" : "border-dark-200 focus:ring-brand-500/30 focus:border-brand-500"
+                  "admin-input",
+                  rateErrors.cny_to_usd && "border-error/60 focus:border-error/60 focus:ring-error/15"
                 )}
               />
-              {rateErrors.cny_to_usd && <p className="mt-1 text-xs text-red-500">{rateErrors.cny_to_usd}</p>}
-              <p className="mt-1 text-xs text-dark-400">1 CNY = {exchangeRates.cny_to_usd} USD</p>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-dark-700">CNY → SOS Rate</label>
+              {rateErrors.cny_to_usd && (
+                <p className="mt-1 text-xs font-medium text-error">{rateErrors.cny_to_usd}</p>
+              )}
+            </Field>
+            <Field label="CNY → SOS Rate" hint={`1 CNY = ${exchangeRates.cny_to_sos} SOS`}>
               <input
                 type="number"
                 step="0.01"
                 value={exchangeRates.cny_to_sos}
                 onChange={(e) => setExchangeRates((prev) => ({ ...prev, cny_to_sos: parseFloat(e.target.value) || 0 }))}
                 className={cn(
-                  "h-11 w-full rounded-xl border bg-white px-4 text-sm text-dark-900 focus:outline-none focus:ring-2 transition-all",
-                  rateErrors.cny_to_sos ? "border-red-300 focus:ring-red-500/30" : "border-dark-200 focus:ring-brand-500/30 focus:border-brand-500"
+                  "admin-input",
+                  rateErrors.cny_to_sos && "border-error/60 focus:border-error/60 focus:ring-error/15"
                 )}
               />
-              {rateErrors.cny_to_sos && <p className="mt-1 text-xs text-red-500">{rateErrors.cny_to_sos}</p>}
-              <p className="mt-1 text-xs text-dark-400">1 CNY = {exchangeRates.cny_to_sos} SOS</p>
-            </div>
+              {rateErrors.cny_to_sos && (
+                <p className="mt-1 text-xs font-medium text-error">{rateErrors.cny_to_sos}</p>
+              )}
+            </Field>
           </div>
 
-          <div className="rounded-xl bg-dark-50 p-4">
-            <p className="text-sm text-dark-500">
-              <strong className="text-dark-700">Note:</strong> Exchange rates are used to calculate product prices and order totals.
+          <div className="rounded-xl border border-warning/20 bg-warning/5 p-4">
+            <p className="text-sm text-dark-900/60">
+              <strong className="font-semibold text-dark-900">Note:</strong> Exchange rates are used to calculate product prices and order totals.
               Manual rates override the API rate. Always verify rates before saving.
             </p>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end border-t border-dark-900/[0.06] pt-4">
             <button
               onClick={handleSaveCurrency}
               disabled={isSaving}
-              className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-brand-600 transition-all disabled:opacity-50"
+              className="admin-btn-primary"
             >
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               Save Rates
             </button>
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {/* Shipping Settings */}
       {activeTab === "Shipping" && (
-        <div className="rounded-2xl bg-white border border-dark-100/50 p-6 shadow-sm space-y-6">
-          <h2 className="text-lg font-bold text-dark-900">Shipping Methods</h2>
-
-          <div className="space-y-4">
-            {methods.map((method) => (
-              <div
-                key={method.id}
-                className="flex items-center justify-between rounded-xl border border-dark-100 p-4"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-500">
-                    <span className="text-lg font-bold">{method.id.charAt(0).toUpperCase()}</span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-dark-900">{method.label}</p>
-                    <p className="text-xs text-dark-400">Est. {method.estimatedDays}</p>
-                  </div>
+        <SectionCard
+          title="Shipping Methods"
+          subtitle="Base rates applied to orders at checkout"
+          bodyClassName="space-y-4"
+        >
+          {methods.map((method) => (
+            <div
+              key={method.id}
+              className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-dark-900/[0.06] p-4 transition-colors hover:border-dark-900/15"
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-sm font-bold uppercase text-brand-600">
+                  {method.id.charAt(0).toUpperCase()}
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <label className="mb-1 block text-xs text-dark-400">Rate ($/kg)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={method.baseRate}
-                      onChange={(e) => {
-                        setMethods((prev) =>
-                          prev.map((m) =>
-                            m.id === method.id ? { ...m, baseRate: parseFloat(e.target.value) || 0 } : m
-                          )
-                        );
-                      }}
-                      className="h-9 w-24 rounded-lg border border-dark-200 bg-white px-3 text-sm text-right text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-                    />
-                  </div>
-                  <div className="text-right">
-                    <label className="mb-1 block text-xs text-dark-400">Est. Days</label>
-                    <input
-                      type="text"
-                      value={method.estimatedDays}
-                      onChange={(e) => {
-                        setMethods((prev) =>
-                          prev.map((m) =>
-                            m.id === method.id ? { ...m, estimatedDays: e.target.value } : m
-                          )
-                        );
-                      }}
-                      className="h-9 w-28 rounded-lg border border-dark-200 bg-white px-3 text-sm text-right text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
-                    />
-                  </div>
+                <div>
+                  <p className="text-sm font-semibold text-dark-900">{method.label}</p>
+                  <p className="text-xs text-dark-900/40">
+                    {method.unit} · Est. {method.estimatedDays}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="flex items-center gap-4">
+                <div className="w-28">
+                  <label className="admin-label">Rate ($/kg)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={method.baseRate}
+                    onChange={(e) => {
+                      setMethods((prev) =>
+                        prev.map((m) =>
+                          m.id === method.id ? { ...m, baseRate: parseFloat(e.target.value) || 0 } : m
+                        )
+                      );
+                    }}
+                    className="admin-input h-9 px-3 text-right"
+                  />
+                </div>
+                <div className="w-32">
+                  <label className="admin-label">Est. Days</label>
+                  <input
+                    type="text"
+                    value={method.estimatedDays}
+                    onChange={(e) => {
+                      setMethods((prev) =>
+                        prev.map((m) =>
+                          m.id === method.id ? { ...m, estimatedDays: e.target.value } : m
+                        )
+                      );
+                    }}
+                    className="admin-input h-9 px-3 text-right"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </SectionCard>
       )}
 
       {/* Staff Settings */}
       {activeTab === "Staff" && (
-        <div className="rounded-2xl bg-white border border-dark-100/50 p-6 shadow-sm space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-dark-900">Staff Members</h2>
-          </div>
-
+        <SectionCard
+          title="Staff Members"
+          subtitle="Team members with dashboard access"
+          bodyClassName="space-y-4"
+        >
           {isLoadingStaff ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+            <div className="space-y-2.5">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="skeleton h-12 w-full" />
+              ))}
             </div>
           ) : staffList.length === 0 ? (
             <div className="rounded-xl bg-dark-50 p-8 text-center">
-              <p className="text-sm text-dark-400">No staff members found. Staff can be added through the Supabase dashboard or a future UI.</p>
+              <p className="text-sm text-dark-900/45">
+                No staff members found. Staff can be added through the Supabase dashboard or a future UI.
+              </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-x-auto rounded-xl border border-dark-900/[0.06]">
+              <table className="admin-table w-full">
                 <thead>
-                  <tr className="border-b border-dark-50">
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Name</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Email</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-dark-400">Role</th>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-dark-50">
+                <tbody>
                   {staffList.map((staff) => (
                     <tr key={staff.id}>
-                      <td className="px-4 py-3 text-sm font-medium text-dark-900">{staff.full_name}</td>
-                      <td className="px-4 py-3 text-sm text-dark-500">{staff.email}</td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-500 capitalize">
+                      <td className="font-medium">{staff.full_name}</td>
+                      <td className="text-dark-900/60">{staff.email}</td>
+                      <td>
+                        <span className="inline-flex items-center rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-600 capitalize">
                           {staff.role.replace(/_/g, " ")}
                         </span>
                       </td>
@@ -451,8 +621,127 @@ export default function SettingsPage() {
               </table>
             </div>
           )}
-        </div>
+        </SectionCard>
       )}
+
+      {/* System Health */}
+      {activeTab === "System Health" && (
+        <>
+          <SectionCard
+            title="System Health"
+            subtitle="Live database diagnostics and session status"
+            bodyClassName="space-y-5"
+            actions={
+              <button
+                onClick={runHealthCheck}
+                disabled={isCheckingHealth}
+                className="admin-btn-outline h-8 px-3 text-xs"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", isCheckingHealth && "animate-spin")} />
+                Re-run check
+              </button>
+            }
+          >
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-dark-900/[0.06] bg-warm-50 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-dark-900/40">DB Latency</p>
+                <p className="mt-1 text-xl font-bold text-dark-900">
+                  {health.latencyMs === null ? "—" : `${health.latencyMs} ms`}
+                </p>
+                <p className="mt-0.5 text-[11px] text-dark-900/40">
+                  {health.latencyMs !== null && health.latencyMs < 800 ? "Healthy" : health.latencyMs !== null ? "Slow — check network" : "Run a check"}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-dark-900/[0.06] bg-warm-50 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-dark-900/40">Signed in as</p>
+                <p className="mt-1 truncate text-sm font-bold text-dark-900">{health.sessionEmail ?? "—"}</p>
+                <p className="mt-0.5 text-[11px] text-dark-900/40">
+                  {health.lastSignIn ? `Last sign-in ${new Date(health.lastSignIn).toLocaleString()}` : ""}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-dark-900/[0.06] bg-warm-50 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-dark-900/40">Connection</p>
+                <p className="mt-1 inline-flex items-center gap-1.5 text-sm font-bold text-success">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Supabase reachable
+                </p>
+                <p className="mt-0.5 text-[11px] text-dark-900/40">8 tables head-counted</p>
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-dark-900/[0.06]">
+              <table className="admin-table w-full">
+                <thead>
+                  <tr>
+                    <th>Table</th>
+                    <th>Rows</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dark-900/[0.04]">
+                  {Object.entries(health.counts).length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="text-center text-sm text-dark-900/40">
+                        {isCheckingHealth ? "Counting rows…" : "No data — run a check."}
+                      </td>
+                    </tr>
+                  ) : (
+                    Object.entries(health.counts).map(([label, count]) => (
+                      <tr key={label}>
+                        <td className="font-medium text-dark-900">{label}</td>
+                        <td className={cn("font-bold", count === "err" ? "text-error" : "text-dark-900")}>
+                          {count === "err" ? "unavailable" : (count as number).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Security — Admin Password"
+            subtitle="Change the password for your admin account (Supabase Auth)"
+            bodyClassName="space-y-5"
+          >
+            <div className="grid gap-x-5 gap-y-1 sm:grid-cols-2">
+              <Field label="New Password">
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  className="admin-input"
+                  autoComplete="new-password"
+                />
+              </Field>
+              <Field label="Confirm New Password">
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat the new password"
+                  className="admin-input"
+                  autoComplete="new-password"
+                />
+              </Field>
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={handlePasswordChange}
+                disabled={isUpdatingPassword || !newPassword || !confirmPassword}
+                className="admin-btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isUpdatingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Update password
+              </button>
+            </div>
+          </SectionCard>
+        </>
+      )}
+
+      {/* AI Provider Settings */}
+      {activeTab === "AI Provider" && <AiSettingsTab />}
     </div>
   );
 }

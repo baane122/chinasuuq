@@ -1,5 +1,7 @@
 "use client";
 
+import { AlertTriangle, RotateCcw, LayoutDashboard } from "lucide-react";
+
 export default function AdminError({
   error,
   reset,
@@ -8,34 +10,29 @@ export default function AdminError({
   reset: () => void;
 }) {
   return (
-    <div className="flex h-full items-center justify-center p-6">
-      <div className="max-w-md text-center">
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-red-50">
-          <span className="text-3xl">⚠️</span>
+    <div className="flex min-h-[60vh] items-center justify-center p-6">
+      <div className="w-full max-w-md rounded-2xl border border-dark-900/[0.06] bg-white p-8 text-center shadow-sm">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-500">
+          <AlertTriangle className="h-7 w-7" />
         </div>
-        <h2 className="text-2xl font-bold text-dark-900 mb-2">
-          Dashboard Error
+        <h2 className="mt-5 text-xl font-bold tracking-tight text-dark-900">
+          Something went wrong
         </h2>
-        <p className="text-sm text-dark-400 mb-1">
-          {error.message || "An unexpected error occurred."}
+        <p className="mt-1.5 text-sm text-dark-900/50">
+          {error.message || "An unexpected error occurred while loading Mission Control."}
         </p>
         {error.digest && (
-          <p className="text-xs text-dark-300 mb-6 font-mono">
-            Error ID: {error.digest}
-          </p>
+          <p className="mt-2 font-mono text-[11px] text-dark-900/35">Error ID: {error.digest}</p>
         )}
-        <div className="flex items-center justify-center gap-3">
+        <div className="mt-7 flex items-center justify-center gap-3">
           <button
             onClick={() => reset()}
-            className="px-5 py-2.5 rounded-xl bg-brand-500 text-white text-sm font-semibold hover:bg-brand-600 transition-all"
+            className="admin-btn-primary px-5"
           >
-            Retry
+            <RotateCcw className="h-4 w-4" /> Retry
           </button>
-          <a
-            href="/admin"
-            className="px-5 py-2.5 rounded-xl border border-dark-200 text-dark-600 text-sm font-semibold hover:bg-dark-50 transition-all"
-          >
-            Dashboard
+          <a href="/admin" className="admin-btn-outline px-5">
+            <LayoutDashboard className="h-4 w-4" /> Dashboard
           </a>
         </div>
       </div>

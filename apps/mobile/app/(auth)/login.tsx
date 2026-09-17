@@ -9,6 +9,7 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  ScrollView,
 } from "react-native";
 import { useState, useCallback } from "react";
 import { useRouter, Link } from "expo-router";
@@ -16,6 +17,9 @@ import { useAuthStore } from "@/store/auth";
 import { COLORS, SPACING, RADIUS } from "@/lib/theme";
 import * as Haptics from "expo-haptics";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { Image } from "expo-image";
+
+const LOGO = require("../../assets/images/logo.jpg");
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -49,13 +53,14 @@ export default function LoginScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardView}
       >
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.card}>
-          <View style={styles.logoWrap}>
-            <Text style={styles.logo}>C</Text>
-          </View>
+          <Image source={require("../../assets/images/logo.jpg")} style={styles.authLogo} resizeMode="contain" />
           <Text style={styles.brand}>ChinaSuuq</Text>
-          <Text style={styles.sub}>Mission Control</Text>
-          <Text style={styles.title}>Sign In</Text>
+          <Text style={styles.sub}>Your trusted bridge from China to Somalia</Text>
+          <View style={styles.welcomeStrip}><Text style={styles.welcomeText}>Shop smarter · ship confidently</Text></View>
+          <Text style={styles.title}>Welcome back</Text>
+          <Text style={styles.helper}>Sign in to track orders, save products and checkout faster.</Text>
 
           {error ? (
             <View style={styles.errorBanner}>
@@ -123,6 +128,7 @@ export default function LoginScreen() {
             <Text style={styles.skipText}>Skip — Continue as Guest</Text>
           </TouchableOpacity>
         </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
     </ErrorBoundary>
@@ -131,13 +137,19 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.darkSurface },
-  keyboardView: { flex: 1, justifyContent: "center", alignItems: "center", padding: SPACING.xl },
-  card: { backgroundColor: COLORS.white, borderRadius: RADIUS.xl, padding: SPACING.xxxl, width: "100%", alignItems: "center" },
+  keyboardView: { flex: 1, paddingHorizontal: SPACING.xl },
+  scrollContent: { flexGrow: 1, justifyContent: "center", paddingVertical: SPACING.xl },
+  card: { backgroundColor: COLORS.white, borderRadius: RADIUS.xxl, padding: SPACING.xl, width: "100%", alignItems: "center", shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 8 },
+  brandOrb: { width: 76, height: 76, borderRadius: 26, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", marginBottom: SPACING.md, transform: [{ rotate: "-6deg" }] },
   logoWrap: { width: 64, height: 64, borderRadius: 32, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", marginBottom: SPACING.md },
+  authLogo: { width: 110, height: 96, borderRadius: RADIUS.xl, marginBottom: SPACING.md },
   logo: { fontSize: 28, fontWeight: "800", color: COLORS.white },
   brand: { fontSize: 24, fontWeight: "800", color: COLORS.black },
-  sub: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.xl },
-  title: { fontSize: 22, fontWeight: "700", color: COLORS.black, marginBottom: SPACING.lg, alignSelf: "flex-start" },
+  sub: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.md, textAlign: "center" },
+  welcomeStrip: { backgroundColor: COLORS.softOrange, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderRadius: RADIUS.pill, marginBottom: SPACING.xl },
+  welcomeText: { color: COLORS.primaryDark, fontSize: 12, fontWeight: "700" },
+  title: { fontSize: 24, fontWeight: "800", color: COLORS.black, marginBottom: SPACING.xs, alignSelf: "flex-start" },
+  helper: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.lg, alignSelf: "flex-start", lineHeight: 19 },
   input: { width: "100%", height: 52, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.lg, fontSize: 15, marginBottom: SPACING.md, color: COLORS.black, backgroundColor: COLORS.white },
   btn: { width: "100%", height: 52, borderRadius: RADIUS.lg, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", marginTop: SPACING.md },
   btnDisabled: { opacity: 0.6 },

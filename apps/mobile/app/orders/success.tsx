@@ -22,6 +22,9 @@ import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { whatsappOrderLink } from "@/lib/theme";
 import { Linking } from "react-native";
+import { Image } from "expo-image";
+
+const SUCCESS_IMG = require("../../assets/screens/order_success.png");
 import { useCartStore } from "@/store/cart";
 import { getOrders } from "@/db";
 import type { LocalOrder } from "@/db";
@@ -67,7 +70,7 @@ export default function OrderSuccessScreen() {
             { transform: [{ scale }], opacity },
           ]}
         >
-          <CheckCircle2 size={64} color={COLORS.success} strokeWidth={2.5} />
+          <Image source={SUCCESS_IMG} style={styles.successImage} contentFit="contain" />
         </Animated.View>
 
         <Text style={styles.title}>
@@ -225,15 +228,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.warmWhite },
   scroll: { padding: SPACING.xl, alignItems: "center", paddingBottom: SPACING.xxxl * 2 },
   successCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 140,
+    height: 140,
+    borderRadius: RADIUS.xxl,
     backgroundColor: COLORS.successBg,
     alignItems: "center",
     justifyContent: "center",
     marginTop: SPACING.xl,
     marginBottom: SPACING.lg,
+    overflow: "hidden",
   },
+  successImage: { width: 120, height: 120 },
   title: {
     fontSize: 28,
     fontFamily: FONTS.bold,

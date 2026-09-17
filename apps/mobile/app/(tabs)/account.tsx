@@ -22,10 +22,13 @@ import {
   Bell,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
 import { isBackendOnline, getOrders, getFavorites } from "@/db/index";
+
+const ACCOUNT_IMG = require("../../assets/screens/account_hero.png");
 
 type MenuItem = {
   id: string;
@@ -164,7 +167,7 @@ export default function AccountScreen() {
       icon: <Settings size={20} color={COLORS.primary} />,
       label: t("profile.settings"),
       subtitle: locale === "en" ? "Language & shipping preference" : "Luqadda & doorashada rarka",
-      route: "/settings/index",
+      route: "/settings",
     },
     {
       id: "about",
@@ -230,6 +233,9 @@ export default function AccountScreen() {
         style={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        {/* Hero banner */}
+        <Image source={ACCOUNT_IMG} style={styles.heroImg} contentFit="contain" transition={150} />
+
         {/* Profile Card — guest or logged-in */}
         {!user ? (
           <View style={styles.guestCard}>
@@ -389,6 +395,14 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
+  },
+
+  // Hero banner
+  heroImg: {
+    width: "100%",
+    height: 150,
+    alignSelf: "center",
+    marginTop: SPACING.sm,
   },
 
   // Guest sign-in card
