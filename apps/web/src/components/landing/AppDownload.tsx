@@ -84,8 +84,19 @@ export default function AppDownload() {
                 transition={{ delay: 0.35 }}
                 className="flex flex-wrap gap-3 justify-center lg:justify-start mb-6"
               >
-                {/* Google Play */}
-                <a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20download%20the%20app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-3 bg-dark-900 hover:bg-dark-800 text-white px-5 py-3 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-dark-900/30">
+                {/* Direct APK download */}
+                <a href="/app/chinasuuq.apk" download="chinasuuq.apk" className="inline-flex items-center gap-3 bg-brand-500 hover:bg-brand-600 text-white px-5 py-3 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-brand-500/30">
+                  <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none">
+                    <path d="M3 20.5V3.5C3 2.91 3.34 2.39 3.84 2.15L13.69 12L3.84 21.85C3.34 21.6 3 21.09 3 20.5ZM16.81 15.12L6.05 21.34L14.54 12.85L16.81 15.12ZM20.16 10.81C20.5 11.08 20.75 11.5 20.75 12C20.75 12.5 20.5 12.92 20.16 13.19L17.89 14.5L15.39 12L17.89 9.5L20.16 10.81ZM6.05 2.66L16.81 8.88L14.54 11.15L6.05 2.66Z" fill="currentColor"/>
+                  </svg>
+                  <div className="text-left">
+                    <div className="text-[10px] text-white/70 leading-tight">DIRECT DOWNLOAD</div>
+                    <div className="text-sm font-semibold leading-tight">Android APK</div>
+                  </div>
+                </a>
+
+                {/* Google Play (coming) */}
+                <a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20download%20the%20app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-3 bg-dark-900 hover:bg-dark-800 text-white px-5 py-3 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-dark-900/30 opacity-80">
                   <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none">
                     <path d="M3 20.5V3.5C3 2.91 3.34 2.39 3.84 2.15L13.69 12L3.84 21.85C3.34 21.6 3 21.09 3 20.5ZM16.81 15.12L6.05 21.34L14.54 12.85L16.81 15.12ZM20.16 10.81C20.5 11.08 20.75 11.5 20.75 12C20.75 12.5 20.5 12.92 20.16 13.19L17.89 14.5L15.39 12L17.89 9.5L20.16 10.81ZM6.05 2.66L16.81 8.88L14.54 11.15L6.05 2.66Z" fill="currentColor"/>
                   </svg>
