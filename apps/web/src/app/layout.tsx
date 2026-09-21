@@ -33,7 +33,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co https://*.whatsapp.com https://wa.me https://*.lk888.ai https://*.googleusercontent.com https://*.googleapis.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co wss://*.supabase.co https://*.vercel-scripts.com https://*.vercel-insights.com https://*.lk888.ai https://translate.googleapis.com",
+  "connect-src 'self' https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co wss://*.supabase.co https://*.vercel-scripts.com https://*.vercel-insights.com https://*.lk888.ai https://translate.googleapis.com https://api.exchangerate-api.com",
   "frame-src 'self' https://m.1688.com https://www.1688.com https://m.taobao.com https://www.taobao.com https://m.yiwugo.com https://www.yiwugo.com https://m.alibaba.com https://www.alibaba.com https://m.chinagoods.com https://www.chinagoods.com https://m.jd.com https://www.jd.com",
   "form-action 'self' https://wa.me https://*.whatsapp.com",
   "base-uri 'self'",

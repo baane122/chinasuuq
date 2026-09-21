@@ -86,3 +86,7 @@ supabase/.status
 plans/
 screenshots/
 
+# local asset-generation tooling (contains no repo history)
+scripts/gen_image.py
+scripts/gen_admin_assets.sh
+scripts/gen_all_assets.sh

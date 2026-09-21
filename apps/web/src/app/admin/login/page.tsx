@@ -69,7 +69,9 @@ export default function AdminLoginPage() {
         const msg = (authError.message || "").toLowerCase();
         if (msg.includes("database") || msg.includes("schema") || msg.includes("unexpected") || msg.includes("network")) {
           setErrorType("backend");
-          setError("The authentication service is having issues (backend error). You can use the recovery code to access Mission Control.");
+          setError(isDevBuild
+            ? "The authentication service is having issues (backend error). You can use the recovery code to access Mission Control."
+            : "The authentication service is having issues. Please try again shortly.");
         } else if (msg.includes("invalid login credentials") || msg.includes("invalid email")) {
           setErrorType("credentials");
           setError("Invalid email or password. Please try again.");
@@ -90,7 +92,9 @@ export default function AdminLoginPage() {
       }
     } catch (err: any) {
       setErrorType("network");
-      setError("Could not reach the authentication service. Use the recovery code to access Mission Control.");
+      setError(isDevBuild
+        ? "Could not reach the authentication service. Use the recovery code to access Mission Control."
+        : "Could not reach the authentication service. Please try again shortly.");
     } finally {
       setIsLoading(false);
     }

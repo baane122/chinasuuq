@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase, edgeFetch } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { Loader2, Save, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { z } from "zod";
@@ -51,15 +51,7 @@ export default function SettingsPage() {
   const [staffList, setStaffList] = useState<{ id: string; email: string; full_name: string; role: string }[]>([]);
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
 
-  // AI Provider settings
-  const [aiApiKey, setAiApiKey] = useState("");
-  const [aiBaseUrl, setAiBaseUrl] = useState("https://api.openai.com/v1");
-  const [aiModel, setAiModel] = useState("gpt-4o");
-  const [aiApiKeyMasked, setAiApiKeyMasked] = useState("");
-  const [aiIsConfigured, setAiIsConfigured] = useState(false);
-  const [isLoadingAi, setIsLoadingAi] = useState(false);
-  const [isTestingAi, setIsTestingAi] = useState(false);
-  const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // AI Provider settings are managed by <AiSettingsTab /> (edge functions).
 
   // System Health
   const [health, setHealth] = useState<{
@@ -142,9 +134,6 @@ export default function SettingsPage() {
     if (activeTab === "Staff") {
       fetchStaff();
     }
-    if (activeTab === "AI Provider") {
-      fetchAiSettings();
-    }
   }, [activeTab]);
 
   const fetchExchangeRate = async () => {
@@ -182,90 +171,6 @@ export default function SettingsPage() {
       // Table may not exist yet
     } finally {
       setIsLoadingStaff(false);
-    }
-  };
-
-  const fetchAiSettings = async () => {
-    setIsLoadingAi(true);
-    setAiTestResult(null);
-    try {
-      // Supabase Edge Function (the static export has no /api server routes).
-      const data = await edgeFetch<{
-        ok: boolean;
-        base_url?: string;
-        model?: string;
-        api_key_masked?: string;
-        is_configured?: boolean;
-      }>("ai-settings", { method: "GET" });
-      if (data.ok) {
-        setAiBaseUrl(data.base_url || "");
-        setAiModel(data.model || "");
-        setAiApiKeyMasked(data.api_key_masked || "");
-        setAiIsConfigured(Boolean(data.is_configured));
-      }
-    } catch {
-      // Settings row may not exist yet — show empty form
-    } finally {
-      setIsLoadingAi(false);
-    }
-  };
-
-  const handleTestAi = async () => {
-    setIsTestingAi(true);
-    setAiTestResult(null);
-    try {
-      const data = await edgeFetch<{
-        ok: boolean;
-        note?: string;
-        detail?: string;
-        error?: string;
-      }>("ai-test-connection", {
-        method: "POST",
-        body: { base_url: aiBaseUrl, api_key: aiApiKey, model: aiModel },
-      });
-      setAiTestResult({
-        ok: data.ok,
-        message: data.ok ? (data.note || "Connection successful") : (data.detail || data.error || "Test failed"),
-      });
-    } catch (e) {
-      setAiTestResult({ ok: false, message: "Network error: " + (e as Error).message });
-    } finally {
-      setIsTestingAi(false);
-    }
-  };
-
-  const handleSaveAi = async () => {
-    setIsSaving(true);
-    setSaveMessage(null);
-    try {
-      const payload: Record<string, string> = {
-        api_key: aiApiKey || "UNCHANGED",
-        base_url: aiBaseUrl,
-        model: aiModel,
-        updated_by: "admin",
-      };
-      // If user didn't type a new key, send the masked value so the server knows to skip
-      if (!aiApiKey || aiApiKey.length < 10) {
-        payload.api_key = aiApiKeyMasked || "";
-      }
-      const data = await edgeFetch<{
-        ok: boolean;
-        errors?: string[];
-        error?: string;
-      }>("ai-settings", {
-        method: "POST",
-        body: payload,
-      });
-      if (data.ok) {
-        setSaveMessage({ type: "success", text: "AI provider settings saved" });
-        fetchAiSettings();
-      } else {
-        setSaveMessage({ type: "error", text: data.errors?.join(", ") || data.error || "Save failed" });
-      }
-    } catch (e) {
-      setSaveMessage({ type: "error", text: "Error: " + (e as Error).message });
-    } finally {
-      setIsSaving(false);
     }
   };
 

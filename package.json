@@ -10,7 +10,7 @@
     "dev:web": "cd apps/web && npm run dev",
     "dev:mobile": "cd apps/mobile && npx expo start",
     "build": "cd apps/web && npm run build",
-    "build:web": "cd apps/web && npm run build",
+    "typecheck": "cd apps/web && npx tsc --noEmit",
     "lint": "turbo lint",
     "clean": "turbo clean"
   },

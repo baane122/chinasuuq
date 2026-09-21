@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, edgeFetch } from "@/lib/supabase";
 import { cn, formatCNY, formatUSD, formatDate } from "@/lib/utils";
 import {
   Package, Loader2, ExternalLink, Edit3, Trash2, Plus,
@@ -118,6 +118,9 @@ export default function ProductsPage() {
   const [modalLoading, setModalLoading] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState<ProductFormData>(emptyFormData);
+  const [aiExtractUrl, setAiExtractUrl] = useState("");
+  const [aiExtractBusy, setAiExtractBusy] = useState(false);
+  const [aiExtractMsg, setAiExtractMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Delete
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -229,7 +232,81 @@ export default function ProductsPage() {
   const openAddModal = () => {
     setEditingProduct(null);
     setFormData(emptyFormData);
+    setAiExtractMsg(null);
     setModalOpen(true);
+  };
+
+  // AI Extract: pull product fields out of a marketplace URL / listing text
+  // through the ai-extraction edge function (staff-gated, schema-validated).
+  const handleAiExtract = async () => {
+    const content = aiExtractUrl.trim();
+    if (!content) {
+      setAiExtractMsg({ ok: false, text: "Paste a marketplace URL or listing text first." });
+      return;
+    }
+    setAiExtractBusy(true);
+    setAiExtractMsg(null);
+    try {
+      const res = await edgeFetch<{
+        ok: boolean;
+        data?: Record<string, string | number | null>;
+        missing?: string[];
+        error?: string;
+        blocked?: boolean;
+        reason?: string;
+      }>("ai-extraction", {
+        method: "POST",
+        body: {
+          content,
+          schema: {
+            title_english: "string",
+            title_original: "string",
+            category: "string",
+            price_cny_min: "number",
+            price_cny_max: "number",
+            moq: "number",
+            description_english: "string",
+          },
+        },
+      });
+      if (!res.ok || !res.data) {
+        const why = res.reason
+          ? `Blocked: ${res.reason}`
+          : res.error === "ai_provider_not_configured"
+            ? "AI provider not configured — set it up in Settings → AI Provider."
+            : (res.error || "Extraction failed");
+        setAiExtractMsg({ ok: false, text: why });
+        return;
+      }
+      const d = res.data;
+      const url = content.startsWith("http") ? content : "";
+      const domain = url.toLowerCase();
+      const marketplace =
+        domain.includes("1688") ? "1688" :
+        domain.includes("taobao") ? "taobao" :
+        domain.includes("yiwugo") ? "yiwugo" :
+        domain.includes("alibaba") ? "alibaba" :
+        domain.includes("chinagoods") ? "chinagoods" :
+        domain.includes("jd.") ? "jd" : null;
+      setFormData((prev) => ({
+        ...prev,
+        title_english: (d.title_english as string) || prev.title_english,
+        title_original: (d.title_original as string) || prev.title_original,
+        category: (d.category as string) || prev.category,
+        price_cny_min: d.price_cny_min != null ? String(d.price_cny_min) : prev.price_cny_min,
+        price_cny_max: d.price_cny_max != null ? String(d.price_cny_max) : prev.price_cny_max,
+        moq: d.moq != null ? String(d.moq) : prev.moq,
+        description_english: (d.description_english as string) || prev.description_english,
+        source_url: url || prev.source_url,
+        marketplace: marketplace ?? prev.marketplace,
+      }));
+      const missing = res.missing?.length ? ` (not found: ${res.missing.join(", ")})` : "";
+      setAiExtractMsg({ ok: true, text: `Extracted into the form${missing}. Review and save.` });
+    } catch (e) {
+      setAiExtractMsg({ ok: false, text: `Extraction failed: ${(e as Error).message}` });
+    } finally {
+      setAiExtractBusy(false);
+    }
   };
 
   const openEditModal = (product: Product) => {
@@ -863,6 +940,41 @@ export default function ProductsPage() {
         }
       >
         <div className="space-y-4">
+          {/* AI Extract — marketplace listing → form fields (staff-gated) */}
+          {!editingProduct && (
+            <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-brand-700">
+                <TrendingUp className="h-4 w-4" />
+                AI Extract from listing
+              </div>
+              <p className="text-xs text-dark-500">
+                Paste a marketplace product URL (or the listing text) — AI fills the fields below for review.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  value={aiExtractUrl}
+                  onChange={(e) => setAiExtractUrl(e.target.value)}
+                  placeholder="https://detail.1688.com/offer/..."
+                  className="admin-input flex-1"
+                  disabled={aiExtractBusy}
+                />
+                <button
+                  onClick={handleAiExtract}
+                  disabled={aiExtractBusy || !aiExtractUrl.trim()}
+                  className="admin-btn-primary whitespace-nowrap"
+                >
+                  {aiExtractBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Extract
+                </button>
+              </div>
+              {aiExtractMsg && (
+                <p className={cn("text-xs", aiExtractMsg.ok ? "text-emerald-600" : "text-red-600")}>
+                  {aiExtractMsg.text}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Titles section */}
           <div className="rounded-xl bg-dark-50/50 p-4 space-y-4">
             <p className="text-xs font-semibold uppercase tracking-wider text-dark-400">Product Titles</p>

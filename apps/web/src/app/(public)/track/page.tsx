@@ -110,30 +110,67 @@ export default function TrackPage() {
     setNotFound(false);
     setOrder(null);
     try {
-      // 1) exact / case-insensitive order_number (CS-2026-00125, CSQ-2024-0001…)
-      let res = await supabase
-        .from("orders")
-        .select("id, order_number, status, total, shipping_method, payment_status, created_at, updated_at, order_items(quantity)")
-        .ilike("order_number", ref)
-        .maybeSingle();
+      // The live orders schema uses `reference` + `total_usd` (20260813
+      // migration); older generations used `order_number` + `total`. Try the
+      // live shape first and fall back so both schema generations track.
+      const COLS_LIVE = "id, reference, status, total_usd, shipping_method, payment_status, created_at, updated_at";
+      const COLS_LEGACY = "id, order_number, status, total, shipping_method, payment_status, created_at, updated_at";
 
-      // 2) raw UUID fallback (app deep-links share the raw id)
-      if (!res.data && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
-        res = await supabase
+      type TrackedRow = {
+        id: string;
+        reference?: string;
+        order_number?: string;
+        status: string;
+        total_usd?: number;
+        total?: number;
+        shipping_method: string;
+        payment_status: string;
+        created_at: string;
+        updated_at: string;
+      };
+
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
+      let row: TrackedRow | null = null;
+
+      const attempt = async (cols: string, col: "reference" | "order_number") => {
+        const { data, error } = await supabase
           .from("orders")
-          .select("id, order_number, status, total, shipping_method, payment_status, created_at, updated_at, order_items(quantity)")
-          .eq("id", ref)
+          .select(cols)
+          .ilike(col, ref)
           .maybeSingle();
+        if (error) return null; // wrong schema for these columns
+        return (data as TrackedRow | null) ?? null;
+      };
+
+      row =
+        (await attempt(COLS_LIVE, "reference")) ??
+        (await attempt(COLS_LEGACY, "order_number"));
+
+      // Raw UUID fallback (app deep-links share the raw id)
+      if (!row && isUuid) {
+        const byId = async (cols: string) => {
+          const { data, error } = await supabase
+            .from("orders")
+            .select(cols)
+            .eq("id", ref)
+            .maybeSingle();
+          if (error) return null;
+          return (data as TrackedRow | null) ?? null;
+        };
+        row = (await byId(COLS_LIVE)) ?? (await byId(COLS_LEGACY));
       }
 
-      if (res.error) throw res.error;
-      const row = res.data as
-        | (Omit<TrackedOrder, "items_count"> & { order_items: { quantity: number }[] | null })
-        | null;
       if (row) {
         setOrder({
-          ...row,
-          items_count: (row.order_items || []).reduce((s, i) => s + (i.quantity || 0), 0),
+          id: row.id,
+          order_number: row.reference ?? row.order_number ?? "",
+          status: row.status,
+          total: row.total_usd ?? row.total ?? 0,
+          shipping_method: row.shipping_method,
+          payment_status: row.payment_status,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+          items_count: 0,
         });
         setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
       } else {

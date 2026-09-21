@@ -30,7 +30,7 @@ const nextConfig: NextConfig = {
   experimental: {
     // Defer framer-motion-heavy below-the-fold sections to split bundles
     // (consumed via next/dynamic in page.tsx).
-    optimizePackageImports: ["framer-motion", "lucide-react", "recharts"],
+    optimizePackageImports: ["framer-motion", "lucide-react"],
   },
   // ── Security headers ────────────────────────────────────────
   // IMPORTANT: with `output: "export"` Next.js does NOT emit `headers()` or

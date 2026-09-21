@@ -124,6 +124,21 @@ export default function ProtectedLayout({
           router.replace("/admin/login");
           return;
         }
+        // Role gate: a valid customer/supplier session must NOT reach the
+        // admin shell. RLS still protects the data; this keeps non-staff out
+        // of the UI entirely.
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .maybeSingle();
+        const role = (profile?.role as string | undefined) ?? "";
+        // The live user_role enum is (customer, staff, super_admin).
+        if (!["staff", "super_admin"].includes(role)) {
+          await supabase.auth.signOut();
+          handleUnauthorized();
+          return;
+        }
         setIsAuthenticated(true);
         setAdminName(
           session.user?.user_metadata?.full_name ||

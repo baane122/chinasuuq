@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Deno Edge Functions are validated by `supabase functions`/deploy, not
+    // by the Node ESLint toolchain (Deno-style imports would false-positive).
+    "supabase/functions/**",
   ]),
 ]);
 

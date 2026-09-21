@@ -35,8 +35,12 @@ $$;
 grant execute on function public.get_shared_marketplace_account(text) to anon, authenticated;
 
 -- 1$ Dollar Store shared login (mobile pre-login in the WebView).
+-- Idempotent: skip when a shared dollarstore account already exists.
 insert into public.marketplace_accounts
   (marketplace_type, account_label, username, password_encrypted, is_shared, is_active)
-values
-  ('dollarstore', 'Shared 1$ Dollar Store login', '15277078888', 'a123456', true, true)
-on conflict do nothing;
+select
+  'dollarstore', 'Shared 1$ Dollar Store login', '15277078888', 'a123456', true, true
+where not exists (
+  select 1 from public.marketplace_accounts
+  where marketplace_type = 'dollarstore' and is_shared = true
+);

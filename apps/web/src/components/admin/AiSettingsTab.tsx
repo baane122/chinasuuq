@@ -42,8 +42,6 @@ export function AiSettingsTab() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [saveResult, setSaveResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  useEffect(() => { load(); }, []);
-
   const load = async () => {
     setIsLoading(true);
     try {
@@ -57,6 +55,8 @@ export function AiSettingsTab() {
     } catch { /* not configured */ }
     finally { setIsLoading(false); }
   };
+
+  useEffect(() => { load(); }, []);
 
   const testConnection = async () => {
     setIsTesting(true);

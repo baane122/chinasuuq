@@ -30,6 +30,7 @@ import StepIndicator from "@/components/checkout/StepIndicator";
 import PaymentMethodCard from "@/components/checkout/PaymentMethodCard";
 import { formatUSD, generateOrderRef } from "@/lib/utils";
 import { createOrder } from "@/db";
+import { validateCartRemote } from "@/lib/cartValidateRemote";
 import { SmartRoute } from "@/components/orders/SmartRoute";
 import { calculateShipping, getShippingEstimates } from "@/lib/shipping";
 
@@ -135,6 +136,17 @@ export default function CheckoutScreen() {
 
   const handlePlaceOrder = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // Server-authoritative MOQ/stock gate (best-effort: offline never blocks).
+    const validation = await validateCartRemote(
+      cartItems.map((it) => ({
+        productId: it.product_id ?? it.product?.id ?? it.id,
+        quantity: it.quantity,
+      }))
+    );
+    if (validation.blocking) {
+      Alert.alert("Cart needs review", validation.messages.join("\n"));
+      return;
+    }
     let orderId = `ord-${Date.now()}`;
     try {
       const created = await createOrder({

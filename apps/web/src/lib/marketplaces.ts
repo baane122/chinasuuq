@@ -118,6 +118,22 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     highlights: ["100% authentic electronics", "Warranty-backed brands", "Fast domestic shipping"],
     bestFor: "Phones, laptops & appliances",
   },
+  {
+    id: "dollarstore",
+    name: "1$ Dollar Store",
+    displayName: "1$ Dollar Store",
+    tagline: "Everything $1 — bulk bargains",
+    description:
+      "One-dollar wholesale store, curated for resellers. Fixed $1 pricing across thousands of everyday items, ready for bulk ordering and consolidation.",
+    stat: "10K+ items",
+    icon: "/markets/dollarstore.png",
+    brandColor: "#FF5A0A",
+    shortMark: "$1",
+    homeUrl: "https://www.huolangjun666.com/#/home",
+    loginWalled: false,
+    highlights: ["Everything $1", "Reseller bulk bargains", "Curated for Somalia"],
+    bestFor: "Resellers hunting fixed-price bulk stock",
+  },
 ];
 
 export const MARKETPLACE_IDS = MARKETPLACE_CATALOG.map((m) => m.id);

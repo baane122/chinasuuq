@@ -22,13 +22,20 @@
 -- ============================================================
 
 -- ─── 0. Defensive helper ─────────────────────────────────────────────────
--- The 20260813 policy SQL references public.is_staff_or_admin(); the
--- canonical helper lives in the auth schema. Provide the wrapper if absent.
+-- Canonical staff/admin check used by every policy below. SECURITY DEFINER so
+-- RLS policies can read profiles without the caller having SELECT on them.
+-- The live user_role enum is (customer, staff, super_admin) — 'admin' was
+-- dropped, so the check matches staff + super_admin.
 CREATE OR REPLACE FUNCTION public.is_staff_or_admin()
 RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = public, auth
-AS $$ SELECT auth.is_staff_or_admin(); $$;
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE id = auth.uid() AND role IN ('staff', 'super_admin')
+    );
+$$;
 
 -- ─── 1. CRITICAL FIX — signup privilege escalation ──────────────────────
 -- The old handle_new_user copied user_metadata.role into profiles.role, so
@@ -62,13 +69,13 @@ SET search_path = public, auth
 AS $$
 BEGIN
     IF NEW.role IS DISTINCT FROM OLD.role THEN
-        IF NOT auth.is_staff_or_admin() THEN
+        IF NOT public.is_staff_or_admin() THEN
             RAISE EXCEPTION 'ChinaSuuq: only staff may change profile roles';
         END IF;
-        IF NEW.role = 'super_admin' AND NOT auth.is_super_admin() THEN
+        IF NEW.role = 'super_admin' AND NOT public.is_super_admin() THEN
             RAISE EXCEPTION 'ChinaSuuq: only a super_admin can grant super_admin';
         END IF;
-        IF OLD.role = 'super_admin' AND NOT auth.is_super_admin() THEN
+        IF OLD.role = 'super_admin' AND NOT public.is_super_admin() THEN
             RAISE EXCEPTION 'ChinaSuuq: only a super_admin can demote a super_admin';
         END IF;
     END IF;
@@ -146,7 +153,7 @@ BEGIN
     new_sub   := COALESCE((to_jsonb(NEW)->>'subtotal_usd')::numeric, (to_jsonb(NEW)->>'subtotal')::numeric);
     new_paid  := COALESCE((to_jsonb(NEW)->>'amount_paid_usd')::numeric, (to_jsonb(NEW)->>'amount_paid')::numeric);
 
-    IF auth.is_staff_or_admin() THEN
+    IF public.is_staff_or_admin() THEN
         RETURN NEW;  -- staff path unchanged (balance maintained by app)
     END IF;
 
@@ -236,8 +243,19 @@ END $$;
 DROP POLICY IF EXISTS payments_insert_own ON public.payments;
 CREATE POLICY payments_insert_own ON public.payments
     FOR INSERT WITH CHECK (
-        profile_id = auth.uid()
-        AND (auth.is_staff_or_admin() OR status = 'pending')
+        status = 'pending'
+        -- Ownership is derived through the parent order (payments has no
+        -- owner column of its own; the owner column on orders is user_id in
+        -- the live schema and profile_id in the migration schema — to_jsonb
+        -- handles both).
+        AND EXISTS (
+            SELECT 1 FROM public.orders o
+            WHERE o.id = payments.order_id
+              AND COALESCE(
+                    (to_jsonb(o)->>'user_id'),
+                    (to_jsonb(o)->>'profile_id')
+                  ) = auth.uid()::text
+        )
     );
 
 -- ─── 6. CRITICAL FIX — settings: no more anon writes ─────────────────────
@@ -245,8 +263,8 @@ CREATE POLICY payments_insert_own ON public.payments
 -- which granted every anonymous visitor INSERT/UPDATE/DELETE.
 DROP POLICY IF EXISTS "settings_modify" ON public.settings;
 CREATE POLICY "settings_modify" ON public.settings FOR ALL
-    USING (auth.is_staff_or_admin())
-    WITH CHECK (auth.is_staff_or_admin());
+    USING (public.is_staff_or_admin())
+    WITH CHECK (public.is_staff_or_admin());
 
 DROP POLICY IF EXISTS "settings_select" ON public.settings;
 CREATE POLICY "settings_select" ON public.settings FOR SELECT
@@ -288,7 +306,7 @@ BEGIN
             EXECUTE format('DROP POLICY IF EXISTS staff_select_all ON public.%I', tbl);
             EXECUTE format(
                 'CREATE POLICY staff_select_all ON public.%I
-                 FOR SELECT TO authenticated USING (auth.is_staff_or_admin())', tbl);
+                 FOR SELECT TO authenticated USING (public.is_staff_or_admin())', tbl);
             RAISE NOTICE 'staff select policy ensured on %', tbl;
         END IF;
     END LOOP;
@@ -296,8 +314,8 @@ END $$;
 
 -- ============================================================
 -- FOLLOW-UP (documented in README, needs app changes):
---  • VALIDATE the new CHECKs once data is confirmed clean:
---      ALTER TABLE orders VALIDATE CONSTRAINT ck_money_orders_total_usd; ...
+--  • VALIDATE the new CHECKs — DONE 2026-09-21: all 10 ck_money_* constraints
+--    validated against live data (no violations).
 --  • Guest orders (user_id IS NULL) remain readable by anon via
 --    orders_select_own — replace reference-based tracking with a
 --    tokenized lookup + app change, then drop that clause.
