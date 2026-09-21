@@ -36,6 +36,7 @@ import {
   LOGIN_WALL_SCRIPT,
   BLANK_PAGE_SCRIPT,
   HIDE_MARKET_NAV_SCRIPT,
+  autoLoginScript,
 } from "@/lib/webviewScripts";
 import { getCnyPerUsd } from "@/lib/exchange";
 import { getMarketplaceProducts } from "@/db";
@@ -51,6 +52,7 @@ const MARKETPLACES: Record<string, { name: string; home: string; loginWalled: bo
   alibaba: { name: "Alibaba.com", home: "https://m.alibaba.com", loginWalled: false },
   chinagoods: { name: "ChinaGoods", home: "https://www.chinagoods.com", loginWalled: false },
   jd: { name: "JD.com", home: "https://m.jd.com", loginWalled: false },
+  dollarstore: { name: "1$ Dollar Store", home: "https://www.huolangjun666.com/#/home", loginWalled: false },
 };
 
 // Brand colors + short marks for blocked-state logos
@@ -61,6 +63,7 @@ const PLATFORM_BRAND_COLOR: Record<string, string> = {
   alibaba: "#FF6A00",
   chinagoods: "#E60012",
   jd: "#E1251B",
+  dollarstore: "#FF5A0A",
 };
 const PLATFORM_MARK: Record<string, string> = {
   "1688": "1688",
@@ -69,6 +72,7 @@ const PLATFORM_MARK: Record<string, string> = {
   alibaba: "A",
   chinagoods: "CG",
   jd: "JD",
+  dollarstore: "$1",
 };
 
 const TL_KEY = "chinasuuq-webview-translate";
@@ -113,6 +117,7 @@ export default function MarketplaceBrowser() {
   const [cnylist, setCnylist] = useState<number[]>([]);
   const [captureFormVisible, setCaptureFormVisible] = useState(false);
   const [accountCookieScript, setAccountCookieScript] = useState("");
+  const [accountCreds, setAccountCreds] = useState<{ username: string; password: string } | null>(null);
   const [curatedProducts, setCuratedProducts] = useState<Product[]>([]);
   const [curatedLoading, setCuratedLoading] = useState(false);
   const [showCurated, setShowCurated] = useState(false);
@@ -153,6 +158,9 @@ export default function MarketplaceBrowser() {
         if (account?.cookies) {
           setAccountCookieScript(cookieInjectScript(account.cookies));
         }
+        if (account?.username && account?.password) {
+          setAccountCreds({ username: account.username, password: account.password });
+        }
         setCuratedLoading(true);
         const products = await getMarketplaceProducts(marketplace || "1688");
         setCuratedProducts(products);
@@ -171,6 +179,7 @@ export default function MarketplaceBrowser() {
         try {
           const parts: string[] = [];
           if (accountCookieScript) parts.push(accountCookieScript);
+          if (accountCreds) parts.push(autoLoginScript(accountCreds.username, accountCreds.password));
           parts.push(LOGIN_WALL_SCRIPT);
           parts.push(BLANK_PAGE_SCRIPT);
           parts.push(PRODUCT_CAPTURE_SCRIPT);
@@ -184,7 +193,7 @@ export default function MarketplaceBrowser() {
       };
       setTimeout(post, delay);
     },
-    [translateLang, accountCookieScript]
+    [translateLang, accountCookieScript, accountCreds]
   );
 
   const onMessage = useCallback(

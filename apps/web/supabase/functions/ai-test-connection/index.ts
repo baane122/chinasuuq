@@ -4,10 +4,17 @@
 // Returns success + model list, or detailed error for the admin to fix.
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { requireAdmin, unauthorized } from "../_shared/auth.ts";
 
 export async function handler(req: Request) {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+
+  // SECURITY: this endpoint performs server-side requests to arbitrary
+  // base_urls with caller-supplied credentials — an open SSRF/abuse probe if
+  // left anonymous. Restrict to verified admins.
+  const admin = await requireAdmin(req);
+  if (!admin) return unauthorized("admin_required");
 
   try {
     const body = await req.json();

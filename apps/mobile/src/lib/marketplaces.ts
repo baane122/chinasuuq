@@ -10,7 +10,8 @@ export type MarketplaceId =
   | "yiwugo"
   | "alibaba"
   | "chinagoods"
-  | "jd";
+  | "jd"
+  | "dollarstore";
 
 export interface Marketplace {
   id: MarketplaceId;
@@ -119,6 +120,21 @@ export const MARKETPLACES: Marketplace[] = [
     homeUrl: "https://m.jd.com",
     loginWalled: false,
   },
+  {
+    id: "dollarstore",
+    name: "1$ Dollar Store",
+    tagline_en: "Everything $1 — bulk bargains",
+    tagline_so: "Walxashii $1 — qiimo jumlo",
+    desc_en: "One-dollar wholesale store, curated for resellers",
+    desc_so: "Dukaan dollar ah, loo diyaariyay ganacsatada",
+    stat_en: "10K+ items",
+    stat_so: "10K+ alaab",
+    icon: require("../../assets/marketplaces/dollarstore.png"),
+    brandColor: "#FF5A0A",
+    shortMark: "$1",
+    homeUrl: "https://www.huolangjun666.com/#/home",
+    loginWalled: false,
+  },
 ];
 
 export const MARKETPLACE_BY_ID: Record<string, Marketplace> = MARKETPLACES.reduce(
@@ -138,6 +154,7 @@ export function detectMarketplaceFromUrl(input: string): MarketplaceId | null {
   if (lower.includes("alibaba.com")) return "alibaba";
   if (lower.includes("chinagoods.com")) return "chinagoods";
   if (lower.includes("jd.com")) return "jd";
+  if (lower.includes("huolangjun666.com")) return "dollarstore";
   return null;
 }
 

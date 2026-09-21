@@ -2,10 +2,33 @@
 
 import { useState, useEffect } from "react";
 import { Loader2, Save, RefreshCw, Key, Globe, Cpu, CheckCircle, XCircle } from "lucide-react";
+import { edgeFetch } from "@/lib/supabase";
 
-const SB_URL = "https://athkmrvsaijwgsyvwrbp.supabase.co";
-const SB_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF0aGttcnZzYWlqd2dzeXZ3cmJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NjM4NDQsImV4cCI6MjEwMTIzOTg0NH0.QAT0gZBJl-ELFG8221MRZoZoTj0La9_TOXFXx-HiKbY";
-const edgeHeaders = { "Content-Type": "application/json", "Authorization": "Bearer " + SB_ANON, "apikey": SB_ANON };
+// Calls go through edgeFetch (attaches apikey + the signed-in admin's JWT).
+// The ai-settings / ai-test-connection Edge Functions verify the caller's
+// admin role server-side; hardcoded keys and anon bearers are not allowed.
+
+interface AiSettingsResponse {
+  ok: boolean;
+  base_url?: string;
+  model?: string;
+  api_key_masked?: string;
+  is_configured?: boolean;
+}
+
+interface AiTestResponse {
+  ok: boolean;
+  note?: string;
+  detail?: string;
+  error?: string;
+}
+
+interface AiSaveResponse {
+  ok: boolean;
+  message?: string;
+  errors?: string[];
+  error?: string;
+}
 
 export function AiSettingsTab() {
   const [apiKey, setApiKey] = useState("");
@@ -24,13 +47,12 @@ export function AiSettingsTab() {
   const load = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(SB_URL + "/functions/v1/ai-settings", { method: "GET", headers: edgeHeaders });
-      const data = await res.json();
+      const data = await edgeFetch<AiSettingsResponse>("ai-settings");
       if (data.ok) {
         setBaseUrl(data.base_url || "https://api.openai.com/v1");
         setModel(data.model || "gpt-4o");
         setMaskedKey(data.api_key_masked || "");
-        setIsConfigured(data.is_configured);
+        setIsConfigured(Boolean(data.is_configured));
       }
     } catch { /* not configured */ }
     finally { setIsLoading(false); }
@@ -40,12 +62,10 @@ export function AiSettingsTab() {
     setIsTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch(SB_URL + "/functions/v1/ai-test-connection", {
+      const data = await edgeFetch<AiTestResponse>("ai-test-connection", {
         method: "POST",
-        headers: edgeHeaders,
-        body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, model }),
+        body: { base_url: baseUrl, api_key: apiKey, model },
       });
-      const data = await res.json();
       setTestResult({ ok: data.ok, message: data.ok ? (data.note || "Connected") : (data.detail || data.error || "Failed") });
     } catch (e) {
       setTestResult({ ok: false, message: "Error: " + (e as Error).message });
@@ -57,12 +77,10 @@ export function AiSettingsTab() {
     setSaveResult(null);
     try {
       const keyToSend = apiKey.length >= 10 ? apiKey : maskedKey || "";
-      const res = await fetch(SB_URL + "/functions/v1/ai-settings", {
+      const data = await edgeFetch<AiSaveResponse>("ai-settings", {
         method: "POST",
-        headers: edgeHeaders,
-        body: JSON.stringify({ api_key: keyToSend, base_url: baseUrl, model, updated_by: "admin" }),
+        body: { api_key: keyToSend, base_url: baseUrl, model },
       });
-      const data = await res.json();
       if (data.ok) {
         setSaveResult({ ok: true, message: "Saved" });
         setIsConfigured(true);

@@ -43,4 +43,5 @@ export const MARKETPLACES = [
   { slug: "taobao", name: "Taobao", desc_en: "Retail & Trending", desc_so: "Qiimo Retail", icon: "🛒" },
   { slug: "yiwugo", name: "YiwuGo", desc_en: "Yiwu Small Commodities", desc_so: "Yiwu Yaryar", icon: "📦" },
   { slug: "chinasuuq", name: "ChinaSuuq Deals", desc_en: "Verified Ready-Stock", desc_so: "Alaab Xaqiijisan", icon: "✅" },
+  { slug: "dollarstore", name: "1$ Dollar Store", desc_en: "Everything $1", desc_so: "Walxashii $1", icon: "💵" },
 ] as const;

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { setAdminFallbackSession, hasAdminFallbackSession, defaultRecoveryCode } from "@/lib/adminSession";
+import { setAdminFallbackSession, hasAdminFallbackSession, defaultRecoveryCode, isDevBuild, showRecoveryEntry } from "@/lib/adminSession";
 import { Eye, EyeOff, Loader2, LogIn, Lock, Mail, ShieldCheck, AlertTriangle, Globe, Package, Truck, CreditCard, TrendingUp, KeyRound } from "lucide-react";
 
 export default function AdminLoginPage() {
@@ -22,9 +22,9 @@ export default function AdminLoginPage() {
   const isPasswordValid = password.length >= 6;
   const canSubmit = isEmailValid && isPasswordValid && !isLoading;
 
-  // Already in a fallback session? go straight to admin.
+  // Already in a fallback session? go straight to admin. (Dev builds only.)
   useEffect(() => {
-    if (hasAdminFallbackSession()) {
+    if (isDevBuild && hasAdminFallbackSession()) {
       router.replace("/admin");
     }
     const saved = localStorage.getItem("chinasuuq-admin-email");
@@ -33,7 +33,15 @@ export default function AdminLoginPage() {
 
   const submitRecovery = (e: React.FormEvent) => {
     e.preventDefault();
-    if (recoveryCode.trim() !== defaultRecoveryCode) {
+    // Hard gate: the recovery path does not exist in production builds.
+    if (!isDevBuild) {
+      setError("Recovery codes are disabled in production.");
+      setErrorType("credentials");
+      return;
+    }
+    // Also refuse an empty code explicitly (belt & braces — defaultRecoveryCode
+    // is only non-empty in dev, but an empty-string comparison must never pass).
+    if (!recoveryCode.trim() || recoveryCode.trim() !== defaultRecoveryCode) {
       setError("Incorrect recovery code.");
       setErrorType("credentials");
       return;
@@ -292,7 +300,7 @@ export default function AdminLoginPage() {
               <div className="h-px flex-1 bg-dark-900/[0.08]" />
             </div>
 
-            {!showRecovery ? (
+            {showRecoveryEntry && !showRecovery ? (
               <button
                 type="button"
                 onClick={() => setShowRecovery(true)}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, edgeFetch } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { Loader2, Save, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { z } from "zod";
@@ -189,14 +189,19 @@ export default function SettingsPage() {
     setIsLoadingAi(true);
     setAiTestResult(null);
     try {
-      const res = await fetch("/api/ai-settings", { method: "GET" });
-      if (!res.ok) throw new Error("fetch failed");
-      const data = await res.json();
+      // Supabase Edge Function (the static export has no /api server routes).
+      const data = await edgeFetch<{
+        ok: boolean;
+        base_url?: string;
+        model?: string;
+        api_key_masked?: string;
+        is_configured?: boolean;
+      }>("ai-settings", { method: "GET" });
       if (data.ok) {
         setAiBaseUrl(data.base_url || "");
         setAiModel(data.model || "");
         setAiApiKeyMasked(data.api_key_masked || "");
-        setAiIsConfigured(data.is_configured);
+        setAiIsConfigured(Boolean(data.is_configured));
       }
     } catch {
       // Settings row may not exist yet — show empty form
@@ -209,12 +214,15 @@ export default function SettingsPage() {
     setIsTestingAi(true);
     setAiTestResult(null);
     try {
-      const res = await fetch("/api/ai-test-connection", {
+      const data = await edgeFetch<{
+        ok: boolean;
+        note?: string;
+        detail?: string;
+        error?: string;
+      }>("ai-test-connection", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base_url: aiBaseUrl, api_key: aiApiKey, model: aiModel }),
+        body: { base_url: aiBaseUrl, api_key: aiApiKey, model: aiModel },
       });
-      const data = await res.json();
       setAiTestResult({
         ok: data.ok,
         message: data.ok ? (data.note || "Connection successful") : (data.detail || data.error || "Test failed"),
@@ -240,12 +248,14 @@ export default function SettingsPage() {
       if (!aiApiKey || aiApiKey.length < 10) {
         payload.api_key = aiApiKeyMasked || "";
       }
-      const res = await fetch("/api/ai-settings", {
+      const data = await edgeFetch<{
+        ok: boolean;
+        errors?: string[];
+        error?: string;
+      }>("ai-settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: payload,
       });
-      const data = await res.json();
       if (data.ok) {
         setSaveMessage({ type: "success", text: "AI provider settings saved" });
         fetchAiSettings();

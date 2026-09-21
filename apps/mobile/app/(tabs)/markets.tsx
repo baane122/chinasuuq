@@ -20,6 +20,7 @@ const BEST_USE: Record<MarketplaceId, { en: string; so: string }> = {
   alibaba: { en: "B2B Trade", so: "Ganacsiga B2B" },
   chinagoods: { en: "Yiwu Online", so: "Yiwu Online" },
   jd: { en: "Electronics", so: "Elektiroonigga" },
+  dollarstore: { en: "$1 Bargains", so: "Qiimo $1" },
 };
 
 export default function MarketsTab() {

@@ -400,7 +400,66 @@ export const BLANK_PAGE_SCRIPT = `(function () {
 })(); true;`;
 
 // ---------------------------------------------------------------------------
-// 5. LOW-RISK MARKET NAV CLEANUP
+// 6. AUTO-LOGIN — fills a detected login form with the shared account
+//   credentials (from admin marketplace_accounts) and submits it.
+//   Safe-by-design: only runs when a password field exists, only fills once
+//   per page (data-cs-autolog marker), never touches 2FA/QR/verify screens.
+// ---------------------------------------------------------------------------
+export function autoLoginScript(username: string, password: string): string {
+  const safeUser = JSON.stringify(username || "");
+  const safePass = JSON.stringify(password || "");
+  return `(function () {
+  try {
+    if (document.querySelector('[data-cs-autolog="1"]')) return true;
+    var pwd = document.querySelector('input[type="password"]');
+    if (!pwd || !pwd.offsetParent) return true;
+    // Never auto-fill on 2FA / verification screens
+    var bodyTxt = (document.body && document.body.innerText || "").slice(0, 2000);
+    if (/验证码|扫码|qr/i.test(bodyTxt)) return true;
+    // Find the account/phone input: the text/tel input nearest above the password field
+    var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="text"], input[type="tel"], input:not([type])'));
+    var userInput = null, bestDist = Infinity;
+    for (var i = 0; i < inputs.length; i++) {
+      if (inputs[i] === pwd || !inputs[i].offsetParent) continue;
+      var dist = Math.abs((inputs[i].getBoundingClientRect().top || 0) - (pwd.getBoundingClientRect().top || 0));
+      if (dist < bestDist) { bestDist = dist; userInput = inputs[i]; }
+    }
+    if (!userInput) return true;
+    function setVal(el, val) {
+      var proto = Object.getPrototypeOf(el);
+      var desc = Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc && desc.set) desc.set.call(el, val); else el.value = val;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    setVal(userInput, ${safeUser});
+    setVal(pwd, ${safePass});
+    pwd.setAttribute("data-cs-autolog", "1");
+    // Find the submit button: nearest clickable below the password field
+    setTimeout(function () {
+      try {
+        var btns = Array.prototype.slice.call(document.querySelectorAll('button, [role="button"], .btn, a'));
+        var btn = null, best = Infinity;
+        for (var j = 0; j < btns.length; j++) {
+          var b = btns[j];
+          var r = b.getBoundingClientRect ? b.getBoundingClientRect() : null;
+          if (!r) continue;
+          var d = (r.top || 0) - (pwd.getBoundingClientRect().top || 0);
+          if (d < 0) continue;
+          var txt = (b.innerText || "").replace(/\\s+/g, "");
+          var hit = /登录|登陆|login|signin/i.test(txt) || b.getAttribute("type") === "submit";
+          if (hit && d < best) { best = d; btn = b; }
+        }
+        if (btn) btn.click();
+      } catch (e) {}
+    }, 350);
+    return true;
+  } catch (e) { return true; }
+})(); true;`;
+}
+
+// ---------------------------------------------------------------------------
+// 4. (kept numbering) LOW-RISK MARKET NAV CLEANUP
 //   Some marketplace mobile sites render their own fixed bottom tab bar.
 //   We hide only elements explicitly named as bottom/tab navigation.
 // ---------------------------------------------------------------------------

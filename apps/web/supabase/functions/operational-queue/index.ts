@@ -3,10 +3,17 @@
 // verification, open sourcing, draft/sent quotes — from the real admin views.
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { requireStaffOrAdmin, unauthorized } from "../_shared/auth.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 export async function handler(req: Request) {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  // SECURITY: returns internal operations data (orders, payments, customers)
+  // from the admin views. Staff/admin only — anonymous callers must never see
+  // this queue.
+  const staff = await requireStaffOrAdmin(req);
+  if (!staff) return unauthorized("staff_required");
   try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,

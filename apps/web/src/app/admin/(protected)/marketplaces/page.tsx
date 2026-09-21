@@ -41,6 +41,7 @@ const MARKETPLACES = [
   { id: "alibaba", name: "Alibaba", home: "https://www.alibaba.com", color: "#FF6A00", stat: "200M+ items" },
   { id: "chinagoods", name: "ChinaGoods", home: "https://www.chinagoods.com", color: "#E60012", stat: "2M+ items" },
   { id: "jd", name: "JD.com", home: "https://www.jd.com", color: "#E1251B", stat: "400M+ items" },
+  { id: "dollarstore", name: "1$ Dollar Store", home: "https://www.huolangjun666.com", color: "#FF5A0A", stat: "10K+ items" },
 ];
 
 interface MarketplaceAccount {

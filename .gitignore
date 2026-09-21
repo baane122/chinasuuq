@@ -72,4 +72,17 @@ pnpm-debug.log*
 supabase/.temp
 supabase/.branches
 supabase/.status
-.env*
+**/supabase/.temp/
+**/supabase/.branches/
+**/supabase/.status/
+
+# ── Agent / AI tool working dirs (never ship these) ───────
+.agent-teams/
+.hermes/
+.zcode/
+.audit/
+
+# ── Local scratch ─────────────────────────────────────────
+plans/
+screenshots/
+

@@ -41,6 +41,7 @@ const platformChips = [
   { name: "Alibaba", img: "/images/marketplaces/alibaba.png" },
   { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.png" },
   { name: "JD", img: "/images/marketplaces/jd.png" },
+  { name: "1$ Dollar Store", img: "/images/marketplaces/dollarstore.png" },
 ];
 
 const stats = [

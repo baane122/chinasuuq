@@ -39,20 +39,43 @@ export interface MarketplaceAccount {
 
 /**
  * Fetch the active shared account for a marketplace.
+ * Prefers the SECURITY DEFINER RPC `get_shared_marketplace_account`
+ * (works for logged-out users once the 202609240001 migration is applied);
+ * falls back to a direct read of the real table columns, which works for
+ * authenticated users today (RLS policy requires a session).
  * Returns null if none found or backend is unreachable.
  */
 export async function getMarketplaceAccount(
   marketplace: string
 ): Promise<MarketplaceAccount | null> {
   try {
+    const { data: rpcData, error: rpcError } = await supabase
+      .rpc("get_shared_marketplace_account", { p_marketplace: marketplace })
+      .maybeSingle();
+    if (!rpcError && rpcData) return rpcData as unknown as MarketplaceAccount;
+  } catch {
+    // fall through to direct read
+  }
+  try {
     const { data, error } = await supabase
       .from("marketplace_accounts")
-      .select("id, marketplace, username, password, cookies, is_active, last_refreshed_at")
-      .eq("marketplace", marketplace)
+      .select("id, marketplace_type, username, password_encrypted, is_active, updated_at")
+      .eq("marketplace_type", marketplace)
       .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
     if (error || !data) return null;
-    return data as MarketplaceAccount;
+    // Normalize to the mobile-facing shape
+    return {
+      id: data.id,
+      marketplace: data.marketplace_type,
+      username: data.username ?? "",
+      password: data.password_encrypted ?? "",
+      cookies: undefined,
+      is_active: data.is_active,
+      last_refreshed_at: data.updated_at,
+    } as MarketplaceAccount;
   } catch {
     return null;
   }

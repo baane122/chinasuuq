@@ -31,9 +31,9 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.vercel-scripts.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co https://*.whatsapp.com https://wa.me",
+  "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co https://*.whatsapp.com https://wa.me https://*.lk888.ai https://*.googleusercontent.com https://*.googleapis.com",
   "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co wss://*.supabase.co https://*.vercel-scripts.com https://*.vercel-insights.com",
+  "connect-src 'self' https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co wss://*.supabase.co https://*.vercel-scripts.com https://*.vercel-insights.com https://*.lk888.ai https://translate.googleapis.com",
   "frame-src 'self' https://m.1688.com https://www.1688.com https://m.taobao.com https://www.taobao.com https://m.yiwugo.com https://www.yiwugo.com https://m.alibaba.com https://www.alibaba.com https://m.chinagoods.com https://www.chinagoods.com https://m.jd.com https://www.jd.com",
   "form-action 'self' https://wa.me https://*.whatsapp.com",
   "base-uri 'self'",
@@ -41,6 +41,31 @@ const CSP = [
   "frame-ancestors 'none'",
   "upgrade-insecure-requests",
 ].join("; ");
+
+// JSON-LD structured data (Organization + WebSite). Static export has no
+// server rendering hooks, so the script is injected directly in <head>.
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://chinasuuq.com/#organization",
+      name: "ChinaSuuq",
+      url: "https://chinasuuq.com",
+      logo: "https://chinasuuq.com/images/og-image.png",
+      description:
+        "China-to-Somalia sourcing marketplace: buy from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD with USD quotes, quality inspection and tracked delivery.",
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://chinasuuq.com/#website",
+      url: "https://chinasuuq.com",
+      name: "ChinaSuuq",
+      publisher: { "@id": "https://chinasuuq.com/#organization" },
+      inLanguage: "en",
+    },
+  ],
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://chinasuuq.com"),
@@ -55,11 +80,11 @@ export const metadata: Metadata = {
   publisher: "ChinaSuuq",
   formatDetection: { email: false, address: false, telephone: false },
   alternates: {
+    // Home-page canonical only. Every subpage overrides this in its own
+    // segment layout (src/app/(public)/*/layout.tsx) — a root-level
+    // canonical propagates to children that don't override it and would
+    // tell Google every page is a duplicate of the homepage.
     canonical: "/",
-    languages: {
-      en: "/",
-      so: "/",
-    },
   },
   openGraph: {
     title: "ChinaSuuq - China to Somalia Marketplace",
@@ -68,6 +93,20 @@ export const metadata: Metadata = {
     locale: "en_US",
     type: "website",
     url: "https://chinasuuq.com",
+    images: [
+      {
+        url: "/images/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "ChinaSuuq — shop every major Chinese marketplace, shipped to Somalia",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ChinaSuuq - China to Somalia Marketplace",
+    description: "Browse millions of products from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD. Shop Chinese products with Somali prices and local delivery.",
+    images: ["/images/og-image.png"],
   },
   // No global robots meta here — let the route (e.g. /admin) set its own.
   // Public pages default to index/follow, which is what we want.
@@ -106,6 +145,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             No-cost hint that the browser will use these origins shortly. */}
         <link rel="preconnect" href="https://athkmrvsaijwgsyvwrbp.supabase.co" crossOrigin="" />
         <link rel="dns-prefetch" href="https://athkmrvsaijwgsyvwrbp.supabase.co" />
+        {/* SEO: structured data (Organization + WebSite) */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+        />
       </head>
       <body className="antialiased">
         <WwwRedirect />

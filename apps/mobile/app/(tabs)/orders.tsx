@@ -15,14 +15,11 @@ import { Image } from "expo-image";
 import {
   ShoppingCart,
   Package,
-  ChevronRight,
-  CheckCircle2,
   Truck,
   Trash2,
   Minus,
   Plus,
   MessageCircle,
-  ArrowUpRight,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS, whatsappOrderLink } from "@/lib/theme";
@@ -48,6 +45,28 @@ const ACTIVE_STATUSES = [
 ];
 const HISTORY_STATUSES = ["delivered", "cancelled"];
 
+// Status pill metadata for every order status (brand-tinted)
+const STATUS_META: Record<string, { en: string; so: string; color: string; bg: string }> = {
+  pending: { en: "Pending", so: "La sugayo", color: COLORS.warning, bg: COLORS.warningBg },
+  confirmed: { en: "Confirmed", so: "La xaqiijiyay", color: COLORS.info, bg: COLORS.infoBg },
+  purchasing: { en: "Purchasing", so: "Iibsiga", color: COLORS.primary, bg: COLORS.primaryBg },
+  purchased: { en: "Purchased", so: "La iibsaday", color: COLORS.primary, bg: COLORS.primaryBg },
+  in_transit_china: { en: "China Transit", so: "Socda China", color: COLORS.info, bg: COLORS.infoBg },
+  warehouse: { en: "Warehouse", so: "Makhaazad", color: COLORS.gray600, bg: COLORS.gray100 },
+  inspection: { en: "Inspection", so: "Baaritaan", color: COLORS.warning, bg: COLORS.warningBg },
+  consolidated: { en: "Consolidated", so: "La wadajiriyay", color: COLORS.primary, bg: COLORS.primaryBg },
+  shipped: { en: "Shipped", so: "La dirray", color: COLORS.info, bg: COLORS.infoBg },
+  in_transit: { en: "In Transit", so: "Socda", color: COLORS.info, bg: COLORS.infoBg },
+  arrived_somalia: { en: "Arrived", so: "Yimid", color: COLORS.success, bg: COLORS.successBg },
+  customs: { en: "Customs", so: "Caado", color: COLORS.warning, bg: COLORS.warningBg },
+  ready_for_pickup: { en: "Ready", so: "Diyaar", color: COLORS.success, bg: COLORS.successBg },
+  out_for_delivery: { en: "Out for Delivery", so: "La gooynayo", color: COLORS.primary, bg: COLORS.primaryBg },
+  delivered: { en: "Delivered", so: "La gaarsiisay", color: COLORS.success, bg: COLORS.successBg },
+  cancelled: { en: "Cancelled", so: "La joojiyay", color: COLORS.error, bg: COLORS.errorBg },
+};
+
+type OrderFilter = "all" | "active" | "history";
+
 // Marketplace lookup for icons
 const MARKET_ICON: Record<string, any> = {};
 MARKETPLACES.forEach((m) => { MARKET_ICON[m.id] = m.icon; });
@@ -60,6 +79,7 @@ export default function OrdersScreen() {
   const [orders, setOrders] = useState<LocalOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [orderFilter, setOrderFilter] = useState<OrderFilter>("all");
 
   const cartItems = useCartStore((s) => s.items);
   const cartGetTotal = useCartStore((s) => s.getTotal);
@@ -96,6 +116,10 @@ export default function OrdersScreen() {
 
   const activeOrders = orders.filter((o) => ACTIVE_STATUSES.includes(o.status));
   const historyOrders = orders.filter((o) => HISTORY_STATUSES.includes(o.status));
+  const deliveredCount = historyOrders.filter((o) => o.status === "delivered").length;
+  const totalSpent = orders.reduce((sum, o) => sum + (o.total_usd || 0), 0);
+  const visibleOrders =
+    orderFilter === "all" ? orders : orderFilter === "active" ? activeOrders : historyOrders;
 
   // Group cart items by marketplace
   const cartGrouped = useMemo(() => {
@@ -292,43 +316,96 @@ export default function OrdersScreen() {
               </View>
             ) : (
               <>
-                {historyOrders.length > 0 && historyOrders.map((order) => {
-                  const itemCount = order.items.reduce((s, i) => s + i.quantity, 0);
-                  const date = new Date(order.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-                  const isDelivered = order.status === "delivered";
-                  return (
-                    <Pressable
-                      key={order.id}
-                      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-                      onPress={() => router.push(`/orders/${order.id}`)}
+                {/* Stats strip */}
+                <View style={styles.statsRow}>
+                  <View style={[styles.statTile, { backgroundColor: COLORS.primaryBg }]}>
+                    <Text style={[styles.statValue, { color: COLORS.primary }]}>{activeOrders.length}</Text>
+                    <Text style={styles.statLabel}>{l("In Progress", "Socda")}</Text>
+                  </View>
+                  <View style={[styles.statTile, { backgroundColor: COLORS.successBg }]}>
+                    <Text style={[styles.statValue, { color: COLORS.success }]}>{deliveredCount}</Text>
+                    <Text style={styles.statLabel}>{l("Delivered", "La gaarsiisay")}</Text>
+                  </View>
+                  <View style={[styles.statTile, styles.statTileDark]}>
+                    <Text style={[styles.statValue, styles.statValueLight]} numberOfLines={1}>
+                      {formatUSD(totalSpent)}
+                    </Text>
+                    <Text style={[styles.statLabel, styles.statLabelLight]}>{l("Total Spent", "Wadarta")}</Text>
+                  </View>
+                </View>
+
+                {/* Filter chips */}
+                <View style={styles.filterRow}>
+                  {(
+                    [
+                      ["all", l("All", "Dhammaan")],
+                      ["active", l("Active", "Socda")],
+                      ["history", l("Completed", "Dhammaaday")],
+                    ] as [OrderFilter, string][]
+                  ).map(([f, label]) => (
+                    <TouchableOpacity
+                      key={f}
+                      style={[styles.filterChip, orderFilter === f && styles.filterChipActive]}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setOrderFilter(f);
+                      }}
+                      activeOpacity={0.7}
                     >
-                      {/* Status icon */}
-                      <View style={[styles.cardIconWrap, { backgroundColor: isDelivered ? COLORS.successBg : COLORS.errorBg }]}>
-                        {isDelivered ? (
-                          <CheckCircle2 size={22} color={COLORS.success} />
-                        ) : (
-                          <Package size={22} color={COLORS.error} />
-                        )}
-                      </View>
+                      <Text style={[styles.filterChipText, orderFilter === f && styles.filterChipTextActive]}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
-                      {/* Info */}
-                      <View style={styles.cardInfo}>
-                        <View style={styles.cardMetaRow}>
-                          <Text style={styles.cardName}>{order.reference}</Text>
-                          <Text style={styles.cardPrice}>${order.total_usd.toFixed(2)}</Text>
+                {visibleOrders.length === 0 ? (
+                  <View style={styles.filterEmpty}>
+                    <Text style={styles.filterEmptyText}>{l("Nothing here yet", "Weli wax ma jiro")}</Text>
+                  </View>
+                ) : (
+                  visibleOrders.map((order) => {
+                    const meta = STATUS_META[order.status] || STATUS_META.pending;
+                    const isActive = ACTIVE_STATUSES.includes(order.status);
+                    const itemCount = order.items.reduce((s, i) => s + i.quantity, 0);
+                    const date = new Date(order.created_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    });
+                    return (
+                      <Pressable
+                        key={order.id}
+                        style={({ pressed }) => [
+                          styles.orderCard,
+                          isActive && styles.orderCardActive,
+                          pressed && styles.cardPressed,
+                        ]}
+                        onPress={() => router.push(`/orders/${order.id}`)}
+                      >
+                        {isActive && <View style={styles.orderAccent} />}
+                        <View style={styles.orderTop}>
+                          <Text style={styles.orderRef} numberOfLines={1}>
+                            {order.reference}
+                          </Text>
+                          <View style={[styles.statusPill, { backgroundColor: meta.bg }]}>
+                            <View style={[styles.statusDot, { backgroundColor: meta.color }]} />
+                            <Text style={[styles.statusText, { color: meta.color }]}>{l(meta.en, meta.so)}</Text>
+                          </View>
                         </View>
-                        <Text style={styles.cardMeta}>
-                          {itemCount} item{itemCount === 1 ? "" : "s"} · {date}
+                        <Text style={styles.orderItems} numberOfLines={1}>
+                          {order.items.map((i) => `${i.product_name} ×${i.quantity}`).join("  ·  ")}
                         </Text>
-                      </View>
-
-                      {/* Arrow */}
-                      <View style={styles.cardArrow}>
-                        <ArrowUpRight size={16} color={COLORS.gray400} strokeWidth={2} />
-                      </View>
-                    </Pressable>
-                  );
-                })}
+                        <View style={styles.orderBottom}>
+                          <Text style={styles.orderDate}>
+                            {date} · {order.shipping_method === "air" ? "✈️ Air" : "🚢 Sea"} · {itemCount}{" "}
+                            {l("items", "alab")}
+                          </Text>
+                          <Text style={styles.orderTotal}>${order.total_usd.toFixed(2)}</Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })
+                )}
               </>
             )}
             <View style={{ height: 120 }} />
@@ -476,6 +553,54 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.gray100,
     alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
+
+  /* ── Orders: stats + filters + brand cards ── */
+  statsRow: { flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.md },
+  statTile: {
+    flex: 1, borderRadius: RADIUS.lg, paddingVertical: SPACING.md, paddingHorizontal: SPACING.sm,
+    alignItems: "center", justifyContent: "center",
+  },
+  statTileDark: { backgroundColor: COLORS.black },
+  statValue: { fontSize: 18, fontFamily: FONTS.bold, marginBottom: 2 },
+  statValueLight: { color: COLORS.white },
+  statLabel: { fontSize: 10, fontFamily: FONTS.medium, color: COLORS.textSecondary, textAlign: "center" },
+  statLabelLight: { color: "rgba(255,255,255,0.72)" },
+
+  filterRow: { flexDirection: "row", gap: SPACING.sm, marginBottom: SPACING.md },
+  filterChip: {
+    paddingHorizontal: SPACING.lg, paddingVertical: 8, borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border,
+  },
+  filterChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  filterChipText: { fontSize: 13, fontFamily: FONTS.semibold, color: COLORS.textSecondary },
+  filterChipTextActive: { color: COLORS.white },
+  filterEmpty: {
+    paddingVertical: SPACING.xxl, alignItems: "center", borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border,
+    borderStyle: "dashed",
+  },
+  filterEmptyText: { fontSize: 13, fontFamily: FONTS.medium, color: COLORS.textMuted },
+
+  orderCard: {
+    backgroundColor: COLORS.white, borderRadius: RADIUS.lg, padding: SPACING.lg,
+    marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.border, overflow: "hidden",
+  },
+  orderCardActive: { borderColor: COLORS.primary, borderWidth: 1.5 },
+  orderAccent: {
+    position: "absolute", top: 0, left: 0, right: 0, height: 3, backgroundColor: COLORS.primary,
+  },
+  orderTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  orderRef: { flex: 1, fontSize: 14, fontFamily: FONTS.bold, color: COLORS.black, marginRight: SPACING.sm },
+  statusPill: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 9, paddingVertical: 4, borderRadius: RADIUS.pill,
+  },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  statusText: { fontSize: 11, fontFamily: FONTS.semibold },
+  orderItems: { fontSize: 12, fontFamily: FONTS.regular, color: COLORS.textSecondary, marginBottom: SPACING.sm },
+  orderBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  orderDate: { fontSize: 11, fontFamily: FONTS.medium, color: COLORS.textMuted, flex: 1, marginRight: SPACING.sm },
+  orderTotal: { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.primary },
 
   /* ── Total ── */
   totalBar: {

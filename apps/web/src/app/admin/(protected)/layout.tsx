@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { hasAdminFallbackSession } from "@/lib/adminSession";
+import { hasAdminFallbackSession, isDevBuild } from "@/lib/adminSession";
 import Link from "next/link";
 import {
   Loader2,
@@ -105,7 +105,7 @@ export default function ProtectedLayout({
   /* ─── Auth check ─────────────────────────────────────────── */
   useEffect(() => {
     const handleUnauthorized = () => {
-      if (hasAdminFallbackSession()) {
+      if (isDevBuild && hasAdminFallbackSession()) {
         setIsAuthenticated(true);
         return;
       }
@@ -113,7 +113,7 @@ export default function ProtectedLayout({
     };
     const checkAuth = async () => {
       try {
-        if (hasAdminFallbackSession()) {
+        if (isDevBuild && hasAdminFallbackSession()) {
           setIsAuthenticated(true);
           return;
         }
@@ -139,7 +139,7 @@ export default function ProtectedLayout({
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (!session && !hasAdminFallbackSession())
+      if (!session && !(isDevBuild && hasAdminFallbackSession()))
         router.replace("/admin/login");
     });
     return () => subscription.unsubscribe();

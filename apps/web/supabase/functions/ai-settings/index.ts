@@ -4,10 +4,18 @@
 // All writes are audited with updated_by.
 
 import { corsHeaders } from "../_shared/cors.ts";
+import { requireAdmin, unauthorized } from "../_shared/auth.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 export async function handler(req: Request) {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  // SECURITY: this function manages the AI provider secret via the service
+  // role. Only authenticated admins may call it — previously ANY anonymous
+  // visitor could read settings and overwrite the provider (settings
+  // poisoning, since ai-extraction trusts base_url from this table).
+  const admin = await requireAdmin(req);
+  if (!admin) return unauthorized("admin_required");
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -47,9 +55,9 @@ export async function handler(req: Request) {
 
     if (req.method === "POST") {
       const body = await req.json();
-      const { api_key, base_url, model, updated_by } = body || {};
+      const { api_key, base_url, model } = body || {};
 
-      // Validation
+      // Validation (updated_by comes from the verified admin JWT, not the body)
       const errors: string[] = [];
       if (!api_key || typeof api_key !== "string" || api_key.trim().length < 10) {
         errors.push("api_key_too_short");
@@ -61,9 +69,6 @@ export async function handler(req: Request) {
       }
       if (!model || typeof model !== "string" || model.trim().length === 0) {
         errors.push("model_required");
-      }
-      if (!updated_by || typeof updated_by !== "string") {
-        errors.push("updated_by_required");
       }
 
       if (errors.length > 0) {
@@ -80,6 +85,7 @@ export async function handler(req: Request) {
             model: model.trim(),
             is_configured: true,
           },
+          updated_by: admin.userId,
           updated_at: new Date().toISOString(),
         }, { onConflict: "key" });
 

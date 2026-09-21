@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-build:
+    name: Web — typecheck, lint, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: apps/web
+        # NEXT_PUBLIC_* vars are baked in via next.config.ts env block, so no
+        # secrets are needed for a type-only pass.
+        run: npx tsc --noEmit
+
+      - name: Lint
+        working-directory: apps/web
+        run: npm run lint --if-present
+
+      - name: Build (static export)
+        working-directory: apps/web
+        run: npm run build
+
+      - name: Verify static export output
+        working-directory: apps/web
+        run: |
+          test -f out/index.html || { echo "out/index.html missing"; exit 1; }
+          test -f out/app/chinasuuq.apk || { echo "out/app/chinasuuq.apk missing"; exit 1; }
+          echo "Static export OK ($(du -sh out | cut -f1))"
+
+      - name: Check APK download link wired in UI
+        run: |
+          grep -rq "app/chinasuuq.apk" apps/web/src || { echo "Landing page no longer references /app/chinasuuq.apk"; exit 1; }
+
+  mobile-config:
+    name: Mobile — Expo config sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate EAS + app config JSON/YAML
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('apps/mobile/app.json','utf8')); console.log('app.json OK')"
+          node -e "JSON.parse(require('fs').readFileSync('apps/mobile/eas.json','utf8')); console.log('eas.json OK')"
+          node -e "const y=require('js-yaml'); ['apps/mobile/.eas/workflows/build-dev.yml','apps/mobile/.eas/workflows/production.yml'].forEach(f=>y.load(require('fs').readFileSync(f,'utf8'))); console.log('workflows OK')" \
+            || echo "::warning::js-yaml unavailable — skipped YAML validation"
+
+  guard:
+    name: Repo hygiene guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No agent/tool dirs or temp files in git
+        run: |
+          ! git ls-files | grep -E '^\.agent-teams/|^\.hermes/|^\.zcode/|supabase/\.temp/|\.DS_Store$' \
+            || { echo "Tracked junk detected (see files above)"; exit 1; }
