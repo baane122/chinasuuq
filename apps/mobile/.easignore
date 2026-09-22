@@ -19,3 +19,9 @@ android/app/build
 
 # Vercel / web-specific (irrelevant to the mobile build)
 .vercel
+
+# Generated / build outputs — EAS prebuilds and bundles its own
+dist
+ios
+android
+web-build
