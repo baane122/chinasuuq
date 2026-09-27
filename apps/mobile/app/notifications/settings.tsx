@@ -83,7 +83,7 @@ export default function NotificationSettingsScreen() {
         const { data } = await supabase
           .from("notifications")
           .select("id, title, type, created_at")
-          .eq("profile_id", user.id)
+          .eq("user_id", user.id)
           .order("created_at", { ascending: false })
           .limit(10);
         setHistory((data as any[]) || []);

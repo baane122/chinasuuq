@@ -15,13 +15,13 @@ import { cn } from "@/lib/utils";
 
 /* ─── Generated illustrations (TT Image 2.5) ─────────────────────── */
 export const EMPTY_IMAGES = {
-  orders: "/admin/empty_orders.png",
-  products: "/admin/empty_products.png",
-  customers: "/admin/empty_customers.png",
-  shipments: "/admin/empty_shipments.png",
-  sourcing: "/admin/empty_sourcing.png",
-  payments: "/admin/empty_payments.png",
-  generic: "/admin/empty_generic.png",
+  orders: "/admin/empty_orders.webp",
+  products: "/admin/empty_products.webp",
+  customers: "/admin/empty_customers.webp",
+  shipments: "/admin/empty_shipments.webp",
+  sourcing: "/admin/empty_sourcing.webp",
+  payments: "/admin/empty_payments.webp",
+  generic: "/admin/empty_generic.webp",
 } as const;
 
 export type EmptyImageKey = keyof typeof EMPTY_IMAGES;
@@ -76,7 +76,9 @@ export function StatCard({
 }: {
   label: string;
   value: string | number;
-  delta?: number;
+  /** Percent. undefined hides the row; null means the server computed the
+   *  metric but has no previous period to compare against. */
+  delta?: number | null;
   deltaLabel?: string;
   icon?: React.ComponentType<{ className?: string }>;
   tone?: keyof typeof TONES;
@@ -104,11 +106,24 @@ export function StatCard({
           <p className="mt-1.5 truncate text-[26px] font-bold leading-none tracking-tight text-dark-900">
             {value}
           </p>
-          {delta !== undefined && (
+          {delta === null && (
+            <div className="mt-2 flex items-center gap-1.5">
+              {/* A computed metric with no comparable previous period renders as
+                  an em dash. Showing 0% here would read as "flat", and showing
+                  nothing reads as "not implemented" — neither is the truth. */}
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-dark-50 px-1.5 py-0.5 text-[11px] font-bold text-dark-900/40">
+                —
+              </span>
+              <span className="text-[11px] text-dark-900/40">
+                {deltaLabel ?? "no prior period"}
+              </span>
+            </div>
+          )}
+          {delta !== undefined && delta !== null && (
             <div className="mt-2 flex items-center gap-1.5">
               <span
                 className={cn(
-                  "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-bold",
+                  "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums",
                   delta >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
                 )}
               >

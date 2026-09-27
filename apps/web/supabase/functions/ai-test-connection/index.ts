@@ -5,6 +5,7 @@
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { requireAdmin, unauthorized } from "../_shared/auth.ts";
+import { validateProviderBaseUrl } from "../_shared/ai-provider.ts";
 
 export async function handler(req: Request) {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -25,7 +26,17 @@ export async function handler(req: Request) {
     }
 
     // Normalize base URL
-    const url = base_url.trim().replace(/\/$/, "");
+    const url = base_url.trim().replace(/\/+$/, "");
+
+    // SSRF guard: this function fetches a caller-supplied URL server-side, so it
+    // must satisfy the same rules as the stored provider config. Without this an
+    // admin token could probe https://169.254.169.254/ (cloud metadata) or any
+    // internal host.
+    const urlError = validateProviderBaseUrl(url);
+    if (urlError) {
+      return json({ ok: false, error: urlError, detail: "base_url must be https with a public host and no credentials or port" }, 422);
+    }
+
     const modelsUrl = url + "/models";
 
     const resp = await fetch(modelsUrl, {

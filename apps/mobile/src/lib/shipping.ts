@@ -126,8 +126,15 @@ function parseWeightString(value: string): number {
 }
 
 /**
- * Parse MOQ from product attributes, title, or description
- * Smart parsing for Chinese e-commerce patterns
+ * Parse MOQ from product attributes, title, or description.
+ *
+ * @deprecated SUPERSEDED for anything new: src/lib/moqIngest.ts is the single
+ * MOQ reader (it scores each reading with a source and a confidence, and knows
+ * that `moq = 1` is the column default rather than a one-piece rule). Use
+ * resolveMoq()/moqOrderRules()/describeMoq() there. This copy has no confidence,
+ * no provenance and reads the marketing title as if it stated a rule, and it is
+ * kept ONLY because src/components/home/ProductCard.tsx still imports it.
+ * Do not add new callers.
  *
  * Examples:
  *   - "500个" → 500
@@ -212,25 +219,18 @@ export function parseMOQ(
 }
 
 /**
- * Get smart MOQ display text
+ * Get smart MOQ display text.
+ *
+ * @deprecated Prefer describeMoq(resolveMoq(product, capturedText)) from
+ * src/lib/moqIngest.ts, which words the SAME uncertainty the same way and says
+ * where the number came from. Kept for src/components/home/*, which still shows
+ * a bare quantity on its cards.
  */
 export function getMOQText(moq: number, locale: "en" | "so" = "en"): string {
   if (moq <= 1) return locale === "en" ? "1 piece minimum" : "1 piece ugu yar";
   if (moq < 10) return locale === "en" ? `${moq} pieces minimum` : `${moq} pieces ugu yar`;
   if (moq < 100) return locale === "en" ? `${moq} pcs min` : `${moq} pcs ugu yar`;
   return locale === "en" ? `MOQ: ${moq} pcs` : `MOQ: ${moq} pcs`;
-}
-
-/**
- * Get suggested quantities for quick selection
- */
-export function getSuggestedQuantities(moq: number): number[] {
-  if (moq <= 1) return [1, 2, 5, 10];
-  if (moq <= 5) return [moq, moq * 2, moq * 5, moq * 10];
-  if (moq <= 20) return [moq, moq * 2, moq * 5];
-  if (moq <= 100) return [moq, moq * 2, moq * 3];
-  if (moq <= 500) return [moq, moq + 100, moq + 200];
-  return [moq, moq + 500, moq + 1000];
 }
 
 /**

@@ -125,6 +125,22 @@ export default function OrderSuccessScreen() {
           </View>
         ) : null}
 
+        {/* An order taken while offline or as a guest lives only on this device
+            until syncPendingOrders() can push it, and the admin cannot see it
+            before then. Say so instead of implying it arrived. */}
+        {order && !order.synced ? (
+          <View style={styles.queuedCard}>
+            <Text style={styles.queuedTitle}>
+              {locale === "en" ? "Saved on this device" : "Kigan kaydsan"}
+            </Text>
+            <Text style={styles.queuedText}>
+              {locale === "en"
+                ? "We could not send it to our warehouse yet. Sign in and open this order again once you are online, and it will be placed for you."
+                : "Weli ma aanu u gudbin karin kaydka. Soo gali oo dib u fur dalabkan markaad internet hesho, waana la gudbin doonaa."}
+            </Text>
+          </View>
+        ) : null}
+
         {/* What happens next */}
         <View style={styles.nextCard}>
           <Text style={styles.nextTitle}>
@@ -264,6 +280,17 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.lg,
   },
   detailRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: SPACING.sm },
+  queuedCard: {
+    width: "100%",
+    backgroundColor: COLORS.warningBg,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.warning,
+    marginBottom: SPACING.lg,
+  },
+  queuedTitle: { fontSize: 13, color: COLORS.warning, fontFamily: FONTS.bold, marginBottom: SPACING.xs },
+  queuedText: { fontSize: 13, color: COLORS.textSecondary, fontFamily: FONTS.regular, lineHeight: 19 },
   detailDivider: { height: 1, backgroundColor: COLORS.border },
   detailLabel: { fontSize: 13, color: COLORS.textSecondary, fontFamily: FONTS.medium },
   detailValue: { fontSize: 14, color: COLORS.black, fontFamily: FONTS.semibold },

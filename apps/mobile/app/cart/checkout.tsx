@@ -31,6 +31,7 @@ import PaymentMethodCard from "@/components/checkout/PaymentMethodCard";
 import { formatUSD, generateOrderRef } from "@/lib/utils";
 import { createOrder } from "@/db";
 import { validateCartRemote } from "@/lib/cartValidateRemote";
+import { resolveMoq } from "@/lib/moqIngest";
 import { SmartRoute } from "@/components/orders/SmartRoute";
 import { calculateShipping, getShippingEstimates } from "@/lib/shipping";
 
@@ -136,47 +137,100 @@ export default function CheckoutScreen() {
 
   const handlePlaceOrder = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // One resolution per line: it is the number the customer was shown, the
+    // number the offline gate below tests, and the number the order keeps.
+    const resolutions = cartItems.map((it) => resolveMoq(it.product));
+
     // Server-authoritative MOQ/stock gate (best-effort: offline never blocks).
     const validation = await validateCartRemote(
-      cartItems.map((it) => ({
+      cartItems.map((it, i) => ({
         productId: it.product_id ?? it.product?.id ?? it.id,
         quantity: it.quantity,
+        minOrderQty: resolutions[i]?.displayMoq ?? null,
       }))
     );
     if (validation.blocking) {
       Alert.alert("Cart needs review", validation.messages.join("\n"));
       return;
     }
-    let orderId = `ord-${Date.now()}`;
-    try {
-      const created = await createOrder({
-        id: orderId,
-        reference: generateOrderRef(),
-        status: "pending",
-        items: cartItems.map((it) => ({
-          id: it.id,
-          product_name: it.product.title_english,
-          quantity: it.quantity,
-          price_usd: it.price_usd_estimated,
-        })),
-        total_usd: grandTotal,
-        shipping_method: shippingMethod,
-        payment_status: "pending",
-        payment_method: paymentMethod,
-        recipient_name: fullName,
-        phone,
-        city,
-        address,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        synced: true,
-      });
-      orderId = created.id;
-      useCartStore.getState().clearCart();
-    } catch {
-      // even if persistence fails, still show success
+    // ran === false means the function was skipped or unreachable — for a guest
+    // it also means no JWT to send. A supplier minimum is a fact about the
+    // listing, not about the network, so the local resolution holds here.
+    if (!validation.ran) {
+      const under = cartItems
+        .map((it, i) => ({ it, moq: resolutions[i] }))
+        .filter(({ it, moq }) => moq?.enforce && it.quantity < (moq?.displayMoq ?? 1));
+      if (under.length > 0) {
+        Alert.alert(
+          "Cart needs review",
+          under
+            .map(({ it, moq }) =>
+              `${it.product.title_english || it.product.title_original}: minimum ${moq?.displayMoq} (you have ${it.quantity}).`
+            )
+            .join("\n")
+        );
+        return;
+      }
     }
-    router.replace(`/orders/success?id=${orderId}`);
+    // Production stores no recipient/phone/payment-method columns on `orders`;
+    // checkout folds them into `notes` (→ orders.notes) so staff can still
+    // arrange WhatsApp payment. The server recomputes the money — this screen's
+    // totals are only a preview.
+    const notes = [
+      deliveryNotes.trim(),
+      `Recipient: ${fullName.trim()} · Phone: ${phone.trim()}`,
+      `Payment: ${paymentMethod.toUpperCase()}${paymentIdentifier.trim() ? ` (${paymentIdentifier.trim()})` : ""}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const result = await createOrder({
+      reference: generateOrderRef(),
+      status: "pending",
+      items: cartItems.map((it, i) => ({
+        id: it.id,
+        product_id: it.product_id ?? it.product?.id,
+        product_name: it.product.title_english || it.product.title_original,
+        quantity: it.quantity,
+        price_usd: it.price_usd_estimated,
+        marketplace: it.product.marketplace,
+        source_url: it.product.source_url,
+        image_url: it.product.images?.[0],
+        price_cny: it.price_cny_snapshot,
+        exchange_rate: it.exchange_rate,
+        // What the customer was actually held to, not the raw column: a
+        // supplier minimum the parser read off the page never reaches this
+        // row unless the cart enforced it.
+        moq: resolutions[i]?.displayMoq ?? it.product.moq,
+        variant: it.variant?.name,
+      })),
+      total_usd: grandTotal,
+      shipping_method: shippingMethod,
+      payment_status: "pending",
+      payment_method: paymentMethod,
+      recipient_name: fullName,
+      phone,
+      city,
+      address,
+      notes,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    if (!result.ok || !result.id) {
+      // The order was NOT stored. Keep the cart and tell the customer what to do.
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert(
+        locale === "en" ? "Order not placed" : "Dalabka lama gudbin",
+        (locale === "en"
+          ? `We could not save your order: ${result.error || "unknown error"}. Your cart is safe — check your connection and try again.`
+          : `Ma aanu kaydin karin dalabkaaga: ${result.error || "khalad aan la aqoonsanayn"}. Gariinkaagu waa badbaaday — hubi internetka oo mar kale isku day.`),
+        [{ text: locale === "en" ? "OK" : "Hagaag" }]
+      );
+      return;
+    }
+    useCartStore.getState().clearCart();
+    router.replace(`/orders/success?id=${result.id}`);
   };
 
   const renderStep1 = () => (
@@ -319,8 +373,9 @@ export default function CheckoutScreen() {
           </View>
         )}
         <View style={styles.divider} />
-        <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal</Text><Text style={styles.summaryValue}>{formatUSD(subtotal)}</Text></View>
-        <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Service Fee (5%)</Text><Text style={styles.summaryValue}>{formatUSD(serviceFee)}</Text></View>
+        {/* The server recomputes subtotal + fee authoritatively; everything here is a preview. */}
+        <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal (estimate)</Text><Text style={styles.summaryValue}>{formatUSD(subtotal)}</Text></View>
+        <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Service Fee (est. 5%)</Text><Text style={styles.summaryValue}>{formatUSD(serviceFee)}</Text></View>
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>Est. Shipping ({shippingMethod === "air" ? "Air" : "Sea"})</Text>
           <Text style={[styles.summaryValue, { color: COLORS.textMuted, fontSize: 12 }]}>
@@ -328,7 +383,7 @@ export default function CheckoutScreen() {
           </Text>
         </View>
         <View style={styles.divider} />
-        <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total (excl. shipping)</Text><Text style={styles.totalValue}>{formatUSD(grandTotal)}</Text></View>
+        <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total (estimate, excl. shipping)</Text><Text style={styles.totalValue}>{formatUSD(grandTotal)}</Text></View>
       </View>
       <View style={styles.infoSummary}>
         <Text style={styles.infoLabel}>Contact: {fullName}</Text>

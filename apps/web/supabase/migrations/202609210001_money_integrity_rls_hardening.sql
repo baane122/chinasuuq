@@ -275,6 +275,12 @@ CREATE POLICY "settings_select" ON public.settings FOR SELECT
 -- grants anon on public by default, so every admin_*_view was publicly
 -- readable. Enforce invoker rights, revoke from anon, and make sure the
 -- base tables carry a staff-select policy so invoker-mode still works.
+--
+-- The revoke must also name authenticated: default privileges give it
+-- arwdDxt on every view, and an auto-updatable view forwards that write to the
+-- base table as its owner — bypassing RLS whenever security_invoker could not
+-- be set. SELECT alone would not take those grants away, so ALL is revoked
+-- first and SELECT granted back.
 DO $$
 DECLARE
     v TEXT;
@@ -286,7 +292,7 @@ BEGIN
     ] LOOP
         IF to_regclass('public.' || v) IS NOT NULL THEN
             EXECUTE format('ALTER VIEW public.%I SET (security_invoker = true)', v);
-            EXECUTE format('REVOKE ALL ON public.%I FROM anon', v);
+            EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated', v);
             EXECUTE format('GRANT SELECT ON public.%I TO authenticated', v);
             RAISE NOTICE 'view hardened: %', v;
         END IF;

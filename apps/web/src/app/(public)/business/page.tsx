@@ -83,7 +83,7 @@ export default function BusinessPage() {
             <div className="absolute inset-8 rounded-[3rem] bg-brand-500/20 blur-3xl" />
             <div className="relative overflow-hidden rounded-[2.5rem] border border-brand-500/10 bg-white p-3 shadow-2xl shadow-brand-500/15">
               <Image
-                src="/images/pages/business-wholesale.png"
+                src="/images/pages/business-wholesale.webp"
                 alt="ChinaSuuq business wholesale sourcing"
                 width={1024}
                 height={1024}

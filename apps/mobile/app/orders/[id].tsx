@@ -160,7 +160,15 @@ export default function OrderDetailScreen() {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             setUpdating(true);
             try {
-              await updateOrderStatus(order.id, "cancelled");
+              const res = await updateOrderStatus(order.id, "cancelled");
+              if (!res.ok) {
+                Alert.alert("Could not cancel", res.error || "Please try again.");
+              } else if (!res.remote) {
+                Alert.alert(
+                  "Saved on this device",
+                  "The backend could not be reached, so this cancellation is local only — our team will still see the order as active until it syncs."
+                );
+              }
               await loadOrder();
             } catch (e) {
               console.error("Cancel failed", e);

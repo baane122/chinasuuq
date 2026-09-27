@@ -127,7 +127,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    // data-scroll-behavior="smooth": globals.css sets `scroll-behavior: smooth`
+    // on <html> for anchor links, and Next 16 also smooth-scrolls to the top on
+    // every route change. That is what makes navigation feel like it lags a
+    // beat; the attribute tells the router to jump instantly while anchors stay
+    // smooth.
+    <html lang="en" className={inter.variable} data-scroll-behavior="smooth" suppressHydrationWarning>
       <head>
         {/*
           Real <meta http-equiv> security directives. Next.js's metadata

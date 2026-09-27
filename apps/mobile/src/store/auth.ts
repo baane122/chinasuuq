@@ -38,10 +38,18 @@ async function fetchProfile(userId: string) {
   try {
     const { data } = await supabase
       .from("profiles")
-      .select("id, full_name, phone, city")
+      .select("id, full_name, phone, language")
       .eq("id", userId)
       .maybeSingle();
-    return data || null;
+    if (!data) return null;
+    // Production's `profiles` has no city; the customer's city is on
+    // customer_profiles, and a select naming a missing column fails whole.
+    const { data: cp } = await supabase
+      .from("customer_profiles")
+      .select("city")
+      .eq("user_id", userId)
+      .maybeSingle();
+    return { ...data, city: cp?.city ?? null };
   } catch {
     return null;
   }

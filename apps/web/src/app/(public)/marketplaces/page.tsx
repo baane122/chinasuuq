@@ -34,9 +34,11 @@ export default function MarketplacesPage() {
     let cancelled = false;
     (async () => {
       try {
+        // Exactly the columns the live `marketplaces` table has — it stores no
+        // display_name/features/metadata, so copy comes from name + description_*.
         const { data } = await supabase
           .from("marketplaces")
-          .select("id,name,display_name,marketplace_type,base_url,logo_url,is_active,features,metadata")
+          .select("id,name,slug,marketplace_type,logo_url,description_en,description_so,base_url,is_active")
           .eq("is_active", true);
         if (!cancelled && data) {
           setMarkets(mergeMarketplaces(data as unknown as LiveMarketplace[]));

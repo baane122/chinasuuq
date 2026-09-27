@@ -30,7 +30,7 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     description:
       "Factory-direct wholesale marketplace — the source behind most Chinese online stores. Best prices when buying in bulk.",
     stat: "50M+ items",
-    icon: "/markets/1688.png",
+    icon: "/markets/1688.webp",
     brandColor: "#FF5000",
     shortMark: "1688",
     homeUrl: "https://m.1688.com",
@@ -46,7 +46,7 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     description:
       "The largest consumer marketplace in China. Trending gadgets, fashion, home goods — single items welcome.",
     stat: "100M+ items",
-    icon: "/markets/taobao.png",
+    icon: "/markets/taobao.webp",
     brandColor: "#FF6A00",
     shortMark: "淘",
     homeUrl: "https://m.taobao.com",
@@ -62,7 +62,7 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     description:
       "The world's biggest small-commodities market, online. Toys, accessories, hardware, party supplies and more.",
     stat: "2M+ SKUs",
-    icon: "/markets/yiwugo.png",
+    icon: "/markets/yiwugo.webp",
     brandColor: "#E23744",
     shortMark: "义",
     homeUrl: "https://www.yiwugo.com",
@@ -78,7 +78,7 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     description:
       "Global wholesale platform with Trade Assurance, verified manufacturers and customizable OEM/ODM production.",
     stat: "200K+ suppliers",
-    icon: "/markets/alibaba.png",
+    icon: "/markets/alibaba.webp",
     brandColor: "#FF6A00",
     shortMark: "A",
     homeUrl: "https://www.alibaba.com",
@@ -94,7 +94,7 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     description:
       "The official online platform of the Yiwu market — direct-from-market stalls with digitized inventory.",
     stat: "3M+ goods",
-    icon: "/markets/chinagoods.png",
+    icon: "/markets/chinagoods.webp",
     brandColor: "#00A0E9",
     shortMark: "CG",
     homeUrl: "https://www.chinagoods.com",
@@ -110,7 +110,7 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     description:
       "JD is known for genuine electronics and appliances with strict quality control and lightning-fast domestic logistics.",
     stat: "Top authenticity",
-    icon: "/markets/jd.png",
+    icon: "/markets/jd.webp",
     brandColor: "#E1251B",
     shortMark: "JD",
     homeUrl: "https://www.jd.com",
@@ -126,7 +126,7 @@ export const MARKETPLACE_CATALOG: MarketplaceInfo[] = [
     description:
       "One-dollar wholesale store, curated for resellers. Fixed $1 pricing across thousands of everyday items, ready for bulk ordering and consolidation.",
     stat: "10K+ items",
-    icon: "/markets/dollarstore.png",
+    icon: "/markets/dollarstore.webp",
     brandColor: "#FF5A0A",
     shortMark: "$1",
     homeUrl: "https://www.huolangjun666.com/#/home",
@@ -143,17 +143,18 @@ export function getMarketplace(id: string): MarketplaceInfo | undefined {
 }
 
 // Live row from the Supabase `marketplaces` table (managed by the admin
-// dashboard). Admin edits here flow to these pre-login pages instantly.
+// dashboard). Rows update copy, urls and active state; the table stores
+// description_en/so + base_url only — tagline and stat stay catalog editorial.
 export interface LiveMarketplace {
   id: string;
   name: string;
-  display_name: string | null;
+  slug: string | null;
   marketplace_type: string;
-  base_url: string;
   logo_url: string | null;
+  description_en: string | null;
+  description_so: string | null;
+  base_url: string;
   is_active: boolean | null;
-  features: Record<string, unknown> | null;
-  metadata: Record<string, unknown> | null;
 }
 
 /** Merge live admin-managed rows over the static catalog. Rows update copy,
@@ -166,26 +167,27 @@ export function mergeMarketplaces(live: LiveMarketplace[] | null | undefined): M
     if (!row) return cat;
     return {
       ...cat,
-      displayName: row.display_name || cat.displayName,
+      displayName: row.name || cat.displayName,
       homeUrl: row.base_url || cat.homeUrl,
-      stat: (row.metadata?.stat as string) || cat.stat,
-      tagline: (row.metadata?.tagline as string) || cat.tagline,
     };
   });
-  // Admin-added marketplaces without a catalog entry get a generic card.
+  // Admin-added marketplaces without a catalog entry get a generic card. The DB
+  // records no tagline/stat/highlights for them, so the card says as little as
+  // possible instead of inventing any.
   const known = new Set(MARKETPLACE_IDS);
   const extra = live
     .filter((r) => r.is_active !== false && !known.has(r.marketplace_type))
     .map((r) => ({
       id: r.marketplace_type,
       name: r.name,
-      displayName: r.display_name || r.name,
-      tagline: (r.metadata?.tagline as string) || "New marketplace",
+      displayName: r.name,
+      tagline: "New marketplace",
       description:
-        (r.metadata?.description as string) ||
+        r.description_en ||
+        r.description_so ||
         "A new sourcing marketplace added by the ChinaSuuq team. Contact us on WhatsApp to order from it.",
-      stat: (r.metadata?.stat as string) || "New",
-      icon: "/markets/chinasuuq.png",
+      stat: "New",
+      icon: r.logo_url || "/images/marketplaces/chinasuuq.webp",
       brandColor: "#FF5A0A",
       shortMark: r.name.slice(0, 2).toUpperCase(),
       homeUrl: r.base_url,

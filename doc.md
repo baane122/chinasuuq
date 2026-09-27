@@ -3,6 +3,13 @@
 > **Live**: https://chinasuuq.com · **Admin**: https://chinasuuq.com/admin · **APK**: https://chinasuuq.com/app/chinasuuq.apk
 > **Supabase project**: `athkmrvsaijwgsyvwrbp` (`athkmrvsaijwgsyvwrbp.supabase.co`)
 > This document describes the codebase as it is. For the short version see the root `README.md`.
+>
+> **Schema truth rule**: the live project is authoritative, not this repo. Several base
+> migrations were never committed here, so a column that exists locally may be absent in
+> production and vice versa. Before writing any projection, read `information_schema` on the
+> live project (see §11 "Querying production"). PostgREST fails the *whole* request with
+> `42703` when one selected column is missing, and the clients swallow errors — that is the
+> single most common cause of an empty screen in this codebase.
 
 ## Table of Contents
 
@@ -24,7 +31,7 @@
 
 ## 1. Platform Overview
 
-ChinaSuuq connects Somali buyers with Chinese suppliers across six marketplaces — 1688, Taobao, YiwuGo, Alibaba, ChinaGoods, JD.com. The platform covers discovery → sourcing requests → quotes → orders → payment (Somali mobile money) → warehouse consolidation → international air/sea freight → delivery.
+ChinaSuuq connects Somali buyers with Chinese suppliers. The web app ships seven storefronts from `apps/web/src/lib/marketplaces.ts` — 1688, Taobao, YiwuGo, Alibaba, Chinagoods, JD and the 1$ Dollar Store — and the mobile app ships the same seven. The live `marketplaces` table is a **different** list (1688, alibaba, chinagoods, jd, taobao, yiwugo, `chinasuuq-deals`: no `dollarstore`), which is the schema-drift pattern in §6 — public pages read the code list, `logo_url` is NULL for every row. The platform covers discovery → sourcing requests → quotes → orders → payment (Somali mobile money) → warehouse consolidation → international air/sea freight → delivery.
 
 **Verified user-facing facts** (constants in `packages/shared/constants.ts` and `apps/mobile/src/lib/shipping.ts`):
 
@@ -50,20 +57,24 @@ chinasuuq/
 │   │   │   ├── i18n/               en.json, so.json
 │   │   │   └── types/              Shared web types
 │   │   ├── supabase/
-│   │   │   ├── functions/          6 Edge Functions + _shared/
-│   │   │   └── migrations/         18 SQL migrations
+│   │   │   ├── functions/          8 Edge Functions + _shared/
+│   │   │   ├── migrations/         29 SQL migrations
+│   │   │   └── audit/              schema probe + local_verify regression harness
 │   │   └── public/app/chinasuuq.apk
 │   └── mobile/                     Expo SDK 57, React Native 0.86.3, Expo Router
 │       ├── app/                    (auth)/, (tabs)/, product/, marketplace/, cart/, orders/,
 │       │                           profile/, settings/, notifications/, support/, search/
 │       ├── src/
+│       │   ├── api/                trending.ts (home feed), productEvents.ts, translate.ts
+│       │   ├── config/             marketplaceRegistry.ts (hosts/currencies/search URLs)
 │       │   ├── db/index.ts         Local-first repository (Supabase → AsyncStorage fallback)
 │       │   ├── lib/                supabase.ts, shipping.ts, exchange.ts, i18n.tsx, moq.ts,
-│       │   │                       cartValidation.ts, missionControl.ts, marketplaces.ts, ...
+│       │   │                       moqIngest.ts, cartValidation.ts, missionControl.ts, ...
 │       │   ├── store/              Zustand: cart.ts, auth.ts
 │       │   ├── i18n/               en.json, so.json
 │       │   └── components/         home/, cart/, orders/, product/, profile/, checkout/, ui/
 │       ├── app.json / app.config.js / eas.json / .eas/workflows/
+│       └── .easignore              keeps node_modules/dist/ios/android out of EAS uploads
 ├── packages/shared/                @chinasuuq/shared (TS source, no build step)
 ├── vercel.json                     Root deploy + security headers
 └── .github/workflows/ci.yml
@@ -93,12 +104,16 @@ chinasuuq/
 - **Web** (`apps/web/src/lib/supabase.ts`): one anon Supabase client + `edgeFetch()` helper that attaches the signed-in user's JWT to Edge Function calls. There is no server: no API routes, no middleware, no proxy. All privileged work happens in Edge Functions or via RLS-governed direct queries.
 - **Mobile** (`apps/mobile/src/lib/supabase.ts`): anon client with AsyncStorage session persistence, configured via `expo-constants` (`extra.supabaseUrl` / `extra.supabaseAnonKey` set in `app.config.js`).
 - **Edge Functions** hold `SUPABASE_SERVICE_ROLE_KEY` and verify caller JWT + `profiles.role` (`_shared/auth.ts`) before any privileged query.
-- No realtime subscriptions are used anywhere (verified: no `.channel()` usage in either app).
+- **Realtime** is used in one place: the admin shell (`src/app/admin/(protected)/layout.tsx`) subscribes to a single `admin-live` channel of `postgres_changes` listeners and forwards every event into `src/lib/admin/live-store.ts`. The store debounces bursts (`REFETCH_DEBOUNCE_MS = 1500`) because one order write fans out across `orders`, `order_items` and `notifications`, and stamps each dirty table so a screen only refetches when a table it actually reads changes. The mobile app has no realtime subscriptions (verified: no `.channel(` under `apps/mobile/app` or `apps/mobile/src`); it is pull-based with an AsyncStorage fallback.
 
 
 ## 4. Web App — Routes & Data
 
 All pages are statically exported (`trailingSlash: true`, images unoptimized; remote images allowed from `*.supabase.co` storage and `cod.lk888.ai` via `next.config.ts`).
+
+### Asset budget
+
+`images.unoptimized: true` is forced by `output: "export"` — there is no image server — so byte weight is controlled at build time instead: every photographic/illustrated file the site references is a WebP derivative produced with `cwebp -q 80` (`apps/web/public/images/**`, `apps/web/public/markets/**`, `apps/web/public/admin/**`). Referenced artwork went from ~34 MB of PNG to ~0.6 MB of WebP, and `apps/web/public/` from 117 MB to 50 MB. The two deliberate non-WebP exceptions are `images/logo/chinasuuq-logo.jpg` (108 KB, used as the brand logo) and `images/og-image.png` (social card — crawlers do not reliably fetch WebP `og:image`). ~33 MB of superseded PNG/JPG remains in `public/images/` unreferenced (see §12).
 
 ### Public routes (`src/app/(public)/`)
 
@@ -106,7 +121,7 @@ All pages are statically exported (`trailingSlash: true`, images unoptimized; re
 |-------|---------|
 | `/` | Landing: hero, search, marketplace cards, how-it-works, trust bar, app download, footer |
 | `/marketplaces/` | Marketplace index |
-| `/marketplaces/{1688,taobao,yiwugo,alibaba,chinagoods,jd}/` | Per-marketplace pages (`[id]` route; slugs from `src/lib/marketplaces.ts`) |
+| `/marketplaces/{1688,taobao,yiwugo,alibaba,chinagoods,jd,dollarstore}/` | Per-marketplace pages (`[id]` route; slugs from `src/lib/marketplaces.ts`) |
 | `/how-it-works/` | Process explainer |
 | `/shipping/` | Air vs sea comparison, rates, delivery cities |
 | `/business/` | B2B sourcing / bulk orders |
@@ -124,7 +139,9 @@ The mobile APK is linked from the landing page as `/app/chinasuuq.apk` (CI enfor
 ### Data layer (important)
 
 - `src/lib/supabase.ts` — anon `supabase` client + `edgeFetch()`. The only sanctioned way to call Edge Functions; attaches `apikey` + user JWT.
-- `src/lib/admin/supabase-data.ts` — typed helpers over the real database: status mappers (mobile ↔ DB), `getDashboardKpis()`, `listOrders()`/`updateOrder()` (via `admin_orders_view`), `listCustomers()` (`admin_customers_view`), product CRUD on `source_products`, marketplace accounts, sourcing, payments, exchange rates, quotes, shipments, warehouse packages, staff, settings get/set.
+- `src/lib/admin/supabase-data.ts` — typed helpers over the real database: status mappers (mobile ↔ DB), `getDashboardKpis()` (the `admin_*` rollup RPCs with a documented per-metric `null` when a call fails), `listOrders()`/`updateOrder()` (via `admin_orders_view`), `listCustomers()` (`admin_customers_view`, explicit column list — never `select("*")`), product CRUD on `source_products`, marketplace accounts, sourcing, payments, exchange rates, quotes, shipments, warehouse packages, staff, settings get/set.
+- `src/lib/admin/live-store.ts` — the Zustand realtime store described in §3 (`bumpLive`, `useLiveVersion(tables?)`, `useLiveConnected`).
+- `src/lib/admin/csv.ts` + `TableControls.tsx` + `useTablePrefs.ts` + `useUrlFilters.ts` — the shared Mission Control table layer: column visibility/sort/page prefs persisted per table, and filter state held in the URL so a filtered view is shareable and survives a reload.
 - `src/lib/admin/store.ts` + `seed*.ts` — **legacy localStorage-backed mock store (`useAdminData`) with demo seed data. No page imports it anymore; it is dead code kept only as reference.**
 - Every admin page reads and writes **real Supabase tables/views** with the anon client (RLS applies). There is no mock or offline mode in the shipped admin.
 
@@ -136,19 +153,25 @@ The mobile APK is linked from the landing page as `/app/chinasuuq.apk` (CI enfor
 
 | Module (route) | Reads / writes |
 |----------------|----------------|
-| Dashboard `/admin` | KPIs via `getDashboardKpis()` (`admin_orders_view`, `admin_customers_view`, `admin_sourcing_view`, `source_products`) + direct counts on `notifications`, `shipments`, `sourcing_requests`, `categories` |
-| Customers `/admin/customers` | `admin_customers_view` via `listCustomers()`, orders via `listOrders()` |
-| Products `/admin/products` | `source_products` CRUD |
-| Orders `/admin/orders` | `admin_orders_view` via `listOrders()`, updates via `updateOrder()` on `orders` |
+| Dashboard `/admin` | Staff-only rollup RPCs — `admin_kpis()`, `admin_revenue_daily()`, `admin_revenue_by_marketplace()`, `admin_order_status_counts()`, `admin_category_product_counts()` — plus head-counts on `shipments`, `source_products`, `sourcing_requests`, `notifications`, a narrow top-6 `source_products` query ordered by `sales_count`, recent orders and the activity feed. Every metric that cannot be computed is rendered as an em dash, never as `0`. |
+| Customers `/admin/customers` | `admin_customers_view` via `listCustomers()` (explicit columns), orders via `listOrders()`, and `Customer360Drawer.tsx` for one customer's profile + orders + line items |
+| Products `/admin/products` | `source_products` CRUD + "AI Extract from listing" (`ai-extraction`) |
+| Orders `/admin/orders` | `admin_orders_view` via `listOrders()`, updates via `updateOrder()` on `orders`, line-level provenance through `admin_order_items_view` (`OrderProvenance.tsx`) |
 | Payments `/admin/payments` | `payments` (list, insert, update status, delete) |
 | Quotes `/admin/quotes` | `quotes` (list, insert, update, delete) |
 | Rates `/admin/rates` | `exchange_rates` (list, insert, update, delete) |
-| Sourcing `/admin/sourcing` | `sourcing_requests` (list, insert, update, delete) |
+| Sourcing `/admin/sourcing` | `sourcing_requests` + `sourcing_request_items` through `SourcingBoard.tsx` (per-line fulfilment steps; each write re-reads the row to confirm RLS accepted it) |
 | Shipments `/admin/shipments` | `shipments` (list, insert, update, delete) |
 | Warehouse `/admin/warehouse` | `warehouse_packages` (list, insert, update, delete) |
 | Staff `/admin/staff` | `staff_profiles` (list, insert, update; `is_super_admin` flag) |
 | Marketplaces `/admin/marketplaces` | `marketplace_accounts` (list, insert, update, delete) |
 | Settings `/admin/settings` | `settings` key/value, password change (`auth.updateUser`), AI provider tab via Edge Functions (`ai-settings`, `ai-test-connection`) |
+
+### Live behaviour and provenance
+
+- The shell's realtime channel (§3) drives badge counts and list refreshes; the "Live" pill in the dashboard header reflects the actual socket state (`useLiveConnected()`), because it previously claimed Live through silent stalls.
+- **What every customer bought, from which app** is answered per line item, not inferred: `order_items` carries `marketplace_key`, `source_url`, `image_url`, `unit_price_cny`, `exchange_rate`, `moq_at_purchase`, `variant_name` and an `origin` (`staff | orders_jsonb | quote | admin_import | api`) — see `202609240004_order_item_provenance.sql`. `OrderProvenance.tsx` renders that per line (which marketplace logo, which captured URL, what MOQ was in force at purchase time). Marketplace attribution for revenue comes from `admin_revenue_by_marketplace()`, which apportions each order's lines by line money instead of guessing from the destination city.
+- Tables share `TableControls.tsx` (search / column visibility / page size / sort, persisted by `useTablePrefs.ts`) and CSV export through `src/lib/admin/csv.ts`.
 
 ### UI conventions
 
@@ -157,7 +180,15 @@ Shared admin components live in `src/components/admin/` (`DataTable`, `StatusBad
 
 ## 6. Database — Schema, Money Integrity, RLS
 
-### Migrations (`apps/web/supabase/migrations/`, 18 files)
+### Migrations (`apps/web/supabase/migrations/`, 29 files)
+
+The live project is authoritative, not this folder: several base migrations were never
+committed here, so a column can exist locally and be absent in production (or the reverse).
+PostgREST answers `42703`/`PGRST204` for the **whole request** when one selected column is
+missing, and the clients swallow the error — that is why empty admin screens keep recurring.
+Check `information_schema` on the live project before writing any projection, and apply SQL
+through the Management API (§11), recording each version in
+`supabase_migrations.schema_migrations`.
 
 | Migration | Content |
 |-----------|---------|
@@ -176,15 +207,47 @@ Shared admin components live in `src/components/admin/` (`DataTable`, `StatusBad
 | `202408010013_marketplace_accounts.sql` | `marketplace_accounts` |
 | `202408010014_admin_view_layer.sql` | First admin view layer |
 | `20260813_admin_view_layer_corrected.sql` | Corrected admin views (`admin_orders_view`, `admin_customers_view`, `admin_sourcing_view`, `admin_payments_view`, `admin_shipments_view`, `admin_quotes_view`, `admin_warehouse_view`, `admin_staff_view`) |
-| `202608140001_ai_settings.sql` | AI provider settings storage |
+| `202608140001_ai_settings.sql` | AI provider settings storage (superseded by `202609240002`) |
 | `202609210001_money_integrity_rls_hardening.sql` | Money + RLS hardening (details below) |
 | `202609240001_shared_marketplace_account_rpc.sql` | `get_shared_marketplace_account(marketplace)` — SECURITY DEFINER RPC returning only the active shared account for one marketplace (used by the mobile WebView flow) |
+| `202609240002_ai_secret_containment.sql` | `ai_provider_config` (single row, service-role only) replaces the `settings` → `ai_provider` row; secret-key filter on the `settings_select` policy + `settings_secret_guard()` trigger; `app_settings` policies tightened |
+| `202609240003_admin_rollups.sql` | `_require_admin_metrics_access()` gate + `admin_kpis()`, `admin_revenue_daily()`, `admin_revenue_by_marketplace()`, `admin_order_status_counts()`, tolerant `_jsonb_number/_jsonb_text` readers |
+| `202609240004_order_item_provenance.sql` | `order_items` provenance columns (`marketplace_key`, `source_url`, `unit_price_cny`, `exchange_rate`, `moq_at_purchase`, `variant_name`, `origin`, `image_url`, …), `sync_order_items()` + `trg_orders_order_items_sync`, backfill, `admin_order_items_view` |
+| `202609250000_admin_realtime_publication.sql` | Adds `orders`, `sourcing_requests`, `notifications`, `shipments` to the `supabase_realtime` publication (idempotent, warns if Realtime is not provisioned) |
+| `202609250001_translation_cache.sql` | `translations` table (PK `source_hash, target_lang`), RLS, `translations_view` (security_invoker) |
+| `202609250002_trending_products.sql` | `product_events` + `record_product_event()`, `fn_trending_products(days, limit)` (weights view 1 / search_click 2 / add_to_cart 4 / order 8, 3-day half-life decay), `admin_product_events_view` (no `session_id`) |
+| `202609250003_moq_extraction.sql` | `source_products.moq / moq_source / moq_confidence / moq_raw_text / moq_reviewed_at` + checks, `record_moq_candidate()` (service-role only; machine values may never override a manual decision or lower confidence), `moq_review_queue` view |
+| `202609250004_catalog_display_columns.sql` | Curated display columns on `source_products` (`title_english/somali/original`, `description_*`, `category`, `images[]`, `attributes`, `price_cny_min/max`, `price_usd_estimated`, `stock_status`, `sales_count`, `supplier_rating`) + backfill + `source_products_sync_display_fields` trigger |
+| `202609250005_live_catalog_columns.sql` | Aligns the repo contract with the live shape: `status` (`draft/active/archived`), `category`, `price_usd_estimated`, plus `idx_source_products_status_stock` |
+| `202609260001_mobile_order_submit.sql` | `submit_mobile_order(...)` — the mobile write path (details in §9) + `_cs_*` item/enum helpers |
+| `202609270001_admin_live_and_counts.sql` | Publishes `source_products` and `payments` for Realtime; `admin_category_product_counts()` (active categories + per-category head-count in one request) |
 
-Apply with `supabase db push` (or `psql \i <file>` for one file). The migrations are written to be safe to re-run where practical.
+Apply through the Supabase Management API (§11) and record the version in
+`supabase_migrations.schema_migrations`; `supabase db push` is **not** used here, because the
+live project contains objects this folder never captured and a push would try to reconcile
+against them. Each file is written to be safe to re-run: `ADD COLUMN IF NOT EXISTS`,
+`CREATE OR REPLACE FUNCTION`, guarded `DO $$ … $$` blocks, and idempotent
+`ALTER PUBLICATION … ADD TABLE` guarded by `pg_publication_tables`. Before applying, the SQL
+is dry-run inside `BEGIN; … ROLLBACK;` so a failing statement is caught without changing data.
+
+### Server-side metrics and guards
+
+- **Rollups** (`202609240003`): the dashboard stopped deriving money numbers in the browser. `admin_kpis()` returns `(metric, value, prev_value, delta_pct)` rows (revenue all-time / 90d / 30d / today, orders by state, delivery rate, AOV, new customers, plus `to_regclass`-guarded ops counters), `admin_revenue_daily(p_days)` returns a zero-filled date spine, `admin_revenue_by_marketplace(p_days)` apportions each order across its lines' marketplaces, `admin_order_status_counts(p_days)` groups by status, and `admin_category_product_counts()` returns active categories with a real per-category head-count.
+- **Gate**: every one of these is `STABLE SECURITY DEFINER SET search_path = public, pg_temp` and starts with `PERFORM public._require_admin_metrics_access()`, which raises unless `public.is_staff_or_admin()`; `EXECUTE` is revoked from `anon` and granted to `authenticated`. Because they aggregate other users' rows past RLS, they must never be reachable by anonymous callers.
+- **Secret containment** (`202609240002`): AI provider credentials live in `public.ai_provider_config` (one row, `id = 1`), which has RLS enabled with **no policies** — only the service role can read it. `settings` gained a `settings_secret_guard` trigger and a `settings_select` policy that rejects secret-looking keys, so a future provider key cannot be re-saved into a public table.
+- **Realtime publication**: `orders`, `sourcing_requests`, `notifications`, `shipments`, `source_products`, `payments`. Membership in the publication controls who sees the change *stream*, not who can read rows — Realtime authorises each subscription with the connecting client's role and RLS policies.
 
 ### Core tables (as used by the code)
 
 `profiles` (with `role`), customer profiles, `addresses`, `source_products` (marketplace, titles, CNY/USD prices, MOQ, stock, images), `orders` / `order_items` (order_number, reference, status, payment_status, subtotal/shipping_cost/service_fee/total, shipping_method, recipient/city/address), `payments` (order_id, amount, currency, method, status, reference, shipping_method), `quotes` / `quote_items` (sourcing_request_id, profile_id, subtotal, shipping_cost, service_fee, tax, discount, total, valid_until), `sourcing_requests`, `shipments` (carrier, status, origin/destination, weight_grams, package_count, shipping_cost, estimated_delivery_date, shipped_at, delivered_at), `warehouse_packages`, `staff_profiles` (`is_super_admin`), `marketplace_accounts` (marketplace_type, username, password_encrypted, is_active, is_shared), `notifications`, `exchange_rates` (source_currency, target_currency, rate, source, is_active, valid_from/valid_until), `settings` (key/value + updated_by/updated_at).
+
+Added by the 2026-09 work:
+
+- `source_products` display columns: `title_english` / `title_somali` / `title_original`, `description_english` / `description_somali` / `description_original`, `category`, `images text[]`, `attributes jsonb`, `price_cny_min` / `price_cny_max` / `price_usd_estimated` / `domestic_shipping_cny`, `stock_status` (`in_stock|low_stock|out_of_stock`), `sales_count`, `supplier_rating`, `status` (`draft|active|archived`) — and MOQ provenance `moq`, `moq_source` (`manual|regex|ai`), `moq_confidence numeric(4,3)`, `moq_raw_text`, `moq_reviewed_at`. Both vocabularies exist in production, so readers accept either spelling (`apps/mobile/src/db/index.ts` `mapRowToProduct`); the curated columns are what new writes fill.
+- `order_items` provenance: `marketplace_key`, `marketplace`, `source_url`, `image_url`, `unit_price` / `total_price` / `currency`, `unit_price_cny`, `exchange_rate`, `moq_at_purchase`, `variant` / `variant_name`, `origin` (`staff|orders_jsonb|quote|admin_import|api`), pipeline flags, `metadata`.
+- `product_events` (`product_id`, `event_type` in `view|add_to_cart|order|search_click`, `marketplace_key`, `session_id`, `created_at`) — append-only from anon and authenticated, SELECT only for staff.
+- `translations` (`source_text`, `source_hash`, `target_lang`, `translated_text`, `provider`, `model`; PK `(source_hash, target_lang)`) — the AI translation cache; `authenticated` may read, only the service role writes.
+- `ai_provider_config` — see "Secret containment" below. Not readable by any client role.
 
 ### Money-integrity rules (migration `202609210001`)
 
@@ -208,16 +271,31 @@ Documented follow-ups (migration footer): replace guest-order anon readability w
 
 ## 7. Edge Functions
 
-Location: `apps/web/supabase/functions/<name>/index.ts`. Shared: `_shared/auth.ts` (`requireRole`, `requireAdmin`, `requireStaffOrAdmin`, `unauthorized`), `_shared/cors.ts` (permissive CORS `*`).
+Location: `apps/web/supabase/functions/<name>/index.ts` — 8 functions. Shared: `_shared/auth.ts` (`requireRole`, `requireAdmin`, `requireStaffOrAdmin`, `unauthorized`), `_shared/cors.ts` (permissive CORS `*`), `_shared/ai-provider.ts` (`validateProviderBaseUrl`, `loadAiProviderConfig`).
 
 Deploy: `supabase functions deploy <name> --project-ref athkmrvsaijwgsyvwrbp`
 
-Caller status (verified by grep): `ai-settings` + `ai-test-connection` (admin settings), `cart-validate` (mobile checkout via `src/lib/cartValidateRemote.ts`), `ai-extraction` (admin Products page "AI Extract"). `quotes-validate` and `operational-queue` are deployed with no callers yet.
+Caller status (verified by grep): `ai-settings` + `ai-test-connection` (admin settings), `ai-extraction` (admin Products page), `cart-validate` (mobile checkout via `src/lib/cartValidateRemote.ts`), `product-enrich` (mobile `enrichMoqWithAi()`), `ai-translate` (only `apps/mobile/src/api/translate.ts`, which no screen imports yet). `quotes-validate` and `operational-queue` are deployed with no callers.
+
+### `_shared/ai-provider.ts`
+
+The three AI functions share one provider-config reader instead of each parsing `settings`:
+
+- `validateProviderBaseUrl(raw)` — https only, no userinfo, port 443 only, and the host is rejected when it is `localhost`/`*.internal`, an IPv4 private / CGNAT / link-local address (including `169.254.169.254`), multicast or reserved, or an IPv6 loopback / ULA / link-local / v4-mapped address. This is the SSRF guard; the previous inline check in `ai-extraction` only looked for an internal host after an `@`.
+- `loadAiProviderConfig(client)` — reads the `ai_provider_config` row `id = 1` (`base_url`, `api_key`, `model`, `is_configured`) with a **service-role** client and returns `null` when unconfigured or when the URL fails validation. The key is only ever placed in the `Authorization` header of the provider call; it is never logged, returned, or echoed in an error.
+
+### `ai-translate` (POST) — any signed-in role
+
+- POST `{ texts: string[], target_lang: string }` → cache-first translation. Caps: 40 texts, 2000 characters each (`413 too_many_texts` / `text_too_long`); `target_lang` must match `^[A-Za-z]{2}(-[A-Za-z]{2,4})?$`.
+- Reads hits from `translations` by `target_lang` + `source_hash IN (…)`, re-checking `source_text` so a hash collision cannot serve the wrong string; only the misses go to the provider in one `chat/completions` call (temperature 0.1, `response_format: json_object`, 30 s abort), and results are upserted back into `translations`.
+- → `{ ok:true, results:[{ source, translated, cached }], target_lang, counts:{ requested, cached, translated } }`. Errors: `authentication_required`(401), `ai_provider_not_configured`(503), `cache_read_failed`(500), `model_call_failed`/`model_output_not_json`/`model_output_unexpected`(502), `model_timeout`/`translation_failed`(500).
+- **Caller:** `apps/mobile/src/api/translate.ts` (LRU + AsyncStorage cache, fail-open to the original string). No screen imports that module yet, so the mobile UI is still English/Somali from the bundled dictionaries.
 
 ### `ai-settings` (GET/POST) — admin only
 
 - GET → `{ ok, is_configured, base_url, model, api_key_masked, updated_at, updated_by }` or `{ ok:false, error:"not_configured" }`. API key masked to first 4 + last 4 chars.
-- POST `{ api_key, base_url, model }` → validation (`api_key` ≥ 10 chars, `base_url` http(s), `model` required) → upserts `settings` key `ai_provider` with `updated_by` taken from the verified admin JWT (never the body). Errors: `422 { ok:false, errors:[...] }`.
+- POST `{ api_key, base_url, model }` → validation (`api_key` ≥ 10 chars, `base_url` https + `validateProviderBaseUrl()`, `model` required) → upserts the **`ai_provider_config`** row `id = 1` with `updated_by` taken from the verified admin JWT (never the body). Errors: `422 { ok:false, errors:[...] }`.
+- Storage moved out of `settings` in `202609240002_ai_secret_containment.sql`; `settings` now rejects secret-shaped keys outright. Only the function reaches the table (service role), and the migration deleted the old `ai_provider` row after copying it.
 - Called by `src/components/admin/AiSettingsTab.tsx`.
 
 ### `ai-test-connection` (POST) — admin only
@@ -249,6 +327,17 @@ Caller status (verified by grep): `ai-settings` + `ai-test-connection` (admin se
 - Validates the model output against the schema (type coercion, `missing[]` for unfilled fields) → `{ ok, data, missing, policy:{ toolsEnabled:false, actionAuthorization:"none" }, model }`. Errors: `503 ai_provider_not_configured`, `502 model_call_failed`/`model_output_not_json`, `500 model_timeout`.
 - **Caller:** admin Products page ("AI Extract from listing" panel in the Add-Product side panel, `apps/web/src/app/admin/(protected)/products/page.tsx`) — fills title/category/price/moq/description + detects marketplace from the URL for admin review before saving.
 
+### `product-enrich` (POST) — any signed-in role
+
+Turns captured marketplace page text into structured MOQ/price data, and is the only AI path allowed to write MOQ.
+
+- POST `{ title (required), product_id? (must be a UUID), marketplace?, evidence | snippet | page_text }` — exactly the body `moqIngest.buildMoqCapture()` produces. Rejects `title_required`, `content_required`, `product_id_not_uuid`, `input_too_large` (413 over 12 000 characters of the assembled prompt), and prompt-injection markers (`422 blocked:true`).
+- One `chat/completions` call (temperature 0, `max_tokens: 700`, the listing wrapped in `"""`), 40 s abort.
+- **Anti-hallucination gate before anything is stored:** a reported MOQ must appear as that exact number on a line of the evidence the caller submitted, otherwise it is dropped and noted as `moq_unquoted_rejected:<n>`. Confidence is assigned server-side from how explicit the quoted line was (labelled → `0.85`, unquoted-but-found → `0.6`, rejected → `min(claimed, 0.05)`) and is deliberately capped **below** the `0.9` the mobile local parser reports for an explicit "起批量", so a machine reading can never outrank a regex reading that staff can see. Price ≤ 10,000,000 CNY, at most 20 variant hints.
+- When a valid `product_id` and MOQ survive, it writes through `record_moq_candidate(...)` as the service role — the client cannot call that RPC directly — and reports the verdict in `recorded` (`written | unchanged | blocked_manual | not_improvement | product_not_found | rejected_* | not_recorded_no_moq`).
+- → `{ moq, moq_confidence, moq_raw_text, price_cny, variant_hints, notes[], recorded, provider_used, model }`.
+- **Caller:** `apps/mobile/src/db/index.ts` `enrichMoqWithAi()`, reached from the "Ask AI" button on `MoqEvidenceCard` in the marketplace capture-review sheet and the smart product form.
+
 
 ## 8. Security Model
 
@@ -256,7 +345,10 @@ Caller status (verified by grep): `ai-settings` + `ai-test-connection` (admin se
 - **No service-role client in the web bundle** — `apps/web/src/lib/supabase.ts` exports the anon client and `edgeFetch()` only. Service-role access exists exclusively inside Edge Functions, behind caller verification.
 - **Admin auth** — Supabase Auth email/password at `/admin/login`; the `(protected)` layout redirects unauthenticated users (UX guard only). Recovery/fallback code paths are gated by `NEXT_PUBLIC_DEV_BUILD` and inert in production (`src/lib/adminSession.ts`).
 - **Role forcing at signup** and **money guards** — see §6.
-- **Edge Function auth model** — `_shared/auth.ts` verifies the bearer JWT against Supabase Auth, loads `profiles.role`, and allows only listed roles; privileged queries then run with the service role. Anonymous callers can only reach `cart-validate` and `quotes-validate` (product/MOQ validation, no user data); `ai-settings`, `ai-test-connection`, `ai-extraction` and `operational-queue` require staff/admin.
+- **Edge Function auth model** — `_shared/auth.ts` verifies the bearer JWT against Supabase Auth, loads `profiles.role`, and allows only listed roles; privileged queries then run with the service role. Anonymous callers can only reach `cart-validate` and `quotes-validate` (product/MOQ validation, no user data); `ai-settings`, `ai-test-connection`, `ai-extraction` and `operational-queue` require staff/admin; `ai-translate` and `product-enrich` require any signed-in role (they cost provider credits and write shared state, so an anonymous key cannot be spent).
+- **AI credentials** — the provider key lives in `public.ai_provider_config`, which has RLS enabled and **no policies**: no client role can read it, signed-in or not. Only Edge Functions holding the service key reach it, they mask it on read (`api_key_masked`, first 4 + last 4), and `settings` refuses secret-shaped keys so it cannot leak back into an anon-readable table. The key was pasted into a chat while wiring this up and still needs rotating at the provider.
+- **Append-only telemetry** — `product_events` grants INSERT to `anon`/`authenticated` but SELECT only to staff (`is_staff_or_admin()`), and `record_product_event()` throttles to one event per product/type/user per 60 s. `admin_product_events_view` deliberately omits `session_id`.
+- **MOQ authority** — a supplier's stated minimum is business data, not user data: any signed-in role may read `source_products.moq*`, but writes go through `record_moq_candidate()`, which is granted to `service_role` only and refuses to let a machine reading override a `manual` decision or raise a confidence above what the evidence supports.
 - **CORS** — `_shared/cors.ts` allows all origins for function calls; functions themselves authenticate callers.
 
 ### Security headers (root `vercel.json` — the single source of truth)
@@ -283,10 +375,18 @@ Because the web app is a static export, Next.js `headers()`/`proxy.ts` never run
 - **Config**: `app.json` (version, `android.versionCode`, package `com.chinasuuq.app`, EAS project `a8484922-0c4f-4f79-b4be-f93fe1dd5747`, owner `baaaane24`) merged by `app.config.js`, which reads `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` with baked defaults into `extra`.
 - **Routes** (`app/`): `(auth)/` login/signup, `(tabs)/` home, markets, orders, account (cart badge); `product/[id]`, `marketplace/[marketplace]` (WebView + shared-account RPC), `cart/`, `orders/`, `profile/` (addresses, payment methods, wishlist, legal pages …), `settings/`, `notifications/`, `support/`, `search/`, `onboarding`, `+not-found`.
 - **Local-first repository** (`src/db/index.ts`): every screen read/write goes through it — tries Supabase first (orders, products, sourcing captures, profile, addresses, payments, favorites, support tickets, notifications), transparently falls back to AsyncStorage when the backend is unreachable (`isBackendOnline()` health check with 60 s cache), and writes through to Supabase when it returns.
+- **Real orders** (`submit_mobile_order`): `createOrder()` calls the `submit_mobile_order(p_reference, p_shipping_method, p_delivery_address, p_destination_city, p_notes, p_service_fee_pct, p_items jsonb)` RPC (migration `202609260001`) and `syncPendingOrders()` replays whatever was queued while offline. The RPC is `SECURITY DEFINER` with `search_path` pinned, refuses an unauthenticated caller (`42501`), validates the items array (`22023`), **recomputes subtotal, 5 % service fee and total in Postgres** — client totals are ignored — coerces the shipping method and marketplace through `pg_enum` lookups instead of blind casts, retries a colliding `reference` once, and returns `{ id, reference, total_usd, subtotal_usd, service_fee_usd, item_count }`. It writes `orders` plus one `order_items` row per line with full provenance, including `moq_at_purchase`, so the MOQ that was in force at purchase time survives a later catalog edit. A failed write returns `{ ok:false, error }`; it never reports a fake success.
+- **MOQ as a provenance-tracked field** (`src/lib/moqIngest.ts` is the single reader): `resolveMoq(product, capturedText?)` decides what "minimum order" means, tagged with its source and confidence. `extractMoqLocal()` runs 11 ordered rules over captured page text (explicit 起批量/起订/MOQ phrasing at 0.95 down to a `¥N 起批` heuristic at 0.15, with an ambiguity cap); only a reading at or above `ENFORCE_CONFIDENCE = 0.8` may block a purchase, a confident reading never *lowers* the supplier's stated minimum, and `moq_source = 'manual'` short-circuits everything. `extractOrderStructure()` additionally reads price tiers, pack size and mixed-batch minimums. Staff/customer decisions are saved by `saveMoqDecision()` (which deliberately does **not** call the service-role RPC — a customer's UPDATE simply matches no rows, so the decision stays on-device and rides along in the order snapshot), and the optional `product-enrich` AI pass can only raise confidence, never override a manual value.
+- **Cart gate** (`app/cart/index.tsx` + `src/lib/cartValidation.ts`): per line, `moqOrderRules()` → `validateCartItem()` → `{ status, problems, fixTo, minimum }`, where `fixTo` is the exact quantity that clears the rule (so the UI can offer one-tap repair instead of an error). `payableNow()` prices only the lines it actually knows and returns the unknown components as pending — it never invents a landed cost. At checkout, `cartValidateRemote.ts` calls the `cart-validate` function with the resolved minimums and blocks on `below_moq`, `insufficient_stock`, `out_of_stock`, `not_available`, `invalid_quantity`; when the function is unreachable or fails open, the local resolution takes over (`moq.enforce && quantity < displayMoq`).
+- **Home trending feed** (`src/api/trending.ts` + `src/components/home/TrendingRow.tsx`): `fn_trending_products(days, limit)` ranks the last 7 days of `product_events` (view 1 / search_click 2 / add_to_cart 4 / order 8, halving every 3 days), with a 3.5 s race, a 10-minute AsyncStorage cache under `chinasuuq-trending-products`, and a status of `live | cache | empty | unavailable` — a cold offline launch shows the saved list with a "from the last saved list" note rather than an empty row. Each card adds straight to cart when the product resolves; otherwise it opens the product page instead of inventing a line. `recordProductEvent()` writes the events (view / add_to_cart) with a 60 s per-product throttle.
+- **Marketplace registry** (`src/config/marketplaceRegistry.ts`): host allow-list, currency, rate key, "shows MOQ" flag, locales and search-URL template per marketplace (`1688, taobao, yiwugo, alibaba, chinagoods, jd, dollarstore`). The WebView host check and the admin/`marketplaces` artwork share this vocabulary; the file itself flags that its search URL templates are UNVERIFIED against the live sites, and no screen imports it yet.
 - **Status mapping** (`src/lib/supabase-adapter.ts`): bidirectional map between the mobile pipeline (`pending, confirmed, purchasing, purchased, in_transit_china, warehouse, inspection, consolidated, shipped, in_transit, arrived_somalia, customs, ready_for_pickup, out_for_delivery, delivered, cancelled`) and DB statuses (`in_warehouse`, `inspection_passed`, `customs_hold`, `out_for_delivery`, `sourcing`, `quoted`, `awaiting_payment`, …). The admin `supabase-data.ts` mirrors the same mappers.
-- **i18n**: `src/i18n/en.json` + `so.json` via `src/lib/i18n.tsx` context.
+- **i18n**: `src/i18n/en.json` + `so.json` via `src/lib/i18n.tsx` context. UI chrome is translated from the bundled dictionaries; catalog text is not machine-translated yet — `src/api/translate.ts` is a complete client for the `ai-translate` function (batch ≤ 40 texts, LRU + AsyncStorage cache, fails open to the source string) but no screen imports it.
+- **No realtime**: the app polls or reads once per focus and falls back to AsyncStorage; the change stream in §6 is consumed by the admin console only.
 - **Marketplace browsing**: WebView flow; shared marketplace accounts come from the `get_shared_marketplace_account` RPC (returns only active `is_shared = true` accounts).
 - **EAS build profiles** (`eas.json`): `development`, `preview` (Android APK), `production`. EAS workflow YAMLs live in `apps/mobile/.eas/workflows/` (`build-dev.yml`, `production.yml`) — these are EAS workflows, not GitHub Actions.
+- **`apps/mobile/.easignore`** keeps `node_modules`, `dist`, `ios`, `android`, `web-build`, `.expo` and `.vercel` out of the EAS upload (EAS installs dependencies and prebuilds on its own servers); `package-lock.json` is deliberately kept for reproducible installs. `apps/mobile/ios/` exists locally as `expo prebuild` output and is intentionally untracked.
+- **Scripts**: `npm run android` / `ios` in `apps/mobile` use `expo run:android` / `expo run:ios` (local native build), not `expo start`.
 
 ### APK release process
 
@@ -344,22 +444,65 @@ Tailwind v4 runs through `@tailwindcss/postcss`, with optional pinned platform p
 2. **mobile-config**: `app.json` + `eas.json` JSON validation, EAS workflow YAML validation.
 3. **guard**: repo hygiene — fails when agent/tool state dirs (`.agent-teams/`, `.hermes/`, `.zcode/`, `supabase/.temp/`, `.DS_Store`) are tracked.
 
+### Querying production
+
+Migrations and read-only checks run through the Supabase Management API rather than a local
+`supabase` CLI login:
+
+```
+POST https://api.supabase.com/v1/projects/athkmrvsaijwgsyvwrbp/database/query
+Authorization: Bearer <sbp_…>          # body: {"query": "…"}
+```
+
+House rules for using it (each of these has already bitten once):
+
+- Wrap any candidate change in `BEGIN; … ROLLBACK;` first — it is a real production dry-run.
+- Only the **last** row-returning statement comes back; NOTICEs are swallowed; every statement needs its trailing `;` or the API reports a syntax error at `ROLLBACK`.
+- There is no `information_schema.function_privileges` here — read grants from `pg_proc.proacl`.
+- `supabase db push` is not used (see §6). Applying a file means sending its SQL and inserting its version into `supabase_migrations.schema_migrations(version, name, statements)` with `'{}'::text[]`.
+- The Management API token is a credential: never echo it, and `curl` to `*.supabase.co` does not work from this machine (it hangs) while `api.supabase.com` does — use a direct HTTPS request for data probes.
+
+### Performance budget (what was measured, and what got faster)
+
+The site is a static export, so every cost is paid in the visitor's browser. Load work on 2026-09-27 was driven by measurement, not guesswork:
+
+| Cost found | Fix |
+|------------|-----|
+| ~34 MB of PNG artwork referenced by the landing/info pages (the homepage alone pulled ~6.7 MB of ~1 MB marketplace logos rendered at 48 px) | WebP derivatives at `q 80`, sized to the box they render in: referenced set ~0.6 MB, `public/` 117 MB → 50 MB |
+| Next 16 animates the whole document on route change because `globals.css` sets `scroll-behavior: smooth` | `data-scroll-behavior="smooth"` on `<html>`, which restores Next's instant-jump override while keeping in-page anchors smooth (`src/app/layout.tsx`) |
+| ~25 round trips per admin realtime burst, including a 16-query N+1 over categories and a 500-row product pull for a top-6 list | grouped `admin_*` rollup RPCs, one `.in()` tally → one RPC, narrow projections with `order`/`limit`, and parallel `Promise.all` where awaits were sequential |
+| Every admin list refetching its whole dataset on any unrelated realtime event | per-table stamps in `live-store.ts` so pages subscribe only to the tables they read |
+| `.select("*")` on the customer view, 7 `JSON.parse` calls per render in `useUrlFilters`, ~500 unmemoized sourcing line cards | explicit column list (verified against live `information_schema`), `useMemo` on the parsed defaults, `memo()` on the card |
+| 27 uncompressed images in the export | generated with `cwebp` (`sips` cannot write WebP on macOS) |
+
+Deliberately **not** changed: `trailingSlash: true` and `images.unoptimized: true` are both
+forced by `output: "export"`; the JS bundle (home ≈ 238 KB gzipped) is React and
+framer-motion, and `optimizePackageImports` already covers `lucide-react` /
+`framer-motion`, so cutting it further means removing features, not config.
+
 ### Local build notes (this machine)
 
 - `~/.npm` has a cache ownership problem (npm suggests `sudo chown -R 501:20 ~/.npm`); use `npm install --cache /tmp/npm-cache-chinasuuq` locally.
 
 ## 12. Known Gaps & Follow-ups
 
-1. **Partially orphaned Edge Functions** — `cart-validate` is wired into mobile checkout and `ai-extraction` into the admin Products page. `quotes-validate` (line-based contract, awaiting a customer quote-request flow) and `operational-queue` (duplicated by direct admin-view queries in the dashboard) remain deployed but uncalled — wire or drop when those surfaces are built.
-2. **Guest-order tracking** — anon-readable guest orders (`orders_select_own`) pending tokenized reference lookup (migration footer).
-3. **`quote_items.cost_price` exposure** to quote owners (migration footer proposes `supplier_options`).
-4. ~~CHECK constraints `NOT VALID`~~ — DONE: all 10 constraints validated against live data (2026-09-21).
-5. **AI extraction is a stub** — `model_call_not_yet_wired`; the AI provider credentials live in `settings` (`ai_provider`) managed via `ai-settings`.
-6. **ESLint debt** — ~77 pre-existing errors in `apps/web` (mostly `@typescript-eslint/no-explicit-any`, react-hooks rules in admin pages); lint is non-blocking in CI, typecheck + build are the gates.
-7. **TS version drift** — web TS ^5 vs mobile ~6.0.3.
-8. **`expo-secure-store`** declared but unused in mobile.
-9. **Legacy admin mock store** (`src/lib/admin/store.ts`, `seed*.ts`) is unreferenced dead code.
-10. **No realtime** — order status updates are pull-based; nothing subscribes to Supabase Realtime.
+1. **Uncalled Edge Functions** — `quotes-validate` (line-based contract, awaiting a customer quote-request flow) and `operational-queue` (duplicated by the dashboard's direct rollup RPCs) remain deployed with no callers. `cart-validate`, `ai-extraction`, `ai-settings`, `ai-test-connection` and `product-enrich` are all wired; `ai-translate` is wired only to a client module no screen imports yet (below).
+2. **Built but not consumed** — `apps/mobile/src/api/translate.ts` (the whole `ai-translate` path), `apps/mobile/src/config/marketplaceRegistry.ts` (screens still use `src/lib/marketplaces.ts`), `productEvents.getTrendingProducts()` (superseded by `api/trending.ts`), and the `moq_review_queue`, `translations_view` and `admin_product_events_view` views. They are deployed and tested; wiring them is a follow-up, not missing work.
+3. **`admin_orders_view` exposes no items JSONB**, so the dashboard's recent-orders and derivation paths read `orders` and `admin_order_items_view` directly rather than one view.
+4. **Guest-order tracking** — anon-readable guest orders (`orders_select_own`) pending tokenized reference lookup (migration footer).
+5. **`quote_items.cost_price` exposure** to quote owners (migration footer proposes `supplier_options`).
+6. **AI provider key must be rotated** — a provider key was pasted into chat while wiring this up, so treat it as exposed. It now lives in `ai_provider_config`, but rotating it at the provider is the user's action.
+7. **Production catalog is empty** — `source_products` has 0 rows (so Products, trending, top sellers, marketplace counts and the MOQ gate have no real data to exercise them) and `categories.image_url` is NULL for all 12 categories. The artwork under `apps/web/public/images/categories/` is unreferenced by both apps for this reason.
+8. **~33 MB of superseded artwork** still ships in `apps/web/public/images/` (`hero/hero1-3.png`, `how/`, `marketing/`, `categories/*.jpg`, `onboarding/slide3.png`). Nothing references it (verified with `git grep`, and mobile bundles its own `assets/`), so it only costs deploy size, not page weight — deleted on product sign-off.
+9. **`apps/mobile/ios/` is untracked** prebuild output by design; EAS prebuilds iOS on its own servers.
+10. ~~CHECK constraints `NOT VALID`~~ — DONE: all 10 constraints validated against live data (2026-09-21).
+11. **AI extraction is live, not a stub** — `ai-extraction` makes a real provider call through `ai-provider.ts`; the earlier `model_call_not_yet_wired` note is obsolete.
+12. **ESLint debt** — ~77 pre-existing errors in `apps/web` (mostly `@typescript-eslint/no-explicit-any`, react-hooks rules in admin pages); lint is non-blocking in CI, typecheck + build are the gates.
+13. **TS version drift** — web TS ^5 vs mobile ~6.0.3.
+14. **`expo-secure-store`** declared but unused in mobile.
+15. **Legacy admin mock store** (`src/lib/admin/store.ts`, `seed*.ts`) is unreferenced dead code.
+16. ~~No realtime~~ — DONE: the admin console streams (`admin-live`, §3/§6). Mobile is still intentionally pull-based.
+17. **Column-contract risk stays open** — the repo cannot be the source of truth for the live schema (§6). Any new projection must be checked against `information_schema` first, and the safest UI pattern is a fallback ladder or an explicit "unknown", because a single missing column voids the whole request.
 
 ## 13. Appendix — Key Constants
 
@@ -368,12 +511,36 @@ Tailwind v4 runs through `@tailwindcss/postcss`, with optional pinned platform p
 | WhatsApp number / link | `8615277074143` / `https://wa.me/8615277074143` | `packages/shared/constants.ts` |
 | Air freight | $8.50/kg, min $15 | `apps/mobile/src/lib/shipping.ts` |
 | Sea freight | $2.20/kg, min $25, min chargeable 10 kg | `apps/mobile/src/lib/shipping.ts` |
-| Marketplaces (web) | 1688, Taobao, YiwuGo, Alibaba, Chinagoods, JD | `apps/web/src/lib/marketplaces.ts` |
-| Marketplaces (mobile) | same six + `dollarstore` ("1$ Dollar Store") | `apps/mobile/src/lib/marketplaces.ts` |
+| Marketplaces (web + mobile slugs) | 1688, Taobao, YiwuGo, Alibaba, Chinagoods, JD, `dollarstore` (1$ Dollar Store) | `apps/web/src/lib/marketplaces.ts`, `apps/mobile/src/lib/marketplaces.ts` |
+| Marketplaces (live `marketplaces` table) | 1688, alibaba, chinagoods, jd, taobao, yiwugo, `chinasuuq-deals` — no `dollarstore`, all `logo_url` NULL | Supabase project |
 | EAS project / owner | `a8484922-0c4f-4f79-b4be-f93fe1dd5747` / `baaaane24` | `apps/mobile/app.json` |
 | Android package | `com.chinasuuq.app` | `apps/mobile/app.json` |
 | Dev admin recovery code | `chinasuuq-dev` (only when `NEXT_PUBLIC_DEV_BUILD=1`) | `apps/web/src/lib/adminSession.ts` |
+| MOQ enforcement threshold | `ENFORCE_CONFIDENCE = 0.8` (below this, a reading is shown but never blocks) | `apps/mobile/src/lib/moqIngest.ts` |
+| Manual MOQ range | 1…100000; machine confidence 0…1 (`source_products_moq_confidence_check`) | `apps/mobile/src/lib/moqIngest.ts`, `202609250003_moq_extraction.sql` |
+| Trending weights / decay | view 1 · search_click 2 · add_to_cart 4 · order 8; half-life 259200 s (3 days); days 1–90, limit 1–100 | `fn_trending_products()` in `202609250002_trending_products.sql` |
+| Event throttle | 1 per product + type + user per 60 s | `record_product_event()` |
+| Trending feed timings | 3500 ms RPC race, 10-minute cache TTL, key `chinasuuq-trending-products` | `apps/mobile/src/api/trending.ts` |
+| Translation batch caps | 40 texts, 2000 chars each, 30 s model timeout; client LRU 400 entries + key `chinasuuq-translate-cache` | `ai-translate`, `apps/mobile/src/api/translate.ts` |
+| Product-enrich input cap | 12000 chars over the assembled prompt | `product-enrich` |
+| Realtime burst debounce | 1500 ms | `apps/web/src/lib/admin/live-store.ts` |
+| Admin realtime channel / tables | `admin-live` → orders, sourcing_requests, notifications, shipments, source_products, payments | `admin/(protected)/layout.tsx`, §6 |
+| Mobile service fee | `SERVICE_FEE_PCT = 0.05` (a `5` here would bill 500 %) | `apps/mobile/src/db/index.ts` |
+| Backend health probe | `…/rest/v1/orders?select=id&limit=1`, 60 s cache, 5 s abort | `apps/mobile/src/db/index.ts` |
+
+### Regression harness
+
+`apps/web/supabase/audit/` holds `20260924_schema_probe.sql` (what the live project actually
+looks like) and `local_verify/` — 16 numbered SQL suites plus `run.sh` that exercise the
+rollups, provenance sync, publication membership, the MOQ gate, view writability and
+`submit_mobile_order` against a throwaway database. Run it before applying any migration that
+touches money, provenance or a view.
 
 ---
 
-*Maintained by hand against the codebase (last pass: route inventory, admin data sources, edge function contracts, migrations, and security headers all re-verified from source). When behavior changes, update this file and the root `README.md` together.*
+*Maintained by hand against the codebase. Last full pass: 2026-09-27 — route and admin-module
+inventory, the `admin_*` rollup RPCs and their staff gate, Realtime publication membership and
+the admin live store, the mobile order/trending/MOQ paths, the eight Edge Function contracts,
+all 29 migrations, the AI credential containment change, and the asset/perf budget were each
+re-read from source and checked against the live project. When behavior changes, update this
+file and the root `README.md` together.*

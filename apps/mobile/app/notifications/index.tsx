@@ -25,7 +25,8 @@ interface Notification {
   title: string;
   body: string | null;
   type: string;
-  read_at: string | null;
+  /** Production stores a plain boolean here; there is no read_at timestamp. */
+  read: boolean;
   created_at: string;
 }
 
@@ -55,8 +56,8 @@ export default function NotificationsScreen() {
       }
       const { data, error } = await supabase
         .from("notifications")
-        .select("id, title, body, type, read_at, created_at")
-        .eq("profile_id", user.id)
+        .select("id, title, body, type, read, created_at")
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
       if (error) throw error;
@@ -83,15 +84,19 @@ export default function NotificationsScreen() {
   const markAllRead = async () => {
     if (!user?.id) return;
     Haptics.selectionAsync();
-    const now = new Date().toISOString();
     try {
-      await supabase
+      const { error } = await supabase
         .from("notifications")
-        .update({ read_at: now })
-        .eq("profile_id", user.id)
-        .is("read_at", null);
-      setItems((prev) => prev.map((n) => ({ ...n, read_at: n.read_at || now })));
-    } catch {}
+        .update({ read: true })
+        .eq("user_id", user.id)
+        .eq("read", false);
+      // Say so when the write is refused, instead of moving dots the server
+      // never cleared.
+      if (error) throw error;
+      setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch (e) {
+      console.warn("Failed to mark notifications read", e);
+    }
   };
 
   const formatDate = (iso: string) => {
@@ -110,7 +115,7 @@ export default function NotificationsScreen() {
 
   const renderItem = ({ item }: { item: Notification }) => {
     const Icon = TYPE_ICONS[item.type] || Bell;
-    const unread = !item.read_at;
+    const unread = !item.read;
     const rowStyle = [styles.row, unread && styles.rowUnread];
     return (
       <TouchableOpacity
@@ -150,7 +155,7 @@ export default function NotificationsScreen() {
         <Text style={styles.headerTitle}>
           {locale === "en" ? "Notifications" : "Ogeysiisyada"}
         </Text>
-        {items.some((i) => !i.read_at) ? (
+        {items.some((i) => !i.read) ? (
           <TouchableOpacity onPress={markAllRead} style={styles.markBtn} hitSlop={8}>
             <Text style={styles.markBtnText}>
               {locale === "en" ? "Mark all read" : "Calaamadee dhamaan"}

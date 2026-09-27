@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { Suspense, useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatUSD, formatCNY } from "@/lib/utils";
 import {
   ClipboardList, Loader2, Plus, Edit3, Trash2, ExternalLink,
   Download, BarChart3, ArrowUpRight, Clock, CheckCircle2,
-  Smartphone, ShoppingCart, MapPin, Check, X
+  Smartphone, ShoppingCart, MapPin, Check, X, Columns3, RotateCcw
 } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import FormInput from "@/components/admin/FormInput";
-import { PageHeader, StatCard, PageGrid, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
+import {
+  PageHeader, StatCard, PageGrid, SearchInput, FilterChips, TableShell,
+  EMPTY_IMAGES, SidePanel, SkeletonTable,
+} from "@/components/admin/ui";
+import { TableControls } from "@/components/admin/TableControls";
+import { useUrlFilters, useDebouncedFilterValue } from "@/components/admin/useUrlFilters";
+import { useTablePrefs } from "@/components/admin/useTablePrefs";
+import SourcingBoard from "@/components/admin/SourcingBoard";
+import { useLiveVersion } from "@/lib/admin/live-store";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Types ─────────────────────────────────────────────────────── */
@@ -82,15 +90,63 @@ const defaultQuote: QuoteItem = {
   selected: false,
 };
 
+/* ── URL-backed view state ──────────────────────────────────────
+ * `view` switches between the request list and the sourcing board for the
+ * order LINEs (deliverable: a click-to-advance board). Everything else is the
+ * page's previous filter set, moved out of component state so a view can be
+ * reloaded or shared. Client-side only: apps/web is a static export.
+ */
+const FILTER_DEFAULTS = {
+  view: "requests", q: "", status: "All", app: "", from: "", to: "",
+};
+
+const REQUEST_COLUMNS: { key: string; label: string }[] = [
+  { key: "customer", label: "Customer" },
+  { key: "marketplace", label: "Marketplace" },
+  { key: "product", label: "Product" },
+  { key: "quantity", label: "Qty" },
+  { key: "destination", label: "Destination" },
+  { key: "status", label: "Status" },
+  { key: "created_at", label: "Date" },
+  { key: "actions", label: "Actions" },
+];
+
 /* ── Component ─────────────────────────────────────────────────── */
 
 export default function SourcingPage() {
+  // useSearchParams() must sit under <Suspense> in a statically prerendered
+  // route, or the prerenderer bails this page to full client rendering.
+  return (
+    <Suspense
+      fallback={
+        <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+          <SkeletonTable />
+        </div>
+      }
+    >
+      <SourcingPageContent />
+    </Suspense>
+  );
+}
+
+function SourcingPageContent() {
   const toast = useToast();
+  const { values, set, reset, isFiltered } = useUrlFilters(FILTER_DEFAULTS);
+  const tablePrefs = useTablePrefs("sourcing-requests");
+  const liveVersion = useLiveVersion(["sourcing_requests", "orders", "order_items"]);
+
   const [requests, setRequests] = useState<SourcingRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("All");
+  const statusFilter = values.status;
+  const appFilter = values.app;
+  const dateFrom = values.from;
+  const dateTo = values.to;
+  const view = values.view === "board" ? "board" : "requests";
+
+  // Drafted while typing; committed to the URL debounced.
+  const commitSearch = useCallback((v: string) => set("q", v), [set]);
+  const [search, setSearch] = useDebouncedFilterValue(values.q, commitSearch);
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -113,9 +169,7 @@ export default function SourcingPage() {
 
   /* ── Fetch ──────────────────────────────────────────────────── */
 
-  useEffect(() => { fetchRequests(); }, []);
-
-  const fetchRequests = async () => {
+  const fetchRequests = useCallback(async () => {
     try {
       setIsLoading(true);
       const { data, error: fetchError } = await supabase
@@ -129,7 +183,13 @@ export default function SourcingPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchRequests();
+    // liveVersion comes from the realtime channel in the admin layout, so a
+    // request captured on the phone appears without a manual reload.
+  }, [fetchRequests, liveVersion]);
 
   /* ── Filter ─────────────────────────────────────────────────── */
 
@@ -137,11 +197,25 @@ export default function SourcingPage() {
     let result = requests;
 
     if (statusFilter !== "All") {
-      result = result.filter((r) => r.status === statusFilter.toLowerCase());
+      const wanted = Object.entries(statusLabels).find(([, label]) => label === statusFilter)?.[0];
+      result = result.filter((r) => r.status === (wanted ?? statusFilter.toLowerCase()));
     }
 
-    if (search) {
-      const q = search.toLowerCase();
+    if (appFilter) {
+      result = result.filter(
+        (r) => (r.marketplace || "").toLowerCase() === appFilter.toLowerCase()
+      );
+    }
+
+    if (dateFrom) {
+      result = result.filter((r) => r.created_at && r.created_at.slice(0, 10) >= dateFrom);
+    }
+    if (dateTo) {
+      result = result.filter((r) => r.created_at && r.created_at.slice(0, 10) <= dateTo);
+    }
+
+    const q = search.trim().toLowerCase();
+    if (q) {
       result = result.filter(
         (r) =>
           r.customer_id.toLowerCase().includes(q) ||
@@ -151,7 +225,7 @@ export default function SourcingPage() {
       );
     }
     return result;
-  }, [requests, search, statusFilter]);
+  }, [requests, search, statusFilter, appFilter, dateFrom, dateTo]);
 
   /* ── KPIs ──────────────────────────────────────────────────── */
 
@@ -176,6 +250,20 @@ export default function SourcingPage() {
       counts[key] = (counts[key] || 0) + 1;
     });
     return counts;
+  }, [requests]);
+
+  /* ── Which apps requests mention ───────────────────────────── */
+
+  const appOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    requests.forEach((r) => {
+      const key = (r.marketplace || "").trim();
+      if (!key) return;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([app, count]) => ({ app, count }));
   }, [requests]);
 
   /* ── Form handlers ──────────────────────────────────────────── */
@@ -348,7 +436,23 @@ export default function SourcingPage() {
         title="Sourcing"
         subtitle="Customer requests — quote, approve and purchase from suppliers"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {view === "requests" && (
+              <TableControls columns={REQUEST_COLUMNS} prefs={tablePrefs} />
+            )}
+            {isFiltered && (
+              <button
+                onClick={() => {
+                  reset();
+                  setSearch("");
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-100"
+                title="Clears every filter and the query string"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset filters
+              </button>
+            )}
             <a
               href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20have%20a%20sourcing%20request"
               target="_blank"
@@ -366,34 +470,124 @@ export default function SourcingPage() {
         }
       />
 
-      {/* ── KPIs ── */}
-      <PageGrid className="grid-cols-2 sm:grid-cols-4">
-        <StatCard label="Total Requests" value={kpis.total} icon={ClipboardList} tone="brand" delay={0} />
-        <StatCard label="Pending" value={kpis.pending} icon={Clock} tone="warning" delay={1} />
-        <StatCard label="Quoted" value={kpis.quoted} icon={BarChart3} tone="violet" delay={2} />
-        <StatCard label="Purchased" value={kpis.purchased} icon={CheckCircle2} tone="success" delay={3} />
-      </PageGrid>
+      {/* ── Two different objects, two views ──
+          Requests are what the customer asked for. The board is the order LINEs
+          moving through sourcing, which is the same team's work but a different
+          table. The chosen view is part of the URL (?view=board). */}
+      <FilterChips<string>
+        options={[
+          { value: "requests", label: "Customer requests", count: requests.length },
+          { value: "board", label: "Line-item sourcing board" },
+        ]}
+        value={view}
+        onChange={(v) => set("view", v === "requests" ? "" : v)}
+      />
+
+      {view === "requests" && (
+        <PageGrid className="grid-cols-2 sm:grid-cols-4">
+          <StatCard label="Total Requests" value={kpis.total} icon={ClipboardList} tone="brand" delay={0} />
+          <StatCard label="Pending" value={kpis.pending} icon={Clock} tone="warning" delay={1} />
+          <StatCard label="Quoted" value={kpis.quoted} icon={BarChart3} tone="violet" delay={2} />
+          <StatCard label="Purchased" value={kpis.purchased} icon={CheckCircle2} tone="success" delay={3} />
+        </PageGrid>
+      )}
+
+      {view === "board" && (
+        <p className="-mt-2 text-xs text-dark-900/45">
+          This board is the <strong className="font-semibold text-dark-900/70">line items of real
+          orders</strong>, staged by the four flags stored on each line. It is click-to-advance:
+          there is no drag-and-drop in this build, and nothing is installed that would provide it.
+        </p>
+      )}
 
       {/* ── Search + Controls ── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder="Search by customer, marketplace, or city..."
+          placeholder={
+            view === "board"
+              ? "Search a line by product, order reference or customer…"
+              : "Search by customer, marketplace, or city..."
+          }
           className="max-w-md flex-1"
         />
         <div className="flex items-center gap-3">
-          <button onClick={handleExport} className="admin-btn-outline">
-            <Download className="h-3 w-3" /> Export
-          </button>
+          {view === "requests" && (
+            <button onClick={handleExport} className="admin-btn-outline">
+              <Download className="h-3 w-3" /> Export
+            </button>
+          )}
           <span className="text-xs text-dark-400">
-            {filteredRequests.length} request{filteredRequests.length !== 1 ? "s" : ""}
+            {view === "requests"
+              ? `${filteredRequests.length} request${filteredRequests.length !== 1 ? "s" : ""}`
+              : "filtered lines are counted on the board"}
           </span>
-          {search && (
-            <button onClick={() => setSearch("")} className="text-xs text-brand-500 hover:underline">Clear</button>
+          {(search || appFilter || dateFrom || dateTo) && (
+            <button
+              onClick={() => {
+                setSearch("");
+                set("q", "");
+                set("app", "");
+                set("from", "");
+                set("to", "");
+              }}
+              className="text-xs text-brand-700 hover:underline"
+            >
+              Clear
+            </button>
           )}
         </div>
       </div>
+
+      {/* ── App + date range, shared by both views ── */}
+      <div className="flex flex-wrap items-end gap-4">
+        {appOptions.length > 0 && view === "requests" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-dark-900/40">
+              Marketplace
+            </span>
+            <FilterChips<string>
+              options={[
+                { value: "", label: "Any", count: requests.length },
+                ...appOptions.map(({ app, count }) => ({ value: app, label: app, count })),
+              ]}
+              value={appFilter}
+              onChange={(v) => set("app", v)}
+            />
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] font-bold uppercase tracking-wider text-dark-900/40">
+            Created
+          </label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => set("from", e.target.value)}
+            className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+            aria-label="Created from"
+          />
+          <span className="text-xs text-dark-300">to</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => set("to", e.target.value)}
+            className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+            aria-label="Created to"
+          />
+        </div>
+      </div>
+
+      {view === "board" ? (
+        <SourcingBoard
+          appFilter={appFilter}
+          search={search}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+        />
+      ) : (
+        <>
 
       {/* ── Status chips ── */}
       <FilterChips<string>
@@ -403,7 +597,7 @@ export default function SourcingPage() {
           count: statusCounts[tab],
         }))}
         value={statusFilter}
-        onChange={setStatusFilter}
+        onChange={(v) => set("status", v)}
       />
 
       {/* ── Table ── */}
@@ -412,7 +606,7 @@ export default function SourcingPage() {
         error={error}
         errorRetry={fetchRequests}
         hasData={filteredRequests.length > 0}
-        filtered={!!search || statusFilter !== "All"}
+        filtered={!!search || statusFilter !== "All" || !!appFilter || !!dateFrom || !!dateTo}
         emptyImage={EMPTY_IMAGES.sourcing}
         emptyTitle="No sourcing requests"
         emptySubtitle="New customer sourcing requests will land here."
@@ -422,17 +616,25 @@ export default function SourcingPage() {
       >
       <div className="rounded-2xl bg-white border border-dark-900/[0.06] shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="admin-table w-full">
+          <table
+            className={cn(
+              "admin-table w-full",
+              tablePrefs.className,
+              tablePrefs.tableClassName
+            )}
+          >
             <thead>
               <tr>
-                <th>Customer</th>
-                <th>Marketplace</th>
-                <th>Product</th>
-                <th>Qty</th>
-                <th>Destination</th>
-                <th>Status</th>
-                <th className="hidden lg:table-cell">Date</th>
-                <th className="text-right">Actions</th>
+                {!tablePrefs.isHidden("customer") && <th>Customer</th>}
+                {!tablePrefs.isHidden("marketplace") && <th>Marketplace</th>}
+                {!tablePrefs.isHidden("product") && <th>Product</th>}
+                {!tablePrefs.isHidden("quantity") && <th>Qty</th>}
+                {!tablePrefs.isHidden("destination") && <th>Destination</th>}
+                {!tablePrefs.isHidden("status") && <th>Status</th>}
+                {!tablePrefs.isHidden("created_at") && (
+                  <th className="hidden lg:table-cell">Date</th>
+                )}
+                {!tablePrefs.isHidden("actions") && <th className="text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-dark-900/[0.04]">
@@ -531,6 +733,8 @@ export default function SourcingPage() {
         )}
       </div>
       </TableShell>
+        </>
+      )}
 
       {/* ── Detail Drawer with Price Comparison ── */}
       <AnimatePresence>

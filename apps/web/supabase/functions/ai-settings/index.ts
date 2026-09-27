@@ -5,6 +5,7 @@
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { requireAdmin, unauthorized } from "../_shared/auth.ts";
+import { validateProviderBaseUrl } from "../_shared/ai-provider.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 export async function handler(req: Request) {
@@ -26,27 +27,26 @@ export async function handler(req: Request) {
   try {
     if (req.method === "GET") {
       const { data, error } = await supabase
-        .from("settings")
-        .select("value, updated_at, updated_by")
-        .eq("key", "ai_provider")
-        .single();
+        .from("ai_provider_config")
+        .select("*")
+        .eq("id", 1)
+        .maybeSingle();
 
       if (error || !data) {
         return json({ ok: false, error: "not_configured" }, 200);
       }
 
       // Mask the API key in response (show last 4 chars only)
-      const val = data.value as Record<string, unknown>;
-      const apiKey = String(val.api_key || "");
+      const apiKey = String(data.api_key || "");
       const masked = apiKey.length > 8
         ? apiKey.slice(0, 4) + "..." + apiKey.slice(-4)
         : apiKey ? "***" : "";
 
       return json({
         ok: true,
-        is_configured: Boolean(val.is_configured && val.api_key),
-        base_url: val.base_url || "",
-        model: val.model || "",
+        is_configured: Boolean(data.is_configured && data.api_key),
+        base_url: data.base_url || "",
+        model: data.model || "",
         api_key_masked: masked,
         updated_at: data.updated_at,
         updated_by: data.updated_by,
@@ -62,10 +62,15 @@ export async function handler(req: Request) {
       if (!api_key || typeof api_key !== "string" || api_key.trim().length < 10) {
         errors.push("api_key_too_short");
       }
+      // ai-extraction refuses non-https providers, so accepting http here would
+      // save a configuration that silently never works.
       if (!base_url || typeof base_url !== "string") {
         errors.push("base_url_required");
-      } else if (!base_url.startsWith("http://") && !base_url.startsWith("https://")) {
-        errors.push("base_url_invalid_protocol");
+      } else {
+        // Reject non-https and internal hosts at save time: ai-extraction will
+        // refuse to call them anyway, so saving one produces a silently dead setup.
+        const urlError = validateProviderBaseUrl(base_url.trim().replace(/\/+$/, ""));
+        if (urlError) errors.push(urlError);
       }
       if (!model || typeof model !== "string" || model.trim().length === 0) {
         errors.push("model_required");
@@ -76,18 +81,16 @@ export async function handler(req: Request) {
       }
 
       const { error } = await supabase
-        .from("settings")
+        .from("ai_provider_config")
         .upsert({
-          key: "ai_provider",
-          value: {
-            api_key: api_key.trim(),
-            base_url: base_url.trim().replace(/\/$/, ""),
-            model: model.trim(),
-            is_configured: true,
-          },
+          id: 1,
+          base_url: base_url.trim().replace(/\/$/, ""),
+          api_key: api_key.trim(),
+          model: model.trim(),
+          is_configured: true,
           updated_by: admin.userId,
           updated_at: new Date().toISOString(),
-        }, { onConflict: "key" });
+        }, { onConflict: "id" });
 
       if (error) {
         return json({ ok: false, error: error.message }, 500);

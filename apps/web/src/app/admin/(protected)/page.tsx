@@ -32,27 +32,21 @@ import { PageHeader, StatCard, PageGrid, SectionCard } from "@/components/admin/
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { supabase } from "@/lib/supabase";
 import { formatUSD } from "@/lib/utils";
+import { ORDERS_CSV_COLUMNS, downloadCsv, stamp, toCsv } from "@/lib/admin/csv";
+import { useLiveConnected, useLiveVersion } from "@/lib/admin/live-store";
 import {
-  getDashboardKpis,
+  getAdminKpis,
+  getAdminOrderStatusCounts,
+  getAdminRevenueByMarketplace,
+  getAdminRevenueDaily,
+  kpiValue,
   listOrders,
   listProducts,
+  mapDbStatusToMobile,
+  type KpiMap,
 } from "@/lib/admin/supabase-data";
 
 /* ─── Types ──────────────────────────────────────────────────────── */
-interface Kpis {
-  totalRevenue: number;
-  totalOrders: number;
-  activeOrders: number;
-  deliveredOrders: number;
-  totalCustomers: number;
-  totalProducts: number;
-  todaysOrders: number;
-  todaysRevenue: number;
-  pendingSourcing: number;
-  avgOrderValue: number;
-  deliveryRate: number;
-}
-
 interface RecentOrder {
   id: string;
   order_number: string;
@@ -98,14 +92,23 @@ interface TopCategory {
   name: string;
   slug: string;
   image_url: string | null;
-  product_count: number;
+  /** Counted live from source_products.category_id — the categories table has
+   *  no stored product_count. Null means the count query failed, i.e. unknown. */
+  product_count: number | null;
 }
 
+/**
+ * Each counter is a head-count query, and a head-count that fails returns
+ * `count: null` rather than throwing. Reporting that as 0 told staff there were
+ * no low-stock items when the real answer was "the query broke", which is the
+ * fabricated-metric failure this dashboard was rebuilt to remove. null means
+ * unknown and renders as an em dash.
+ */
 interface LiveOps {
-  inTransit: number;
-  lowStock: number;
-  pendingSourcing: number;
-  unreadNotifications: number;
+  inTransit: number | null;
+  lowStock: number | null;
+  pendingSourcing: number | null;
+  unreadNotifications: number | null;
 }
 
 interface MarketplaceRevenue {
@@ -114,6 +117,92 @@ interface MarketplaceRevenue {
   orders: number;
   color: string;
   icon: string;
+}
+
+/* ─── Presentation maps for server-side buckets ─────────────────── */
+/**
+ * Keyed by the normalised (mobile) status, because every DB status spelling is
+ * funnelled through mapDbStatusToMobile() before it reaches the donut. Anything
+ * unmapped renders grey, so an unrecognised status is visible rather than
+ * silently coloured like something it is not.
+ */
+const STATUS_COLORS: Record<string, string> = {
+  pending: "#F59E0B",
+  confirmed: "#3B82F6",
+  purchasing: "#3B82F6",
+  purchased: "#10B981",
+  warehouse: "#8B5CF6",
+  inspection: "#8B5CF6",
+  consolidated: "#8B5CF6",
+  shipped: "#0EA5E9",
+  in_transit: "#0EA5E9",
+  customs: "#F97316",
+  out_for_delivery: "#FF5A0A",
+  delivered: "#10B981",
+  cancelled: "#9CA3AF",
+};
+
+/** Keys are matched after normalising, because the RPC returns whatever the
+ *  app recorded. The registered names in the marketplaces table are lowercase
+ *  slugs (1688, taobao, yiwugo, jd, alibaba, chinagoods, dollarstore). */
+const MARKETPLACE_STYLE: Record<string, { color: string; icon: string }> = {
+  "1688": { color: "#FF5A0A", icon: "🏪" },
+  taobao: { color: "#FF6A00", icon: "🛒" },
+  yiwugo: { color: "#F97316", icon: "📦" },
+  jd: { color: "#FF6A00", icon: "📦" },
+  alibaba: { color: "#F97316", icon: "🏪" },
+  chinagoods: { color: "#FF5A0A", icon: "🏪" },
+  dollarstore: { color: "#F97316", icon: "🛒" },
+  unattributed: { color: "#9CA3AF", icon: "📊" },
+};
+
+function marketplaceStyle(name: string) {
+  return (
+    MARKETPLACE_STYLE[name.trim().toLowerCase().replace(/\s+/g, "")] || {
+      color: "#9CA3AF",
+      icon: "📊",
+    }
+  );
+}
+
+/**
+ * Which failures are worth re-attempting without asking the operator.
+ *
+ * A stale PostgREST schema cache surfaces as "Could not find the function
+ * public.admin_kpis() in the schema cache" (PGRST202) right after a migration is
+ * applied, and a cold connection or a flaky edge shows up as a fetch/network
+ * error or a 5xx. Both clear themselves seconds later. Anything else — a missing
+ * grant, a broken signature — will not, so it must not retry.
+ */
+const TRANSIENT_ERROR =
+  /schema cache|PGRST202|PGRST106|failed to fetch|fetch failed|networkerror|network request failed|load failed|service unavailable|bad gateway|gateway time-?out|too many requests|\b50[0234]\b|timed out|timeout/i;
+
+/** How long to wait before the single automatic re-attempt. */
+const AUTO_RETRY_DELAY_MS = 4000;
+
+function weekdayLabel(day: string) {
+  const d = new Date(`${day}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? day.slice(5)
+    : d.toLocaleDateString("en-US", { weekday: "short" });
+}
+
+/**
+ * Several stored statuses normalise to the same label (both in_warehouse and
+ * in_transit_china history land on 'warehouse'), so counts must be summed after
+ * mapping or the same bucket appears twice with different sizes.
+ */
+function mergeStatusCounts(
+  rows: { status: string; count: number }[]
+): { status: string; count: number }[] {
+  const merged = new Map<string, number>();
+  for (const row of rows) {
+    const key = mapDbStatusToMobile(row.status);
+    merged.set(key, (merged.get(key) || 0) + row.count);
+  }
+  return [...merged.entries()]
+    .map(([status, count]) => ({ status, count }))
+    .sort((a, b) => b.count - a.count);
 }
 
 /* ─── Animated counter hook ─────────────────────────────────────── */
@@ -384,7 +473,7 @@ function ActivityFeed({ events }: { events: ActivityEvent[] }) {
 
 /* ─── Main Dashboard ────────────────────────────────────────────── */
 export default function AdminDashboard() {
-  const [kpis, setKpis] = useState<Kpis | null>(null);
+  const [metrics, setMetrics] = useState<KpiMap>({});
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
@@ -393,35 +482,63 @@ export default function AdminDashboard() {
   const [marketplaceRevenue, setMarketplaceRevenue] = useState<MarketplaceRevenue[]>([]);
   const [topCategories, setTopCategories] = useState<TopCategory[]>([]);
   const [ops, setOps] = useState<LiveOps>({
-    inTransit: 0,
-    lowStock: 0,
-    pendingSourcing: 0,
-    unreadNotifications: 0,
+    inTransit: null,
+    lowStock: null,
+    pendingSourcing: null,
+    unreadNotifications: null,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /* The shell owns the single realtime channel; this page only refetches when a
+   * debounced burst lands, so a five-row order write causes one reload. */
+  const liveVersion = useLiveVersion();
+  const liveConnected = useLiveConnected();
+  /* Auto-retries spent on the current failure. A ref, not state: nothing about
+   * it needs a render, and the effect below must see the count it just wrote.
+   * Reset only by a load that reports no error, so one failure can never buy
+   * more than one silent re-attempt. */
+  const autoRetriesRef = useRef(0);
 
   /* Animated counters */
-  const animRevenue = useAnimatedCounter(kpis?.totalRevenue ?? 0, 1400, 0);
-  const animOrders = useAnimatedCounter(kpis?.totalOrders ?? 0, 1200, 0);
-  const animCustomers = useAnimatedCounter(kpis?.totalCustomers ?? 0, 1200, 0);
-  const animShipments = useAnimatedCounter(kpis?.activeOrders ?? 0, 1200, 0);
+  const animRevenue = useAnimatedCounter(kpiValue(metrics, "revenue_all_time"), 1400, 0);
+  const animOrders = useAnimatedCounter(kpiValue(metrics, "orders_total"), 1200, 0);
+  const animCustomers = useAnimatedCounter(kpiValue(metrics, "customers_total"), 1200, 0);
+  const animShipments = useAnimatedCounter(kpiValue(metrics, "shipments_active"), 1200, 0);
+
+  /**
+   * undefined = the metric has not loaded yet, so StatCard hides the row.
+   * null      = loaded, but there is no previous period to compare against.
+   */
+  const deltaOf = (metric: string) =>
+    metrics[metric] ? metrics[metric].deltaPct : undefined;
 
   /* Fetch all dashboard data */
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [
-          kpiRes,
-          ordersRes,
-          productsRes,
-          notifRes,
-        ] = await Promise.all([
-          getDashboardKpis(),
-          listOrders({ pageSize: 10 }),
-          listProducts({}),
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      /* The shell will not render this page until its own auth check has
+       * resolved, but getSession() is the same await edgeFetch uses: doing it
+       * here turns "the RPCs raced the session restore" from an assumption into
+       * a guarantee, at the cost of one already-cached promise. */
+      await supabase.auth.getSession();
+      const [kpiRes, dailyRes, statusRes, mpRes, ordersRes, productsRes, notifRes] =
+        await Promise.all([
+          getAdminKpis(),
+          getAdminRevenueDaily(7),
+          getAdminOrderStatusCounts(90),
+          getAdminRevenueByMarketplace(90),
+          listOrders({ pageSize: 8 }),
+          // The six best sellers, ordered and limited in Postgres. listProducts
+          // pulls the whole catalog page to slice six here, which costs every
+          // row's bytes on every dashboard refresh for six cards' worth of data.
+          supabase
+            .from("source_products")
+            .select(
+              "id, title_english, marketplace, sales_count, price_usd_estimated, images"
+            )
+            .order("sales_count", { ascending: false })
+            .limit(6),
           supabase
             .from("notifications")
             .select("id, title, body, type, created_at")
@@ -429,140 +546,142 @@ export default function AdminDashboard() {
             .limit(20),
         ]);
 
-        if (kpiRes.ok && kpiRes.kpis) {
-          setKpis(kpiRes.kpis as Kpis);
-        }
-        if (ordersRes.ok) {
-          const orders = (ordersRes.orders as RecentOrder[]) || [];
-          setRecentOrders(orders);
+      setMetrics(kpiRes.metrics);
+      const failed = [
+        kpiRes.ok ? null : `admin_kpis: ${kpiRes.error}`,
+        dailyRes.ok ? null : `admin_revenue_daily: ${dailyRes.error}`,
+        statusRes.ok ? null : `admin_order_status_counts: ${statusRes.error}`,
+        mpRes.ok ? null : `admin_revenue_by_marketplace: ${mpRes.error}`,
+      ].filter(Boolean);
 
-          /* Build order status counts */
-          const statusMap: Record<string, number> = {};
-          orders.forEach((o) => {
-            statusMap[o.status] = (statusMap[o.status] || 0) + 1;
-          });
-          const statusColors: Record<string, string> = {
-            pending: "#F59E0B",
-            awaiting_payment: "#F59E0B",
-            paid: "#10B981",
-            purchasing: "#3B82F6",
-            in_warehouse: "#8B5CF6",
-            in_transit: "#0EA5E9",
-            customs: "#F97316",
-            out_for_delivery: "#FF5A0A",
-            delivered: "#10B981",
-            completed: "#10B981",
-            cancelled: "#9CA3AF",
-            refunded: "#EF4444",
-          };
-          const statusCounts: OrderStatusCount[] = Object.entries(statusMap)
-            .map(([status, count]) => ({
-              status,
-              count,
-              color: statusColors[status] || "#9CA3AF",
-            }))
-            .sort((a, b) => b.count - a.count);
-          setOrderStatusCounts(statusCounts);
+      setDailyRevenue(
+        dailyRes.series.map((d) => ({
+          date: d.date,
+          label: weekdayLabel(d.date),
+          amount: d.revenue,
+        }))
+      );
+      setOrderStatusCounts(
+        mergeStatusCounts(statusRes.counts).map((s) => ({
+          ...s,
+          color: STATUS_COLORS[s.status] || "#9CA3AF",
+        }))
+      );
+      setMarketplaceRevenue(
+        mpRes.rows.map((r) => ({ ...r, ...marketplaceStyle(r.marketplace) }))
+      );
+      setRecentOrders((ordersRes.orders as RecentOrder[]) || []);
 
-          /* Build daily revenue from last 7 days */
-          const days: DailyRevenue[] = [];
-          for (let i = 6; i >= 0; i--) {
-            const d = new Date();
-            d.setDate(d.getDate() - i);
-            const dateStr = d.toISOString().slice(0, 10);
-            const dayLabel = d.toLocaleDateString("en-US", { weekday: "short" });
-            const dayRevenue = orders
-              .filter((o) => (o.created_at || "").slice(0, 10) === dateStr)
-              .reduce((s, o) => s + (o.total || 0), 0);
-            days.push({ date: dateStr, label: dayLabel, amount: dayRevenue });
-          }
-          setDailyRevenue(days);
-
-          /* Build marketplace revenue */
-          const mpMap: Record<string, { revenue: number; orders: number }> = {};
-          orders.forEach((o) => {
-            const mp = o.city?.includes("Mogadishu")
-              ? "1688"
-              : o.city?.includes("Hargeisa")
-                ? "Taobao"
-                : "YiwuGo";
-            if (!mpMap[mp]) mpMap[mp] = { revenue: 0, orders: 0 };
-            mpMap[mp].revenue += o.total || 0;
-            mpMap[mp].orders += 1;
-          });
-          const mpColors: Record<string, string> = {
-            "1688": "#FF5A0A",
-            Taobao: "#FF6A00",
-            YiwuGo: "#F97316",
-          };
-          const mpIcons: Record<string, string> = {
-            "1688": "🏪",
-            Taobao: "🛒",
-            YiwuGo: "📦",
-          };
-          setMarketplaceRevenue(
-            Object.entries(mpMap)
-              .map(([marketplace, data]) => ({
-                marketplace,
-                ...data,
-                color: mpColors[marketplace] || "#9CA3AF",
-                icon: mpIcons[marketplace] || "📊",
-              }))
-              .sort((a, b) => b.revenue - a.revenue)
-          );
-        }
-
-        /* Top products */
-        if (productsRes.ok && productsRes.products) {
-          const sorted = (productsRes.products as TopProduct[])
-            .sort((a, b) => (b.sales_count || 0) - (a.sales_count || 0))
-            .slice(0, 6);
-          setTopProducts(sorted);
-        }
-
-        /* Activity feed from notifications */
-        if (!notifRes.error && notifRes.data) {
-          setActivities(
-            (notifRes.data as any[]).map((n) => ({
-              id: n.id,
-              title: n.title || n.body || "System event",
-              type: n.type || "system",
-              created_at: n.created_at,
-            }))
-          );
-        }
-      } catch (e: any) {
-        setError(e?.message || "Failed to load dashboard");
-      } finally {
-        setLoading(false);
+      /* Top products — the query already orders by sales_count and stops at
+       * six, so nothing is sliced or re-sorted here. */
+      if (!productsRes.error && productsRes.data) {
+        setTopProducts(
+          (
+            productsRes.data as {
+              id: string;
+              title_english: string | null;
+              marketplace: string | null;
+              sales_count: number | null;
+              price_usd_estimated: number | null;
+              images: string[] | null;
+            }[]
+          ).map((p) => ({
+            id: p.id,
+            title: p.title_english ?? "",
+            title_english: p.title_english ?? "",
+            marketplace: p.marketplace ?? "",
+            sales_count: p.sales_count ?? 0,
+            price_usd_estimated: p.price_usd_estimated ?? 0,
+            source_images: p.images,
+          }))
+        );
+      } else if (productsRes.error) {
+        failed.push(`source_products (top sellers): ${productsRes.error.message}`);
       }
-    })();
+
+      /* Activity feed from notifications */
+      if (!notifRes.error && notifRes.data) {
+        setActivities(
+          (notifRes.data as any[]).map((n) => ({
+            id: n.id,
+            title: n.title || n.body || "System event",
+            type: n.type || "system",
+            created_at: n.created_at,
+          }))
+        );
+      } else if (notifRes.error) {
+        failed.push(`notifications: ${notifRes.error.message}`);
+      }
+
+      /* One banner for the whole load, after every part has reported. */
+      if (failed.length) setError(failed.join(" | "));
+      else autoRetriesRef.current = 0;
+    } catch (e: any) {
+      setError(e?.message || "Failed to load dashboard");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load, liveVersion]);
+
+  /* load() used to run only on mount and on a realtime bump, so one 502 or a
+   * schema cache that had not caught up with the migration pinned the banner
+   * over the dashboard until someone reloaded the tab. Re-run once by itself
+   * when the error reads as transient; the Retry button covers everything else.
+   * Unmounting (or a manual retry, which nulls the error) clears the timer. */
+  useEffect(() => {
+    if (!error) return;
+    if (autoRetriesRef.current >= 1 || !TRANSIENT_ERROR.test(error)) return;
+    autoRetriesRef.current += 1;
+    const timer = setTimeout(() => void load(), AUTO_RETRY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [error, load]);
 
   /* Live ops counters + popular categories (cheap parallel head-counts) */
   useEffect(() => {
     (async () => {
       const [ship, stock, src, notif, cats] = await Promise.all([
         supabase.from("shipments").select("id", { count: "exact", head: true }).eq("status", "in_transit"),
-        supabase.from("source_products").select("id", { count: "exact", head: true }).eq("stock_status", "low_stock"),
-        supabase.from("sourcing_requests").select("id", { count: "exact", head: true }).eq("status", "pending"),
-        supabase.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null),
         supabase
-          .from("categories")
-          .select("id, name, slug, image_url, product_count")
-          .eq("is_active", true)
-          .order("product_count", { ascending: false })
-          .limit(8),
+          .from("source_products")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "active")
+          .eq("stock_status", "low_stock"),
+        supabase.from("sourcing_requests").select("id", { count: "exact", head: true }).eq("status", "pending"),
+        // Read state is the `read` boolean on the live table; there is no read_at.
+        supabase.from("notifications").select("id", { count: "exact", head: true }).eq("read", false),
+        // One grouped RPC: the categories table stores no product_count, so this
+        // used to be one head-count per category — twelve requests on every
+        // debounced realtime burst, which showed as a stall on any write.
+        supabase.rpc("admin_category_product_counts"),
       ]);
       setOps({
-        inTransit: ship.count || 0,
-        lowStock: stock.count || 0,
-        pendingSourcing: src.count || 0,
-        unreadNotifications: notif.count || 0,
+        inTransit: ship.error ? null : (ship.count ?? 0),
+        lowStock: stock.error ? null : (stock.count ?? 0),
+        pendingSourcing: src.error ? null : (src.count ?? 0),
+        unreadNotifications: notif.error ? null : (notif.count ?? 0),
       });
-      if (!cats.error && cats.data) setTopCategories(cats.data as TopCategory[]);
+      /* A failed count stays null ("—"), never 0: the dashboard was rebuilt to
+       * stop reporting a broken query as an empty metric. */
+      if (!cats.error && cats.data) {
+        setTopCategories(
+          ((cats.data as { id: string; name_en: string; slug: string; image_url: string | null; product_count: number }[]) ?? [])
+            .map((c) => ({
+              id: c.id,
+              name: c.name_en,
+              slug: c.slug,
+              image_url: c.image_url,
+              product_count: c.product_count,
+            }))
+            .sort((a, b) => (b.product_count ?? -1) - (a.product_count ?? -1))
+            .slice(0, 8)
+        );
+      }
     })();
-  }, []);
+  }, [liveVersion]);
 
   const unread = useMemo(
     () => activities.filter((a) => a.type === "order").length,
@@ -577,9 +696,28 @@ export default function AdminDashboard() {
         subtitle="Mission Control — live overview of ChinaSuuq operations"
         actions={
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 uppercase">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Live
+            {/* Honest connection state: the pill used to claim Live whether or
+                not Realtime had a socket, which hid every silent stall. */}
+            <span
+              title={
+                liveConnected
+                  ? "Updates stream as staff and customers write."
+                  : "No Realtime socket — showing data from the last refresh."
+              }
+              className={
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase " +
+                (liveConnected
+                  ? "bg-success/10 border-success/30 text-success"
+                  : "bg-dark-50 border-dark-200 text-dark-400")
+              }
+            >
+              <span
+                className={
+                  "w-1.5 h-1.5 rounded-full " +
+                  (liveConnected ? "bg-success animate-pulse" : "bg-dark-300")
+                }
+              />
+              {liveConnected ? "Live" : "Offline"}
             </span>
             {/* Quick actions */}
             <a
@@ -589,9 +727,29 @@ export default function AdminDashboard() {
               <Plus className="h-3.5 w-3.5" />
               New Order
             </a>
-            <button className="admin-btn-outline h-9 px-3 text-xs">
+            <button
+              onClick={() =>
+                downloadCsv(
+                  `chinasuuq-recent-orders-${stamp()}`,
+                  toCsv(ORDERS_CSV_COLUMNS, recentOrders)
+                )
+              }
+              disabled={recentOrders.length === 0}
+              className="admin-btn-outline h-9 px-3 text-xs disabled:opacity-50"
+            >
               <Download className="h-3.5 w-3.5" />
               Export
+            </button>
+            <button
+              className="admin-btn-ghost h-9 w-9 px-0"
+              onClick={() => void load()}
+              disabled={loading}
+              aria-label="Refresh dashboard"
+              title="Refresh"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+              />
             </button>
             <a
               href="/admin/settings"
@@ -623,10 +781,24 @@ export default function AdminDashboard() {
             className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"
           >
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              Could not load live data: {error}. Check that Supabase migration
-              014 has been applied.
+            <span className="flex-1">
+              Could not load live data: {error}. Check that migration
+              202609240003_admin_rollups.sql has been applied to this project.
             </span>
+            {/* The banner has to be actionable from where it sits. It used to be
+                a dead end: staff could read the failure but nothing on the page
+                re-ran those queries short of reloading the tab. */}
+            <button
+              onClick={() => void load()}
+              disabled={loading}
+              className="admin-btn-outline ml-auto h-8 shrink-0 px-2.5 text-xs disabled:opacity-50"
+              title="Re-run the failed queries"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+              />
+              Retry
+            </button>
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -638,8 +810,8 @@ export default function AdminDashboard() {
           value={`$${animRevenue.toLocaleString()}`}
           icon={DollarSign}
           tone="brand"
-          delta={12}
-          deltaLabel="vs last week"
+          delta={deltaOf("revenue_30d")}
+          deltaLabel="last 30d vs prior 30d"
           delay={0}
         />
         <StatCard
@@ -647,8 +819,8 @@ export default function AdminDashboard() {
           value={animOrders}
           icon={ShoppingCart}
           tone="info"
-          delta={8}
-          deltaLabel="vs last week"
+          delta={deltaOf("orders_30d")}
+          deltaLabel="last 30d vs prior 30d"
           delay={1}
         />
         <StatCard
@@ -656,8 +828,8 @@ export default function AdminDashboard() {
           value={animCustomers}
           icon={Users}
           tone="violet"
-          delta={15}
-          deltaLabel="growing"
+          delta={deltaOf("customers_total")}
+          deltaLabel="added in last 30d vs the base before"
           delay={2}
         />
         <StatCard
@@ -671,19 +843,49 @@ export default function AdminDashboard() {
 
       {/* ─── Secondary KPI row ──────────────────────────────── */}
       <PageGrid className="grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Today's Orders" value={kpis?.todaysOrders ?? 0} icon={Clock3} tone="warning" delay={4} />
-        <StatCard label="Today's Revenue" value={`$${(kpis?.todaysRevenue ?? 0).toLocaleString()}`} icon={TrendingUp} tone="success" delay={5} />
-        <StatCard label="Pending Sourcing" value={kpis?.pendingSourcing ?? 0} icon={Package} tone="error" delay={6} />
-        <StatCard label="Avg Order Value" value={`$${(kpis?.avgOrderValue ?? 0).toFixed(0)}`} icon={DollarSign} tone="violet" delay={7} />
+        <StatCard
+          label="Today's Orders"
+          value={kpiValue(metrics, "orders_today")}
+          icon={Clock3}
+          tone="warning"
+          delta={deltaOf("orders_today")}
+          deltaLabel="vs yesterday"
+          delay={4}
+        />
+        <StatCard
+          label="Today's Revenue"
+          value={`$${kpiValue(metrics, "revenue_today").toLocaleString()}`}
+          icon={TrendingUp}
+          tone="success"
+          delta={deltaOf("revenue_today")}
+          deltaLabel="vs yesterday"
+          delay={5}
+        />
+        <StatCard
+          label="Pending Sourcing"
+          value={kpiValue(metrics, "sourcing_pending")}
+          icon={Package}
+          tone="error"
+          delay={6}
+        />
+        <StatCard
+          label="Avg Order Value"
+          value={`$${kpiValue(metrics, "aov_30d").toFixed(0)}`}
+          icon={DollarSign}
+          tone="violet"
+          delta={deltaOf("aov_30d")}
+          deltaLabel="last 30d"
+          delay={7}
+        />
       </PageGrid>
 
       {/* ─── Live Ops pulse strip ───────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: "In transit", value: ops.inTransit, href: "/admin/shipments", dot: "bg-info-500", icon: Ship },
-          { label: "Low stock items", value: ops.lowStock, href: "/admin/products", dot: "bg-warning-500", icon: Package },
-          { label: "Pending sourcing", value: ops.pendingSourcing, href: "/admin/sourcing", dot: "bg-error-500", icon: Clock3 },
-          { label: "Unread alerts", value: ops.unreadNotifications, href: "/admin/settings", dot: "bg-success-500", icon: Activity },
+          { label: "In transit", value: ops.inTransit, href: "/admin/shipments", dot: "bg-info", icon: Ship },
+          { label: "Low stock items", value: ops.lowStock, href: "/admin/products", dot: "bg-warning", icon: Package },
+          { label: "Pending sourcing", value: ops.pendingSourcing, href: "/admin/sourcing", dot: "bg-error", icon: Clock3 },
+          { label: "Unread alerts", value: ops.unreadNotifications, href: "/admin/settings", dot: "bg-success", icon: Activity },
         ].map((chip, i) => (
           <motion.a
             key={chip.label}
@@ -739,7 +941,10 @@ export default function AdminDashboard() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-        <SectionCard title="Order Status" subtitle="Current pipeline">
+        <SectionCard
+          title="Order Status"
+          subtitle="Every order placed in the last 90 days"
+        >
           {loading ? (
             <div className="h-40 animate-pulse rounded-xl bg-dark-50" />
           ) : orderStatusCounts.length > 0 ? (
@@ -852,7 +1057,7 @@ export default function AdminDashboard() {
         >
           <SectionCard
             title="Popular Categories"
-            subtitle="Live catalog breadth — ranked by product count"
+            subtitle="Live catalog breadth — each badge counts this category's products in the catalog right now (— when the count could not be read)"
             actions={
               <a href="/admin/products" className="admin-btn-ghost h-7 px-2 text-xs">
                 All products
@@ -882,8 +1087,15 @@ export default function AdminDashboard() {
                         <Layers className="h-7 w-7 text-brand-500/40" />
                       </div>
                     )}
-                    <span className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-bold text-dark-900 shadow-sm">
-                      {c.product_count ?? 0}
+                    <span
+                      className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-bold text-dark-900 shadow-sm"
+                      title={
+                        c.product_count === null
+                          ? "Product count not readable — the counting query failed"
+                          : "Products linked to this category via source_products.category_id"
+                      }
+                    >
+                      {c.product_count ?? "—"}
                     </span>
                   </div>
                   <p className="mt-2 truncate text-xs font-semibold capitalize text-dark-900">
@@ -980,7 +1192,10 @@ export default function AdminDashboard() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
         >
-        <SectionCard title="Revenue by Marketplace" subtitle="Source distribution">
+        <SectionCard
+          title="Revenue by Marketplace"
+          subtitle="Actual purchase source — last 90 days"
+        >
           {loading ? (
             <div className="space-y-4">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -988,10 +1203,19 @@ export default function AdminDashboard() {
               ))}
             </div>
           ) : marketplaceRevenue.length > 0 ? (
-            <MarketplaceBreakdown data={marketplaceRevenue} />
+            <>
+              <MarketplaceBreakdown data={marketplaceRevenue} />
+              {marketplaceRevenue.every((m) => m.marketplace === "Unattributed") && (
+                <p className="mt-4 rounded-xl bg-dark-50 px-3 py-2 text-[11px] leading-relaxed text-dark-900/50">
+                  These orders predate per-line provenance, so the app they were
+                  bought in was never recorded. Orders placed from the updated
+                  mobile app attribute each line to its marketplace.
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-center text-sm text-dark-900/40 py-8">
-              No marketplace data
+              No orders in the last 90 days
             </p>
           )}
         </SectionCard>

@@ -2,8 +2,8 @@
 // Client-side checks only. The trusted backend remains authoritative for
 // payable totals and placement — offline carts stay DRAFTS and every order is
 // revalidated against supplier state before purchase.
-import { validateMOQ } from "./moq";
-import type { OrderRules } from "./moq";
+import { validateMOQ, nextValidQuantity } from "./moq";
+import type { MoqLocale, OrderRules } from "./moq";
 
 export type CartItemStatus = "draft" | "valid" | "needs_review" | "stale";
 
@@ -11,6 +11,14 @@ export interface ValidatedCartItem {
   itemId: string;
   status: CartItemStatus;
   problems: string[];
+  /**
+   * One-tap fix: the smallest quantity that satisfies EVERY structural rule
+   * (floor, carton multiples, increment). Null when there is nothing to jump
+   * to, so the UI never renders a button that changes nothing.
+   */
+  fixTo: number | null;
+  /** The minimum this line is short of, when it is short of one. */
+  minimum: number | null;
 }
 
 // A pending quote (shipping/fees unknown) must be labeled-pending, never a
@@ -23,16 +31,31 @@ export interface QuoteBreakdown {
   landedTotal?: undefined; // never a fabrication
 }
 
+/**
+ * Validate one cart line. The `rules` come from moqOrderRules() — i.e. they
+ * already carry the resolved MOQ, the listing's price ladder and its carton
+ * size — so this function never re-reads marketplace text.
+ */
 export function validateCartItem(opts: {
   itemId: string;
   quantity: number;
   rules: OrderRules;
   quoteFreshMs?: number;
   capturedAt?: number;
+  locale?: MoqLocale;
 }): ValidatedCartItem {
   const problems: string[] = [];
-  const res = validateMOQ(opts.rules, opts.quantity);
-  if (!res.valid) problems.push(res.message);
+  const locale = opts.locale ?? "en";
+  const res = validateMOQ(opts.rules, opts.quantity, undefined, locale);
+  let fixTo: number | null = null;
+  let minimum: number | null = null;
+  if (!res.valid) {
+    problems.push(res.message);
+    minimum = res.suggestedMin ?? opts.rules.productMoq;
+    fixTo =
+      res.suggestedQty ??
+      nextValidQuantity(opts.rules, Math.max(opts.quantity, opts.rules.productMoq));
+  }
 
   let status: CartItemStatus = "draft";
   if (problems.length === 0) status = "valid";
@@ -44,7 +67,7 @@ export function validateCartItem(opts: {
     problems.push("quote_expired_revalidation_required");
   }
 
-  return { itemId: opts.itemId, status, problems };
+  return { itemId: opts.itemId, status, problems, fixTo, minimum };
 }
 
 // Sum ONLY known lines for payable-now; leave the rest pending. This mirrors

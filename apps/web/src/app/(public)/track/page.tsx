@@ -424,7 +424,7 @@ export default function TrackPage() {
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="/images/how-v2/06-receive.png"
+                src="/images/how-v2/06-receive.webp"
                 alt="Track your delivery"
                 className="mx-auto h-40 w-40 object-contain"
                 loading="lazy"

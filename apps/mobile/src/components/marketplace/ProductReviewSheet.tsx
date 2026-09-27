@@ -1,6 +1,8 @@
 // Product Review Sheet — 5-section native bottom sheet for ChinaSuuq
 // Sections: 1 Product identity · 2 Variants · 3 Quantity & MOQ · 4 Costs · 5 Actions
-// Uses the MOQ engine (@/lib/moq) for validation, tiers, packs and suggested quantities.
+// Quantity rules come from moqOrderRules() (@/lib/moqIngest), which resolves the
+// captured listing text into an MOQ + provenance + price ladder + carton size, so
+// the reviewer confirms a READING rather than guessing at a number.
 // Cost honesty: unknown charges are shown as "Pending" — never invented numbers.
 
 import React, { useState, useEffect, useMemo } from "react";
@@ -21,6 +23,8 @@ import { useCartStore } from "@/store/cart";
 import { useI18n } from "@/lib/i18n";
 import type { Product } from "@/types";
 import { getCnyPerUsd } from "@/lib/exchange";
+import { saveMoqDecision, enrichMoqWithAi } from "@/db";
+import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
 import {
   type OrderRules,
   type MOQValidationResult,
@@ -30,17 +34,21 @@ import {
   calculateTierPrice,
   getSuggestedQuantities,
   formatPackDisplay,
-  createDefaultRules,
 } from "@/lib/moq";
+import MoqEvidenceCard from "./MoqEvidenceCard";
 
 interface ProductReviewSheetProps {
   visible: boolean;
   product: Product | null;
-  /** Optional externally-supplied rules (e.g. from supplier listing data); defaults derived from the product */
+  /** MOQ-related lines scraped from the listing page (@/lib/webviewScripts). */
+  capturedText?: string | null;
+  /** Optional externally-supplied rules (e.g. from supplier listing data); defaults resolved from the capture */
   rules?: OrderRules;
   onClose: () => void;
   onAddToCart?: (quantity: number, options: Record<string, string>) => void;
   onAskSmallerQty?: () => void;
+  /** Tells the parent a human accepted or typed a minimum. */
+  onMoqConfirmed?: (moq: number, rawText: string | null) => void;
 }
 
 /** Cost line with honesty status — pending lines NEVER render a fake number */
@@ -53,10 +61,12 @@ interface CostLine {
 export default function ProductReviewSheet({
   visible,
   product,
+  capturedText,
   rules: externalRules,
   onClose,
   onAddToCart,
   onAskSmallerQty,
+  onMoqConfirmed,
 }: ProductReviewSheetProps) {
   const addItem = useCartStore((s) => s.addItem);
   const { t, locale } = useI18n();
@@ -71,11 +81,37 @@ export default function ProductReviewSheet({
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [rate, setRate] = useState(7.25);
+  /** A minimum the reviewer accepted or typed: wins over every machine reading. */
+  const [manualMoq, setManualMoq] = useState<{ moq: number; raw: string | null } | null>(null);
+
+  /** The product as reviewed: identical to the capture unless a human fixed the MOQ. */
+  const reviewedProduct = useMemo<Product | null>(() => {
+    if (!product) return null;
+    if (!manualMoq) return product;
+    return {
+      ...product,
+      moq: manualMoq.moq,
+      moq_source: "manual",
+      moq_confidence: 1,
+      moq_raw_text: manualMoq.raw,
+    };
+  }, [product, manualMoq]);
+
+  /** The one resolution this sheet renders and validates against. */
+  const order = useMemo(
+    () =>
+      reviewedProduct
+        ? moqOrderRules(reviewedProduct, capturedText ?? reviewedProduct.moq_raw_text)
+        : null,
+    [reviewedProduct, capturedText]
+  );
 
   const rules = useMemo<OrderRules | null>(
-    () => externalRules ?? (product ? createDefaultRules(product) : null),
-    [externalRules, product]
+    () => externalRules ?? order?.rules ?? null,
+    [externalRules, order]
   );
+  const resolution = order?.resolution ?? null;
+  const structure = order?.structure ?? null;
 
   useEffect(() => {
     getCnyPerUsd().then(setRate).catch(() => {});
@@ -86,6 +122,7 @@ export default function ProductReviewSheet({
     if (!product) return;
     setSelectedVariantId(product.variants.length === 1 ? product.variants[0].id : null);
     setSelectedOptions({});
+    setManualMoq(null);
     setQty(0); // triggers init from rules
   }, [product?.id]);
 
@@ -95,8 +132,18 @@ export default function ProductReviewSheet({
     setQty((q) => (q < rules.productMoq ? rules.productMoq : q));
   }, [rules?.productMoq]);
 
-  /** True when the caller supplied supplier-grade rules; false = derived defaults from a captured listing */
+  /** True when the caller supplied supplier-grade rules; false = resolved from the capture */
   const rulesProvided = externalRules != null;
+
+  /** Record a human decision. A parent handler owns persistence; otherwise the sheet does. */
+  const handleMoqDecision = (moq: number, rawText: string | null) => {
+    setManualMoq({ moq, raw: rawText });
+    if (onMoqConfirmed) {
+      onMoqConfirmed(moq, rawText);
+    } else if (product) {
+      void saveMoqDecision(product.id, { moq, source: "manual", confidence: 1, rawText });
+    }
+  };
 
   const currentVariant = useMemo(() => {
     if (!product || !selectedVariantId) return null;
@@ -161,7 +208,9 @@ export default function ProductReviewSheet({
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    addItem(product, qty, selectedOptions, { exchange_rate: rate || undefined });
+    // The reviewed product carries the MOQ provenance, so the cart can repeat
+    // the same verdict ("minimum 20, detected") without re-reading anything.
+    addItem(reviewedProduct!, qty, selectedOptions, { exchange_rate: rate || undefined });
     onAddToCart?.(qty, selectedOptions);
   };
 
@@ -296,12 +345,37 @@ export default function ProductReviewSheet({
             <Text style={styles.sectionTitle}>{ts("reviewSheet.quantityAndMoq", "Quantity & minimum order")}</Text>
           </View>
 
+          {/* What the listing said, what we read out of it, and how to fix it.
+              reviewedProduct (not the raw prop) so the card reflects an in-sheet decision. */}
+          {reviewedProduct && resolution && !rulesProvided && (
+            <MoqEvidenceCard
+              product={reviewedProduct}
+              capturedText={capturedText ?? reviewedProduct.moq_raw_text}
+              variant="full"
+              onDecision={handleMoqDecision}
+              askAi={() =>
+                enrichMoqWithAi({
+                  productId: reviewedProduct.id,
+                  title: reviewedProduct.title_english || reviewedProduct.title_original,
+                  marketplace: reviewedProduct.marketplace,
+                  capturedText: capturedText ?? reviewedProduct.moq_raw_text,
+                })
+              }
+            />
+          )}
+
           {/* MOQ facts */}
           <View style={styles.moqFacts}>
             <View style={styles.moqFactRow}>
               <Text style={styles.moqFactLabel}>{ts("reviewSheet.minimumOrder", "Minimum order")}</Text>
               <Text style={styles.moqFactValue}>{rules.productMoq} {ts("moq.pieces", "pieces")}</Text>
             </View>
+            {resolution && (
+              <View style={styles.moqFactRow}>
+                <Text style={styles.moqFactLabel}>{ts("reviewSheet.moqBasis", "Based on")}</Text>
+                <Text style={styles.moqFactValue}>{describeMoq(resolution, locale)}</Text>
+              </View>
+            )}
             {rules.packs?.[0] && (
               <View style={styles.moqFactRow}>
                 <Text style={styles.moqFactLabel}>{ts("reviewSheet.packSize", "Pack size")}</Text>
@@ -379,6 +453,32 @@ export default function ProductReviewSheet({
             <View style={styles.tierBox}>
               <Text style={styles.tierBoxText}>
                   💰 {tier.label ? tier.label + " · " : ""}{ts("moq.unitPrice", "Unit price")}: {fmtCNY(tier.priceCny)}
+              </Text>
+            </View>
+          )}
+
+          {/* The supplier's own price ladder, read off the page (2-19件 ¥12 / ≥100件 ¥8) */}
+          {structure && structure.tiers.length > 1 && (
+            <View style={styles.ladderBox}>
+              <Text style={styles.ladderTitle}>{ts("reviewSheet.priceTiers", "Price breaks from the listing")}</Text>
+              {structure.tiers.map((st) => (
+                <View key={st.minQty} style={styles.ladderRow}>
+                  <Text style={styles.ladderQty}>
+                    {st.maxQty ? `${st.minQty}–${st.maxQty}` : `${st.minQty}+`} {ts("moq.pieces", "pieces")}
+                  </Text>
+                  <Text style={[styles.ladderPrice, tier?.minQty === st.minQty && styles.ladderPriceActive]}>
+                    {fmtCNY(st.priceCny)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {structure?.mixed && (
+            <View style={styles.packBox}>
+              <Text style={styles.packBoxText}>
+                🔀 {ts("reviewSheet.mixedBatch", "Mix and match allowed")} · {ts("moq.totalPieces", "Total")} ≥{" "}
+                {structure.mixedMinimum ?? rules.productMoq}
               </Text>
             </View>
           )}
@@ -597,6 +697,12 @@ const styles = StyleSheet.create({
   packBoxText: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.info },
   tierBox: { backgroundColor: COLORS.successBg, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm },
   tierBoxText: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.success },
+  ladderBox: { backgroundColor: COLORS.gray50, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
+  ladderTitle: { fontSize: 11, fontFamily: FONTS.bold, color: COLORS.textSecondary, marginBottom: SPACING.xs },
+  ladderRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 },
+  ladderQty: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.textSecondary },
+  ladderPrice: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.black },
+  ladderPriceActive: { color: COLORS.primary },
   validationBox: {
     backgroundColor: COLORS.errorBg,
     borderRadius: RADIUS.md,

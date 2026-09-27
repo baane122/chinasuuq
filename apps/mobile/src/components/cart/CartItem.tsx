@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Image } from "expo-image";
-import { Minus, Plus, Trash2 } from "lucide-react-native";
+import { Minus, Plus, Trash2, AlertTriangle } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 
 interface CartItemProps {
@@ -13,6 +13,18 @@ interface CartItemProps {
   onIncrease: () => void;
   onDecrease: () => void;
   onRemove: () => void;
+  /**
+   * Inline MOQ warning — never a modal: a customer mid-edit must see the rule
+   * attached to the line it applies to. From validateCartItem(), whose rules come
+   * from the product's resolved MOQ (moqOrderRules), not from `product.moq`.
+   */
+  warning?: string | null;
+  /** Label for the one-tap fix, e.g. "Set 20". */
+  fixLabel?: string | null;
+  /** Jump the quantity to the smallest that satisfies the supplier's rules. */
+  onFix?: () => void;
+  /** Structural facts read off the listing: "Sold in cartons of 48 pieces". */
+  notes?: string[];
 }
 
 export default function CartItem({
@@ -24,6 +36,10 @@ export default function CartItem({
   onIncrease,
   onDecrease,
   onRemove,
+  warning,
+  fixLabel,
+  onFix,
+  notes,
 }: CartItemProps) {
   return (
     <View style={styles.card}>
@@ -54,6 +70,30 @@ export default function CartItem({
             <Trash2 size={16} color={COLORS.error} />
           </TouchableOpacity>
         </View>
+
+        {!!notes?.length && (
+          <View style={styles.notesRow}>
+            {notes.map((n) => (
+              <Text key={n} style={styles.noteText}>
+                {n}
+              </Text>
+            ))}
+          </View>
+        )}
+
+        {warning ? (
+          <View style={styles.warningRow}>
+            <AlertTriangle size={14} color={COLORS.warning} />
+            <Text style={styles.warningText} numberOfLines={2}>
+              {warning}
+            </Text>
+            {fixLabel && onFix ? (
+              <TouchableOpacity style={styles.fixBtn} onPress={onFix} activeOpacity={0.7}>
+                <Text style={styles.fixText}>{fixLabel}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -123,4 +163,26 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  notesRow: { marginTop: SPACING.xs, gap: 1 },
+  noteText: { fontSize: 11, fontFamily: FONTS.medium, color: COLORS.textMuted },
+  warningRow: {
+    marginTop: SPACING.sm,
+    backgroundColor: COLORS.warningBg,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  warningText: { fontSize: 11, fontFamily: FONTS.medium, color: COLORS.warning, flex: 1 },
+  fixBtn: {
+    backgroundColor: COLORS.white,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 4,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: COLORS.warning,
+  },
+  fixText: { fontSize: 11, fontFamily: FONTS.semibold, color: COLORS.warning },
 });

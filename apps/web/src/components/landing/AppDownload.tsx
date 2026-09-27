@@ -145,7 +145,7 @@ export default function AppDownload() {
                 <div className="bg-dark-900 rounded-[2.2rem] p-2 shadow-2xl shadow-dark-900/40">
                   <div className="bg-gradient-to-b from-brand-400/30 to-warm-200 rounded-[1.8rem] aspect-[9/19] flex items-center justify-center overflow-hidden">
                     <img
-                      src="/images/onboarding/slide1.png"
+                      src="/images/onboarding/slide1.webp"
                       alt="Shop China"
                       width={600}
                       height={1267}
@@ -184,7 +184,7 @@ export default function AppDownload() {
                 <div className="bg-dark-900 rounded-[2.2rem] p-2 shadow-2xl shadow-dark-900/40">
                   <div className="bg-gradient-to-b from-brand-500/20 to-warm-200 rounded-[1.8rem] aspect-[9/19] flex items-center justify-center overflow-hidden">
                     <img
-                      src="/images/onboarding/slide2.png"
+                      src="/images/onboarding/slide2.webp"
                       alt="Browse and Shop"
                       width={600}
                       height={1267}

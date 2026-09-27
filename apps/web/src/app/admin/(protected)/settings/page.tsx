@@ -47,8 +47,17 @@ export default function SettingsPage() {
   // Shipping settings
   const [methods, setMethods] = useState(shippingMethods);
 
-  // Staff
-  const [staffList, setStaffList] = useState<{ id: string; email: string; full_name: string; role: string }[]>([]);
+  // Staff — there is no `staff` table: staff is staff_profiles joined to
+  // profiles. profiles has no email column, so this list cannot show one.
+  const [staffList, setStaffList] = useState<
+    {
+      id: string;
+      user_id: string | null;
+      role: string;
+      department: string | null;
+      profiles: { full_name: string | null } | null;
+    }[]
+  >([]);
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
 
   // AI Provider settings are managed by <AiSettingsTab /> (edge functions).
@@ -160,15 +169,16 @@ export default function SettingsPage() {
     setIsLoadingStaff(true);
     try {
       const { data, error } = await supabase
-        .from("staff")
-        .select("id, email, full_name, role")
+        .from("staff_profiles")
+        .select("id, user_id, role, department, profiles(full_name)")
         .order("created_at", { ascending: false });
 
       if (!error) {
-        setStaffList(data || []);
+        // to-one embed: supabase-js types it as an array, runtime gives one object.
+        setStaffList((data as unknown as typeof staffList) || []);
       }
     } catch {
-      // Table may not exist yet
+      // Query failed — the empty state below says so rather than faking rows.
     } finally {
       setIsLoadingStaff(false);
     }
@@ -516,15 +526,15 @@ export default function SettingsPage() {
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th>Email</th>
+                    <th>Department</th>
                     <th>Role</th>
                   </tr>
                 </thead>
                 <tbody>
                   {staffList.map((staff) => (
                     <tr key={staff.id}>
-                      <td className="font-medium">{staff.full_name}</td>
-                      <td className="text-dark-900/60">{staff.email}</td>
+                      <td className="font-medium">{staff.profiles?.full_name || "—"}</td>
+                      <td className="text-dark-900/60">{staff.department || "—"}</td>
                       <td>
                         <span className="inline-flex items-center rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-600 capitalize">
                           {staff.role.replace(/_/g, " ")}
@@ -534,6 +544,9 @@ export default function SettingsPage() {
                   ))}
                 </tbody>
               </table>
+              <p className="text-[11px] text-dark-900/40">
+                Sign-in emails are not stored on profiles, so they cannot be listed here.
+              </p>
             </div>
           )}
         </SectionCard>

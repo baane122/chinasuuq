@@ -73,7 +73,7 @@ export default function ShippingPage() {
           <div className="relative mx-auto w-full max-w-[560px]">
             <div className="absolute inset-6 rounded-[3rem] bg-brand-500/20 blur-3xl" />
             <div className="relative overflow-hidden rounded-[2.5rem] border border-white/60 bg-gradient-to-br from-dark-900 to-dark-800 p-4 shadow-2xl">
-              <Image src="/images/pages/shipping-route.png" alt="China to Hargeisa shipping route" width={1024} height={1024} priority className="aspect-square w-full rounded-[2rem] object-cover" />
+              <Image src="/images/pages/shipping-route.webp" alt="China to Hargeisa shipping route" width={1024} height={1024} priority className="aspect-square w-full rounded-[2rem] object-cover" />
             </div>
           </div>
         </div>

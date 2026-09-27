@@ -28,15 +28,46 @@ import { useAuthStore } from "@/store/auth";
 import { useCartStore } from "@/store/cart";
 import { getProductById, toggleFavorite, getFavorites } from "@/db";
 import type { Product, ProductVariant } from "@/types";
-import { parseMOQ, getMOQText, getSuggestedQuantities, calculateShipping } from "@/lib/shipping";
+import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
+import type { ResolvedMoq } from "@/lib/moqIngest";
+import { getSuggestedQuantities } from "@/lib/moq";
 import ImageCarousel from "@/components/product/ImageCarousel";
 import QuantitySelector from "@/components/product/QuantitySelector";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 
+/**
+ * The MOQ evidence a stored product carries: the marketplace wording its MOQ was
+ * read out of, plus the supplier's own spec fields and description. Handed to
+ * moqOrderRules() — the only MOQ reader in the app, so no screen parses 起批
+ * itself. The title stays out: "5件套" in a product name is a set count.
+ */
+function moqEvidence(p: Product): string {
+  const lines: string[] = [];
+  if (p.moq_raw_text) lines.push(p.moq_raw_text);
+  for (const [k, v] of Object.entries(p.attributes || {})) {
+    if (v) lines.push(`${k}: ${v}`);
+  }
+  if (p.description_original) lines.push(p.description_original);
+  if (p.description_english) lines.push(p.description_english);
+  return lines.join("\n").slice(0, 4000);
+}
+
+/** Who stood behind the number, in the customer's language. */
+function moqSourceLine(r: ResolvedMoq, locale: "en" | "so"): string {
+  const pct = r.confidence > 0 ? ` (${Math.round(r.confidence * 100)}%)` : "";
+  if (r.source === "manual")
+    return locale === "so" ? "Dalabka ugu yar waxaa xaqiijiyay shaqaalahayaga" : "Confirmed by ChinaSuuq staff";
+  if (r.source === "ai")
+    return locale === "so" ? "Waxaa ka soo qaaday AI-gayaga bogga" + pct : "Read from the listing by ChinaSuuq AI" + pct;
+  if (r.source === "regex")
+    return locale === "so" ? "Waxaa laga helay bogga alaabta" + pct : "Detected from the listing" + pct;
+  return locale === "so" ? "Dalabka ugu yar laguma sheegin bogga" : "Not stated on the listing";
+}
+
 export default function ProductDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const addItem = useCartStore((s) => s.addItem);
   const user = useAuthStore((s) => s.user);
 
@@ -47,7 +78,6 @@ export default function ProductDetailScreen() {
   const [togglingFav, setTogglingFav] = useState(false);
 
   const [qty, setQty] = useState(1);
-  const [suggestedQtys, setSuggestedQtys] = useState<number[]>([1, 2, 5, 10]);
   const [variantSelections, setVariantSelections] = useState<
     Record<string, string>
   >({});
@@ -66,15 +96,6 @@ export default function ProductDetailScreen() {
           setNotFound(true);
         } else {
           setProduct(p);
-          // Smart MOQ: parse from attributes, title, or use product.moq
-          const smartMOQ = parseMOQ(
-            p.moq || 1,
-            p.attributes || {},
-            p.title_original || p.title_english,
-            p.description_original || p.description_english
-          );
-          setQty(smartMOQ);
-          setSuggestedQtys(getSuggestedQuantities(smartMOQ));
           // Default-select the first option of every variant group.
           const defaults: Record<string, string> = {};
           p.variants.forEach((v: ProductVariant) => {
@@ -98,6 +119,30 @@ export default function ProductDetailScreen() {
       active = false;
     };
   }, [id]);
+
+  /** MOQ floor, price ladder, carton size — resolved once, from stored provenance. */
+  const order = useMemo(() => (product ? moqOrderRules(product, moqEvidence(product)) : null), [product]);
+  const rules = order?.rules ?? null;
+  const resolution = order?.resolution ?? null;
+  const structure = order?.structure ?? null;
+
+  /** Quick-buy amounts: the floor, carton multiples, every tier boundary. */
+  const suggestedQtys = useMemo<number[]>(
+    () => (rules ? getSuggestedQuantities(rules) : [1, 2, 5, 10]),
+    [rules]
+  );
+
+  // The stepper ceiling has to clear a 5000-piece carton minimum.
+  const qtyMax = useMemo(
+    () => Math.max(999, resolution?.displayMoq ?? 1, ...suggestedQtys),
+    [resolution?.displayMoq, suggestedQtys]
+  );
+
+  // Open on a quantity the supplier will actually sell, not on 1.
+  useEffect(() => {
+    if (!resolution) return;
+    setQty((q) => (q < resolution.displayMoq ? resolution.displayMoq : q));
+  }, [resolution?.displayMoq]);
 
   // Check if this product is in the user's wishlist
   useEffect(() => {
@@ -179,7 +224,9 @@ export default function ProductDetailScreen() {
         .join(", ");
       const msg = `${product.title_english || product.title_somali}\n\nPrice: ${formatUSD(
         product.price_usd_estimated
-      )}\nQuantity: ${qty}\n${qs ? `Options: ${qs}\n` : ""}MOQ: ${product.moq}`;
+      )}\nQuantity: ${qty}\n${qs ? `Options: ${qs}\n` : ""}${
+        resolution ? describeMoq(resolution) : `MOQ: ${product.moq}`
+      }${resolution?.raw ? ` (${resolution.raw})` : ""}`;
       const url = whatsappOrderLink(msg);
       const supported = await Linking.canOpenURL(url);
       if (supported) {
@@ -358,14 +405,21 @@ export default function ProductDetailScreen() {
           </View>
         ))}
 
-        {/* Quantity (MOQ) - Smart */}
+        {/* Quantity (MOQ) — resolved from the listing's own wording */}
         <View style={styles.qtySection}>
           <View style={styles.qtyHeader}>
             <Text style={styles.sectionTitle}>{t("product.quantity")}</Text>
-            <Text style={styles.moqBadge}>
-              {getMOQText(parseMOQ(product.moq || 1, product.attributes || {}, product.title_original))}
-            </Text>
+            {resolution && (
+              <Text style={styles.moqBadge}>{describeMoq(resolution, locale)}</Text>
+            )}
           </View>
+
+          {resolution && (
+            <Text style={styles.moqNote}>
+              {moqSourceLine(resolution, locale)}
+              {resolution.raw ? ` — “${resolution.raw}”` : ""}
+            </Text>
+          )}
 
           {/* Quick quantity buttons */}
           <View style={styles.qtyQuickRow}>
@@ -386,11 +440,37 @@ export default function ProductDetailScreen() {
             ))}
           </View>
 
+          {/* The supplier's price ladder, as read off the page */}
+          {rules && rules.tiers.length > 1 && (
+            <View style={styles.tierBox}>
+              {rules.tiers.map((tr) => {
+                const applies = qty >= tr.minQty && (tr.maxQty === null || qty <= tr.maxQty);
+                return (
+                  <View key={tr.minQty} style={styles.tierRow}>
+                    <Text style={styles.tierQty}>
+                      {tr.maxQty ? `${tr.minQty}–${tr.maxQty}` : `${tr.minQty}+`} pcs
+                    </Text>
+                    <Text style={[styles.tierPrice, applies && styles.tierPriceActive]}>
+                      ¥{tr.priceCny.toFixed(2)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          {structure?.packSize && (
+            <Text style={styles.packNote}>
+              Sold in cartons of {structure.packSize} pieces
+            </Text>
+          )}
+
           {/* Manual quantity selector */}
           <QuantitySelector
             value={qty}
             onChange={setQty}
-            min={Math.max(1, parseMOQ(product.moq || 1, product.attributes || {}, product.title_original))}
+            min={Math.max(1, resolution?.displayMoq ?? 1)}
+            max={qtyMax}
           />
         </View>
 
@@ -602,6 +682,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
     paddingVertical: 4,
     borderRadius: RADIUS.pill,
+    flex: 1,
+    textAlign: "right",
+  },
+  moqNote: {
+    fontSize: 11,
+    fontFamily: FONTS.medium,
+    color: COLORS.textSecondary,
+    marginTop: -SPACING.sm,
+    marginBottom: SPACING.md,
+  },
+  tierBox: {
+    backgroundColor: COLORS.gray50,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  tierRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 2,
+  },
+  tierQty: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.textSecondary },
+  tierPrice: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.black },
+  tierPriceActive: { color: COLORS.primary },
+  packNote: {
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    color: COLORS.info,
+    marginBottom: SPACING.md,
   },
   qtyQuickRow: {
     flexDirection: "row",

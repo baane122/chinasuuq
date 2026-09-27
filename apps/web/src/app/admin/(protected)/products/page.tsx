@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { Suspense, useEffect, useState, useMemo, useCallback } from "react";
 import { supabase, edgeFetch } from "@/lib/supabase";
 import { cn, formatCNY, formatUSD, formatDate } from "@/lib/utils";
 import {
   Package, Loader2, ExternalLink, Edit3, Trash2, Plus,
   Download, ArrowUpDown, CheckSquare, Square, Check, Image as ImageIcon,
-  Filter, X, ChevronDown, AlertTriangle, TrendingUp
+  Filter, X, ChevronDown, AlertTriangle, TrendingUp, RotateCcw
 } from "lucide-react";
 import type { Product } from "@/types";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
@@ -14,9 +14,14 @@ import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
 import {
   PageHeader, StatCard, PageGrid, SearchInput, FilterChips, TableShell,
-  SidePanel, EMPTY_IMAGES,
+  SidePanel, SkeletonTable, EMPTY_IMAGES,
 } from "@/components/admin/ui";
 import { StatusBadge } from "@/components/admin/StatusBadge";
+import { TableControls } from "@/components/admin/TableControls";
+import { useUrlFilters, useDebouncedFilterValue } from "@/components/admin/useUrlFilters";
+import { useTablePrefs } from "@/components/admin/useTablePrefs";
+import { useLiveVersion } from "@/lib/admin/live-store";
+import { isMissingColumnError } from "@/lib/admin/supabase-data";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -26,19 +31,39 @@ const marketplaces = ["1688", "taobao", "yiwugo", "alibaba", "chinagoods", "jd",
 const stockStatusOptions = ["in_stock", "low_stock", "out_of_stock"] as const;
 const statusOptions = ["active", "draft", "archived"] as const;
 
+/**
+ * The supplier's own product id, read out of the listing URL: 1688, Taobao and
+ * JD all carry a long digit run in the path or query. No digit run means a
+ * hand-added product, which genuinely has no source id — that is why
+ * 202609250004 made the column nullable rather than letting this screen invent
+ * one, since a fabricated id would collide with a real offer on the next import.
+ */
+function deriveSourceId(url: string): string | null {
+  return url.match(/\d{6,}/)?.[0] ?? null;
+}
+
+/**
+ * Chips are built only from what globals.css @theme already declares — the
+ * brand/dark scales plus the semantic tokens (success / error) the admin shell
+ * uses for its own badges. No raw Tailwind palette hue (emerald, red, blue,
+ * yellow, rose) and no new colour: the dashboard's MARKETPLACE_STYLE map already
+ * paints every Chinese source warm (#FF5A0A, #FF6A00, #F97316 → brand-500/400),
+ * so the entries below differ by brand tint, and the pairs that share a hex there
+ * share a class string here.
+ */
 const statusColors: Record<string, string> = {
-  active: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  draft: "bg-gray-100 text-gray-600 border-gray-200",
-  archived: "bg-red-50 text-red-600 border-red-200",
+  active: "bg-success/10 text-success border-success/20",
+  draft: "bg-dark-100 text-dark-600 border-dark-200",
+  archived: "bg-error/10 text-error border-error/20",
 };
 
 const marketplaceColors: Record<string, string> = {
-  "1688": "bg-orange-50 text-orange-700 border-orange-200",
-  taobao: "bg-red-50 text-red-700 border-red-200",
-  yiwugo: "bg-blue-50 text-blue-700 border-blue-200",
-  alibaba: "bg-yellow-50 text-yellow-700 border-yellow-200",
-  chinagoods: "bg-rose-50 text-rose-700 border-rose-200",
-  jd: "bg-red-50 text-red-700 border-red-200",
+  "1688": "bg-brand-50 text-brand-700 border-brand-200",
+  taobao: "bg-brand-100 text-brand-700 border-brand-200",
+  yiwugo: "bg-brand-100 text-brand-600 border-brand-300",
+  alibaba: "bg-brand-100 text-brand-600 border-brand-300",
+  chinagoods: "bg-brand-50 text-brand-700 border-brand-200",
+  jd: "bg-brand-100 text-brand-700 border-brand-200",
   chinasuuq: "bg-brand-50 text-brand-600 border-brand-200",
 };
 
@@ -87,25 +112,87 @@ const emptyFormData: ProductFormData = {
 type SortKey = "title_english" | "price_cny_min" | "price_cny_max" | "sales_count" | "created_at" | "marketplace" | "stock_status";
 type SortDir = "asc" | "desc";
 
+/* ── URL-backed filters ─────────────────────────────────────────
+ * Module scope so the defaults object identity is stable and the hook's
+ * effects do not loop. Nothing is read server-side: apps/web is a static
+ * export, so the query string is applied in the browser after hydration.
+ *   q      title/category text   app    marketplace of the listing
+ *   stock  stock_status          from/to added-on window
+ *   pmin/pmax CNY price bracket  sort/dir column ordering
+ * Every previous filter is still here — it just lives in the URL now, so a
+ * filtered view can be reloaded, bookmarked or pasted to a colleague.
+ */
+const FILTER_DEFAULTS = {
+  q: "", app: "All", stock: "All", from: "", to: "", pmin: "", pmax: "",
+  sort: "created_at", dir: "desc",
+};
+
+const PRODUCT_COLUMNS: { key: string; label: string }[] = [
+  { key: "product", label: "Product" },
+  { key: "marketplace", label: "Marketplace" },
+  { key: "price", label: "Price" },
+  { key: "moq", label: "MOQ" },
+  { key: "stock_status", label: "Stock" },
+  { key: "sales_count", label: "Sales" },
+  { key: "created_at", label: "Added" },
+  { key: "actions", label: "Actions" },
+];
+
 /* ── Component ─────────────────────────────────────────────────── */
 
+/** `source_products` rows carry created_at (the table's select("*") returns it),
+ *  but the shared Product type predates the column. Read it through one helper
+ *  instead of casting at every call site. */
+function createdAtOf(product: Product): string | null {
+  const raw = (product as unknown as Record<string, unknown>).created_at;
+  return typeof raw === "string" ? raw : null;
+}
+
 export default function ProductsPage() {
+  // useSearchParams() must sit under <Suspense> in a statically prerendered
+  // route, otherwise the prerenderer bails the page to full client render.
+  return (
+    <Suspense
+      fallback={
+        <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+          <SkeletonTable />
+        </div>
+      }
+    >
+      <ProductsPageContent />
+    </Suspense>
+  );
+}
+
+function ProductsPageContent() {
   const { success, error: toastError } = useToast();
+
+  const { values, set, setMany, reset, isFiltered } = useUrlFilters(FILTER_DEFAULTS);
+  const tablePrefs = useTablePrefs("products");
+  // Only catalog writes matter here. The unfiltered version moved on every
+  // order, payment and notification, re-pulling the whole product list for
+  // unrelated traffic.
+  const liveVersion = useLiveVersion(["source_products"]);
 
   // Data
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
-  const [search, setSearch] = useState("");
-  const [marketplaceFilter, setMarketplaceFilter] = useState<string>("All");
-  const [stockFilter, setStockFilter] = useState<string>("All");
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("created_at");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Filters — all from the URL
+  const marketplaceFilter = values.app;
+  const stockFilter = values.stock;
+  const dateFrom = values.from;
+  const dateTo = values.to;
+  const priceMin = values.pmin;
+  const priceMax = values.pmax;
+  const sortKey = values.sort as SortKey;
+  const sortDir = values.dir === "asc" ? "asc" : "desc";
   const [showFilters, setShowFilters] = useState(false);
+
+  // Drafted locally, committed to the URL debounced
+  const commitSearch = useCallback((v: string) => set("q", v), [set]);
+  const [search, setSearch] = useDebouncedFilterValue(values.q, commitSearch);
 
   // Selection / Bulk
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -135,10 +222,16 @@ export default function ProductsPage() {
   const fetchProducts = async () => {
     try {
       setIsLoading(true);
+      // Explicit projection, not `*`: this list is unbounded and every extra
+      // column is paid for on every row, on every realtime burst. The edit
+      // modal reads exactly these fields.
       const { data, error: fetchError } = await supabase
         .from("source_products")
-        .select("*")
-        .order("created_at", { ascending: false });
+        .select(
+          "id, marketplace, source_product_id, source_url, title_original, title_english, title_somali, images, category, price_cny_min, price_cny_max, price_usd_estimated, moq, stock_status, status, supplier_rating, sales_count, domestic_shipping_cny, description_english, created_at"
+        )
+        .order("created_at", { ascending: false })
+        .limit(1000);
 
       if (fetchError) throw fetchError;
       setProducts((data as Product[]) || []);
@@ -149,7 +242,11 @@ export default function ProductsPage() {
     }
   };
 
-  useEffect(() => { fetchProducts(); }, []);
+  useEffect(() => {
+    fetchProducts();
+    // liveVersion bumps on the realtime channel in the admin layout: a product
+    // saved on another device refreshes this list without a manual reload.
+  }, [liveVersion]);
 
   /* ── Filtering + sorting ────────────────────────────────────── */
 
@@ -173,7 +270,19 @@ export default function ProductsPage() {
       const matchesPriceMin = priceMin === "" || price >= Number(priceMin);
       const matchesPriceMax = priceMax === "" || price <= Number(priceMax);
 
-      return matchesSearch && matchesMarketplace && matchesStock && matchesPriceMin && matchesPriceMax;
+      const day = createdAtOf(product)?.slice(0, 10) ?? "";
+      const matchesFrom = !dateFrom || (!!day && day >= dateFrom);
+      const matchesTo = !dateTo || (!!day && day <= dateTo);
+
+      return (
+        matchesSearch &&
+        matchesMarketplace &&
+        matchesStock &&
+        matchesPriceMin &&
+        matchesPriceMax &&
+        matchesFrom &&
+        matchesTo
+      );
     });
 
     result.sort((a, b) => {
@@ -186,7 +295,10 @@ export default function ProductsPage() {
     });
 
     return result;
-  }, [products, search, marketplaceFilter, stockFilter, priceMin, priceMax, sortKey, sortDir]);
+  }, [
+    products, search, marketplaceFilter, stockFilter, priceMin, priceMax,
+    dateFrom, dateTo, sortKey, sortDir,
+  ]);
 
   /* ── Selection helpers ──────────────────────────────────────── */
 
@@ -213,11 +325,11 @@ export default function ProductsPage() {
   /* ── Sort toggle ────────────────────────────────────────────── */
 
   const toggleSort = (key: SortKey) => {
+    // Sorting is part of the shared view, so it belongs in the URL too.
     if (sortKey === key) {
-      setSortDir((d) => d === "asc" ? "desc" : "asc");
+      set("dir", sortDir === "asc" ? "desc" : "asc");
     } else {
-      setSortKey(key);
-      setSortDir("asc");
+      setMany({ sort: key, dir: "asc" });
     }
   };
 
@@ -355,43 +467,99 @@ export default function ProductsPage() {
         .map((u) => u.trim())
         .filter((u) => u.length > 0);
 
-      const payload = {
-        title_english: formData.title_english.trim(),
-        title_somali: formData.title_somali.trim(),
-        title_original: formData.title_original.trim(),
-        category: formData.category.trim(),
+      const englishTitle = formData.title_english.trim();
+      const originalTitle = formData.title_original.trim();
+      const priceCny = formData.price_cny_min ? Number(formData.price_cny_min) : null;
+      const priceCnyMax = formData.price_cny_max ? Number(formData.price_cny_max) : null;
+      const sourceId = deriveSourceId(formData.source_url);
+
+      // Three vocabularies, because source_products has been written three ways
+      // and PostgREST rejects the WHOLE insert for one unknown column (42703):
+      //   originals  — 202408010004's importer shape (source_title, source_price,
+      //                in_stock, source_id),
+      //   curated    — what both apps display, added by 202609250004,
+      //   required   — the NOT NULL columns the LIVE project's table declares and
+      //                the other two generations do not: source_product_id and
+      //                title_original. Without them a live insert dies with 23502
+      //                on a column name this form never used to send.
+      // The save tries wide → live → importer, so a catalog that has not been
+      // migrated yet still saves, and production saves today.
+      const originals = {
         marketplace: formData.marketplace,
-        price_cny_min: formData.price_cny_min ? Number(formData.price_cny_min) : null,
-        price_cny_max: formData.price_cny_max ? Number(formData.price_cny_max) : null,
-        price_usd_estimated: formData.price_usd_estimated ? Number(formData.price_usd_estimated) : null,
-        moq: formData.moq ? Number(formData.moq) : 0,
-        stock_status: formData.stock_status,
-        status: formData.status,
-        supplier_rating: formData.supplier_rating ? Number(formData.supplier_rating) : null,
-        sales_count: formData.sales_count ? Number(formData.sales_count) : 0,
         source_url: formData.source_url.trim(),
-        description_english: formData.description_english.trim(),
-        images: imageUrls,
+        source_title: originalTitle || englishTitle,
+        source_description: formData.description_english.trim() || null,
+        source_images: imageUrls,
+        source_price: priceCny,
+        source_id: sourceId,
+        moq: Number(formData.moq) > 0 ? Number(formData.moq) : 1,
+        status: formData.status,
+        in_stock: formData.stock_status !== "out_of_stock",
         updated_at: new Date().toISOString(),
       };
 
+      // Curated on top: these exist only from 202609250004 on, and the stock
+      // trigger derives in_stock from stock_status when both are sent.
+      const curated = {
+        title_english: englishTitle,
+        title_somali: formData.title_somali.trim(),
+        title_original: originalTitle,
+        category: formData.category.trim(),
+        price_cny_min: priceCny,
+        price_cny_max: priceCnyMax,
+        price_usd_estimated: formData.price_usd_estimated ? Number(formData.price_usd_estimated) : null,
+        stock_status: formData.stock_status,
+        supplier_rating: formData.supplier_rating ? Number(formData.supplier_rating) : null,
+        sales_count: formData.sales_count ? Number(formData.sales_count) : 0,
+        description_english: formData.description_english.trim(),
+        images: imageUrls,
+      };
+
+      // Live's price columns are NOT NULL DEFAULT 0, so an absent price is 0
+      // rather than NULL — 0 is also what the mobile reader treats as
+      // "no price captured", so nothing invents a number here.
+      const liveShape = {
+        ...curated,
+        title_original: originalTitle || englishTitle,
+        price_cny_min: priceCny ?? 0,
+        price_cny_max: priceCnyMax ?? priceCny ?? 0,
+        source_product_id: sourceId ?? `manual-${Date.now()}`,
+        source_url: formData.source_url.trim(),
+        marketplace: formData.marketplace,
+        moq: Number(formData.moq) > 0 ? Number(formData.moq) : 1,
+        status: formData.status,
+        updated_at: new Date().toISOString(),
+      };
+
+      const write = (payload: Record<string, unknown>) =>
+        editingProduct
+          ? supabase.from("source_products").update(payload).eq("id", editingProduct.id).select().single()
+          : supabase
+              .from("source_products")
+              .insert({ ...payload, created_at: new Date().toISOString() })
+              .select()
+              .single();
+
+      const attempts = [
+        { ...originals, ...curated }, // fully migrated importer catalog
+        liveShape, // the live project's curated-only table
+        originals, // importer catalog that has not been migrated yet
+      ];
+
+      let data: Product | null = null;
+      let error: { message: string } | null = null;
+      for (const payload of attempts) {
+        ({ data, error } = await write(payload));
+        if (!error || !isMissingColumnError(error)) break;
+      }
+      if (error) throw error;
+
       if (editingProduct) {
-        const { error: updateError } = await supabase
-          .from("source_products")
-          .update(payload)
-          .eq("id", editingProduct.id);
-        if (updateError) throw updateError;
         setProducts((prev) =>
-          prev.map((p) => (p.id === editingProduct.id ? { ...p, ...payload } as Product : p))
+          prev.map((p) => (p.id === editingProduct.id ? ({ ...p, ...curated, ...data } as Product) : p))
         );
         success("Product updated successfully");
       } else {
-        const { data, error: insertError } = await supabase
-          .from("source_products")
-          .insert({ ...payload, created_at: new Date().toISOString() })
-          .select()
-          .single();
-        if (insertError) throw insertError;
         if (data) setProducts((prev) => [data as Product, ...prev]);
         success("Product created successfully");
       }
@@ -530,7 +698,7 @@ export default function ProductsPage() {
     out_of_stock: products.filter((p) => p.stock_status === "out_of_stock").length,
   }), [products]);
 
-  const filtersActive = search !== "" || marketplaceFilter !== "All" || stockFilter !== "All" || priceMin !== "" || priceMax !== "";
+  const filtersActive = isFiltered || search !== "";
 
   /* ── Render ─────────────────────────────────────────────────── */
 
@@ -542,6 +710,20 @@ export default function ProductsPage() {
         subtitle="Catalog synced from Chinese marketplaces"
         actions={
           <>
+            <TableControls columns={PRODUCT_COLUMNS} prefs={tablePrefs} />
+            {isFiltered && (
+              <button
+                onClick={() => {
+                  reset();
+                  setSearch("");
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-100"
+                title="Clears every filter and the query string"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset filters
+              </button>
+            )}
             <button onClick={handleExportCSV} className="admin-btn-outline">
               <Download className="h-4 w-4" />
               Export CSV
@@ -577,14 +759,19 @@ export default function ProductsPage() {
               onClick={() => setShowFilters(!showFilters)}
               className={cn(
                 "admin-btn-outline",
-                showFilters && "border-brand-500 bg-brand-50 text-brand-600 hover:text-brand-600"
+                showFilters && "border-brand-500 bg-brand-50 text-brand-700 hover:text-brand-700"
               )}
             >
               <Filter className="h-4 w-4" />
               Filters
-              {(stockFilter !== "All" || priceMin || priceMax) && (
+              {(stockFilter !== "All" || priceMin || priceMax || dateFrom || dateTo) && (
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-[10px] font-bold text-white">
-                  {1 + (priceMin ? 1 : 0) + (priceMax ? 1 : 0)}
+                  {
+                    (stockFilter !== "All" ? 1 : 0) +
+                    (priceMin ? 1 : 0) +
+                    (priceMax ? 1 : 0) +
+                    (dateFrom || dateTo ? 1 : 0)
+                  }
                 </span>
               )}
             </button>
@@ -595,11 +782,11 @@ export default function ProductsPage() {
           </div>
         </div>
 
-        {/* Marketplace chips */}
+        {/* Marketplace chips — which app this listing came from */}
         <FilterChips<string>
           options={marketplaceFilters.map((f) => ({ value: f, label: f, count: marketplaceCounts[f] }))}
           value={marketplaceFilter}
-          onChange={setMarketplaceFilter}
+          onChange={(v) => set("app", v)}
         />
 
         {/* Expanded filters */}
@@ -620,7 +807,7 @@ export default function ProductsPage() {
                       ...stockStatusOptions.map((s) => ({ value: s, label: s.replace(/_/g, " "), count: stockCounts[s] })),
                     ]}
                     value={stockFilter}
-                    onChange={setStockFilter}
+                    onChange={(v) => set("stock", v)}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -630,7 +817,7 @@ export default function ProductsPage() {
                       type="number"
                       placeholder="Min"
                       value={priceMin}
-                      onChange={(e) => setPriceMin(e.target.value)}
+                      onChange={(e) => set("pmin", e.target.value)}
                       className="admin-input w-24"
                       min={0}
                     />
@@ -639,18 +826,40 @@ export default function ProductsPage() {
                       type="number"
                       placeholder="Max"
                       value={priceMax}
-                      onChange={(e) => setPriceMax(e.target.value)}
+                      onChange={(e) => set("pmax", e.target.value)}
                       className="admin-input w-24"
                       min={0}
                     />
                   </div>
                 </div>
-                {(stockFilter !== "All" || priceMin || priceMax) && (
+                <div className="space-y-1.5">
+                  <label className="admin-label">Added Between</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => set("from", e.target.value)}
+                      className="h-10 rounded-xl border border-dark-900/10 bg-white px-3 text-sm focus:border-brand-500 focus:outline-none"
+                      aria-label="Added from"
+                    />
+                    <span className="text-dark-300 text-xs">to</span>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => set("to", e.target.value)}
+                      className="h-10 rounded-xl border border-dark-900/10 bg-white px-3 text-sm focus:border-brand-500 focus:outline-none"
+                      aria-label="Added to"
+                    />
+                  </div>
+                </div>
+                {(stockFilter !== "All" || priceMin || priceMax || dateFrom || dateTo) && (
                   <button
-                    onClick={() => { setStockFilter("All"); setPriceMin(""); setPriceMax(""); }}
+                    onClick={() => {
+                      setMany({ stock: "", pmin: "", pmax: "", from: "", to: "" });
+                    }}
                     className="rounded-lg bg-dark-50 px-3 py-1.5 text-xs font-medium text-dark-500 hover:bg-dark-100"
                   >
-                    Clear Filters
+                    Clear these filters
                   </button>
                 )}
               </div>
@@ -738,7 +947,13 @@ export default function ProductsPage() {
       >
         <div className="overflow-hidden rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="admin-table w-full">
+            <table
+              className={cn(
+                "admin-table w-full",
+                tablePrefs.className,
+                tablePrefs.tableClassName
+              )}
+            >
               <thead>
                 <tr>
                   <th className="w-10">
@@ -750,23 +965,38 @@ export default function ProductsPage() {
                       )}
                     </button>
                   </th>
-                  <th onClick={() => toggleSort("title_english")} className="cursor-pointer select-none hover:text-dark-900/70">
-                    <span className="inline-flex items-center gap-1">Product <SortIcon col="title_english" /></span>
-                  </th>
-                  <th onClick={() => toggleSort("marketplace")} className="cursor-pointer select-none hover:text-dark-900/70">
-                    <span className="inline-flex items-center gap-1">Marketplace <SortIcon col="marketplace" /></span>
-                  </th>
-                  <th onClick={() => toggleSort("price_cny_min")} className="cursor-pointer select-none hover:text-dark-900/70">
-                    <span className="inline-flex items-center gap-1">Price <SortIcon col="price_cny_min" /></span>
-                  </th>
-                  <th>MOQ</th>
-                  <th onClick={() => toggleSort("stock_status")} className="cursor-pointer select-none hover:text-dark-900/70">
-                    <span className="inline-flex items-center gap-1">Status <SortIcon col="stock_status" /></span>
-                  </th>
-                  <th onClick={() => toggleSort("sales_count")} className="cursor-pointer select-none hover:text-dark-900/70">
-                    <span className="inline-flex items-center gap-1">Sales <SortIcon col="sales_count" /></span>
-                  </th>
-                  <th className="text-right">Actions</th>
+                  {!tablePrefs.isHidden("product") && (
+                    <th onClick={() => toggleSort("title_english")} className="cursor-pointer select-none hover:text-dark-900/70">
+                      <span className="inline-flex items-center gap-1">Product <SortIcon col="title_english" /></span>
+                    </th>
+                  )}
+                  {!tablePrefs.isHidden("marketplace") && (
+                    <th onClick={() => toggleSort("marketplace")} className="cursor-pointer select-none hover:text-dark-900/70">
+                      <span className="inline-flex items-center gap-1">Marketplace <SortIcon col="marketplace" /></span>
+                    </th>
+                  )}
+                  {!tablePrefs.isHidden("price") && (
+                    <th onClick={() => toggleSort("price_cny_min")} className="cursor-pointer select-none hover:text-dark-900/70">
+                      <span className="inline-flex items-center gap-1">Price <SortIcon col="price_cny_min" /></span>
+                    </th>
+                  )}
+                  {!tablePrefs.isHidden("moq") && <th>MOQ</th>}
+                  {!tablePrefs.isHidden("stock_status") && (
+                    <th onClick={() => toggleSort("stock_status")} className="cursor-pointer select-none hover:text-dark-900/70">
+                      <span className="inline-flex items-center gap-1">Status <SortIcon col="stock_status" /></span>
+                    </th>
+                  )}
+                  {!tablePrefs.isHidden("sales_count") && (
+                    <th onClick={() => toggleSort("sales_count")} className="cursor-pointer select-none hover:text-dark-900/70">
+                      <span className="inline-flex items-center gap-1">Sales <SortIcon col="sales_count" /></span>
+                    </th>
+                  )}
+                  {!tablePrefs.isHidden("created_at") && (
+                    <th onClick={() => toggleSort("created_at")} className="cursor-pointer select-none hover:text-dark-900/70">
+                      <span className="inline-flex items-center gap-1">Added <SortIcon col="created_at" /></span>
+                    </th>
+                  )}
+                  {!tablePrefs.isHidden("actions") && <th className="text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -775,7 +1005,7 @@ export default function ProductsPage() {
                   key={product.id}
                   className={cn(selectedIds.has(product.id) && "bg-brand-50/50")}
                 >
-                  <td className="px-4 py-3">
+                  <td>
                     <button onClick={() => toggleSelect(product.id)} className="flex items-center justify-center">
                       {selectedIds.has(product.id) ? (
                         <CheckSquare className="h-4 w-4 text-brand-500" />
@@ -784,94 +1014,115 @@ export default function ProductsPage() {
                       )}
                     </button>
                   </td>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      {product.images && product.images.length > 0 ? (
-                        <button
-                          onClick={() => setPreviewImage(product.images[0])}
-                          className="shrink-0"
-                        >
-                          <img
-                            src={product.images[0]}
-                            alt={product.title_english}
-                            className="h-11 w-11 rounded-lg object-cover ring-1 ring-dark-900/5 hover:ring-2 hover:ring-brand-500/30 transition-all"
-                          />
-                        </button>
-                      ) : (
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-dark-100 ring-1 ring-dark-900/5">
-                          <ImageIcon className="h-5 w-5 text-dark-400" />
+                  {!tablePrefs.isHidden("product") && (
+                    <td>
+                      <div className="flex items-center gap-3">
+                        {product.images && product.images.length > 0 ? (
+                          <button
+                            onClick={() => setPreviewImage(product.images[0])}
+                            className="shrink-0"
+                          >
+                            <img
+                              src={product.images[0]}
+                              alt={product.title_english}
+                              className="h-11 w-11 rounded-lg object-cover ring-1 ring-dark-900/5 hover:ring-2 hover:ring-brand-500/30 transition-all"
+                            />
+                          </button>
+                        ) : (
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-dark-100 ring-1 ring-dark-900/5">
+                            <ImageIcon className="h-5 w-5 text-dark-400" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-dark-900 truncate max-w-[220px]">
+                            {product.title_english || product.title_original || "Untitled"}
+                          </p>
+                          <p className="text-xs text-dark-400 truncate max-w-[220px]">
+                            {product.category}
+                          </p>
+                          {product.images && product.images.length > 1 && (
+                            <span className="text-[10px] text-dark-300">+{product.images.length - 1} images</span>
+                          )}
                         </div>
-                      )}
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-dark-900 truncate max-w-[220px]">
-                          {product.title_english || product.title_original || "Untitled"}
-                        </p>
-                        <p className="text-xs text-dark-400 truncate max-w-[220px]">
-                          {product.category}
-                        </p>
-                        {product.images && product.images.length > 1 && (
-                          <span className="text-[10px] text-dark-300">+{product.images.length - 1} images</span>
+                      </div>
+                    </td>
+                  )}
+                  {!tablePrefs.isHidden("marketplace") && (
+                    <td>
+                      <span className={cn(
+                        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                        marketplaceColors[product.marketplace] || "bg-dark-50 text-dark-500 border-dark-200"
+                      )}>
+                        {product.marketplace}
+                      </span>
+                    </td>
+                  )}
+                  {!tablePrefs.isHidden("price") && (
+                    <td>
+                      <div>
+                        <p className="text-sm font-semibold text-dark-900">{formatCNY(product.price_cny_min)}</p>
+                        {product.price_cny_max > product.price_cny_min && (
+                          <p className="text-xs text-dark-400">– {formatCNY(product.price_cny_max)}</p>
+                        )}
+                        {product.price_usd_estimated > 0 && (
+                          <p className="text-[10px] text-dark-300">~{formatUSD(product.price_usd_estimated)}</p>
                         )}
                       </div>
-                    </div>
-                  </td>
-                  <td>
-                    <span className={cn(
-                      "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                      marketplaceColors[product.marketplace] || "bg-dark-50 text-dark-500 border-dark-200"
-                    )}>
-                      {product.marketplace}
-                    </span>
-                  </td>
-                  <td>
-                    <div>
-                      <p className="text-sm font-semibold text-dark-900">{formatCNY(product.price_cny_min)}</p>
-                      {product.price_cny_max > product.price_cny_min && (
-                        <p className="text-xs text-dark-400">– {formatCNY(product.price_cny_max)}</p>
-                      )}
-                      {product.price_usd_estimated > 0 && (
-                        <p className="text-[10px] text-dark-300">~{formatUSD(product.price_usd_estimated)}</p>
-                      )}
-                    </div>
-                  </td>
-                  <td>
-                    <span className="text-dark-600">{product.moq?.toLocaleString() || "—"}</span>
-                  </td>
-                  <td>
-                    <StatusBadge status={product.stock_status || "unknown"} />
-                  </td>
-                  <td>
-                    <span className="text-dark-600">{product.sales_count?.toLocaleString() || "0"}</span>
-                  </td>
-                  <td>
-                    <div className="flex items-center justify-end gap-1">
-                      {product.source_url && (
-                        <a
-                          href={product.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                    </td>
+                  )}
+                  {!tablePrefs.isHidden("moq") && (
+                    <td>
+                      <span className="text-dark-600">{product.moq?.toLocaleString() || "—"}</span>
+                    </td>
+                  )}
+                  {!tablePrefs.isHidden("stock_status") && (
+                    <td>
+                      <StatusBadge status={product.stock_status || "unknown"} />
+                    </td>
+                  )}
+                  {!tablePrefs.isHidden("sales_count") && (
+                    <td>
+                      <span className="text-dark-600">{product.sales_count?.toLocaleString() || "0"}</span>
+                    </td>
+                  )}
+                  {!tablePrefs.isHidden("created_at") && (
+                    <td>
+                      <span className="text-xs text-dark-900/50">
+                        {createdAtOf(product) ? formatDate(createdAtOf(product) as string) : "—"}
+                      </span>
+                    </td>
+                  )}
+                  {!tablePrefs.isHidden("actions") && (
+                    <td>
+                      <div className="flex items-center justify-end gap-1">
+                        {product.source_url && (
+                          <a
+                            href={product.source_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="admin-btn-ghost h-8 w-8 px-0 hover:text-brand-500"
+                            title="Open source URL"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        )}
+                        <button
+                          onClick={() => openEditModal(product)}
                           className="admin-btn-ghost h-8 w-8 px-0 hover:text-brand-500"
-                          title="Open source URL"
+                          title="Edit product"
                         >
-                          <ExternalLink className="h-4 w-4" />
-                        </a>
-                      )}
-                      <button
-                        onClick={() => openEditModal(product)}
-                        className="admin-btn-ghost h-8 w-8 px-0 hover:text-brand-500"
-                        title="Edit product"
-                      >
-                        <Edit3 className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => openDeleteDialog(product)}
-                        className="admin-btn-ghost h-8 w-8 px-0 hover:text-error"
-                        title="Delete product"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
+                          <Edit3 className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => openDeleteDialog(product)}
+                          className="admin-btn-ghost h-8 w-8 px-0 hover:text-error"
+                          title="Delete product"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

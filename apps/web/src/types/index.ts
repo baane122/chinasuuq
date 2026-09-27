@@ -204,7 +204,8 @@ export interface Shipment {
   reference: string;
   method: "air" | "sea" | "land";
   status: "preparing" | "loaded" | "in_transit" | "arrived" | "customs" | "delivered";
-  packages: string[];
+  // The live shipments table stores a count, not a list: `total_packages`.
+  total_packages: number | null;
   origin: string;
   destination: string;
   departure_date: string;

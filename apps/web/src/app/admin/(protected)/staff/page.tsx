@@ -26,14 +26,25 @@ import {
   EMPTY_IMAGES,
 } from "@/components/admin/ui";
 
+/**
+ * WHAT IS NOT AVAILABLE, AND IS SAID SO
+ *  - staff_profiles has no permissions column (live: user_id, role,
+ *    department, two_factor_enabled, last_active, is_active,
+ *    is_super_admin), so nothing here can read or store a per-member
+ *    permission list — the role is the only access fact the database keeps.
+ *  - profiles has no email column, so members are identified by full_name;
+ *    the sign-in email is not readable from this client.
+ */
 interface StaffRow {
   id: string;
-  profile_id: string | null;
+  user_id: string | null;
   role: string;
-  permissions: string[];
+  department: string | null;
   is_active: boolean;
   is_super_admin: boolean;
+  last_active?: string | null;
   created_at?: string;
+  profiles: { full_name: string | null } | null;
 }
 
 const ROLES = [
@@ -52,21 +63,8 @@ const ROLES = [
   "content_manager",
 ];
 
-const PERMISSIONS = [
-  "view",
-  "create",
-  "edit",
-  "approve",
-  "verify_payment",
-  "refund",
-  "pay_supplier",
-  "manage_exchange_rate",
-  "export",
-  "manage_roles",
-  "view_finance",
-  "view_sensitive_customer_data",
-  "archive",
-];
+const PERMISSIONS_NOTE =
+  "Per-member permissions are not recorded in the database — access is derived from the role alone.";
 
 export default function StaffPage() {
   const { toast } = useToast();
@@ -78,14 +76,14 @@ export default function StaffPage() {
   // Create modal
   const [createOpen, setCreateOpen] = useState(false);
   const [createRole, setCreateRole] = useState(ROLES[0]);
-  const [createPerms, setCreatePerms] = useState<string[]>(["view"]);
+  const [createDept, setCreateDept] = useState("");
   const [creating, setCreating] = useState(false);
 
   // Edit modal
   const [editOpen, setEditOpen] = useState(false);
   const [editStaff, setEditStaff] = useState<StaffRow | null>(null);
   const [editRole, setEditRole] = useState("");
-  const [editPerms, setEditPerms] = useState<string[]>([]);
+  const [editDept, setEditDept] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Toggle active
@@ -100,11 +98,15 @@ export default function StaffPage() {
       setIsLoading(true);
       const { data, error: fetchError } = await supabase
         .from("staff_profiles")
-        .select("*")
+        .select(
+          "id, user_id, role, department, last_active, is_active, is_super_admin, created_at, profiles(full_name)"
+        )
         .order("created_at", { ascending: false });
 
       if (fetchError) throw fetchError;
-      setStaff((data as StaffRow[]) || []);
+      // supabase-js types a to-one embed as an array; at runtime the joined
+      // profile is a single object.
+      setStaff((data as unknown as StaffRow[]) || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load staff");
     } finally {
@@ -118,27 +120,22 @@ export default function StaffPage() {
 
   const filteredStaff = staff.filter((s) => {
     if (search === "") return true;
-    return s.role.toLowerCase().includes(search.toLowerCase());
-  });
-
-  const togglePermission = (
-    setter: React.Dispatch<React.SetStateAction<string[]>>,
-    permission: string
-  ) => {
-    setter((prev) =>
-      prev.includes(permission)
-        ? prev.filter((p) => p !== permission)
-        : [...prev, permission]
+    const q = search.toLowerCase();
+    return (
+      s.role.toLowerCase().includes(q) ||
+      (s.department ?? "").toLowerCase().includes(q) ||
+      (s.profiles?.full_name ?? "").toLowerCase().includes(q)
     );
-  };
+  });
 
   const handleCreate = async () => {
     try {
       setCreating(true);
-      // permissions is a JSONB array column — store as JSON array via JSON.stringify
+      // staff_profiles has no permissions column — the insert carries only the
+      // fields the table actually stores.
       const { error: insertError } = await supabase.from("staff_profiles").insert({
         role: createRole,
-        permissions: JSON.parse(JSON.stringify(createPerms)),
+        department: createDept.trim() || null,
         is_active: true,
         is_super_admin: createRole === "super_admin",
       });
@@ -146,7 +143,7 @@ export default function StaffPage() {
       toast("success", "Staff member created");
       setCreateOpen(false);
       setCreateRole(ROLES[0]);
-      setCreatePerms(["view"]);
+      setCreateDept("");
       fetchStaff();
     } catch (err) {
       toast("error", err instanceof Error ? err.message : "Failed to create staff");
@@ -158,7 +155,7 @@ export default function StaffPage() {
   const openEdit = (s: StaffRow) => {
     setEditStaff(s);
     setEditRole(s.role);
-    setEditPerms(Array.isArray(s.permissions) ? s.permissions : []);
+    setEditDept(s.department ?? "");
     setEditOpen(true);
   };
 
@@ -170,7 +167,7 @@ export default function StaffPage() {
         .from("staff_profiles")
         .update({
           role: editRole,
-          permissions: JSON.parse(JSON.stringify(editPerms)),
+          department: editDept.trim() || null,
           is_super_admin: editRole === "super_admin",
         })
         .eq("id", editStaff.id);
@@ -223,34 +220,27 @@ export default function StaffPage() {
     }
   };
 
-  const PermCheckboxGroup = ({
+  const DepartmentField = ({
     value,
     onChange,
+    id,
   }: {
-    value: string[];
-    onChange: React.Dispatch<React.SetStateAction<string[]>>;
+    value: string;
+    onChange: (v: string) => void;
+    id: string;
   }) => (
     <div>
-      <span className="admin-label">Permissions</span>
-      <div className="grid max-h-56 grid-cols-2 gap-1.5 overflow-y-auto rounded-xl border border-dark-900/10 bg-white p-2.5">
-        {PERMISSIONS.map((perm) => (
-          <label
-            key={perm}
-            className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-dark-900/70 transition-colors hover:bg-dark-900/5"
-          >
-            <input
-              type="checkbox"
-              checked={value.includes(perm)}
-              onChange={() => togglePermission(onChange, perm)}
-              className="h-4 w-4 rounded border-dark-200 text-brand-500 focus:ring-brand-500/30"
-            />
-            <span className="capitalize">{perm.replace(/_/g, " ")}</span>
-          </label>
-        ))}
-      </div>
-      <p className="mt-1.5 text-[11px] text-dark-900/40">
-        {value.length} of {PERMISSIONS.length} granted
-      </p>
+      <label htmlFor={id} className="admin-label">
+        Department
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="e.g. Sourcing"
+        className="admin-input"
+      />
+      <p className="mt-1.5 text-[11px] text-dark-900/40">{PERMISSIONS_NOTE}</p>
     </div>
   );
 
@@ -264,7 +254,7 @@ export default function StaffPage() {
       {/* Page header */}
       <PageHeader
         title="Staff & Roles"
-        subtitle="Team members, permissions and access"
+        subtitle="Team members, roles and access"
         actions={
           <button onClick={() => setCreateOpen(true)} className="admin-btn-primary">
             <Plus className="h-4 w-4" />
@@ -331,8 +321,9 @@ export default function StaffPage() {
             <table className="admin-table w-full">
               <thead>
                 <tr>
+                  <th>Member</th>
                   <th>Role</th>
-                  <th>Permissions</th>
+                  <th>Department</th>
                   <th>Super Admin</th>
                   <th>Status</th>
                   <th>Created</th>
@@ -343,26 +334,20 @@ export default function StaffPage() {
                 {filteredStaff.map((member) => (
                   <tr key={member.id}>
                     <td>
+                      <p className="font-medium text-dark-900">
+                        {member.profiles?.full_name || "—"}
+                      </p>
+                      <p className="text-[11px] text-dark-900/40">
+                        {member.user_id ? `user ${member.user_id.slice(0, 8)}` : "no linked user"}
+                      </p>
+                    </td>
+                    <td>
                       <StatusBadge status={member.role} />
                     </td>
                     <td>
-                      <div className="flex max-w-xs flex-wrap gap-1">
-                        {(Array.isArray(member.permissions) ? member.permissions : [])
-                          .slice(0, 4)
-                          .map((perm) => (
-                            <span
-                              key={perm}
-                              className="inline-flex items-center rounded-md bg-brand-500/10 px-2 py-0.5 text-[11px] font-medium text-brand-500"
-                            >
-                              {perm.replace(/_/g, " ")}
-                            </span>
-                          ))}
-                        {Array.isArray(member.permissions) && member.permissions.length > 4 && (
-                          <span className="inline-flex items-center rounded-md bg-dark-900/[0.06] px-2 py-0.5 text-[11px] font-medium text-dark-900/50">
-                            +{member.permissions.length - 4} more
-                          </span>
-                        )}
-                      </div>
+                      <span className="text-sm text-dark-900/60">
+                        {member.department || "—"}
+                      </span>
                     </td>
                     <td>
                       {member.is_super_admin ? (
@@ -428,7 +413,7 @@ export default function StaffPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         title="Add Staff Member"
-        subtitle="Assign a role and permissions to a new team member"
+        subtitle="Assign a role and department to a new team member"
         footer={
           <div className="flex items-center justify-end gap-2">
             <button onClick={() => setCreateOpen(false)} className="admin-btn-ghost">
@@ -459,7 +444,7 @@ export default function StaffPage() {
               ))}
             </select>
           </div>
-          <PermCheckboxGroup value={createPerms} onChange={setCreatePerms} />
+          <DepartmentField id="staff-create-dept" value={createDept} onChange={setCreateDept} />
         </div>
       </SidePanel>
 
@@ -499,7 +484,7 @@ export default function StaffPage() {
               ))}
             </select>
           </div>
-          <PermCheckboxGroup value={editPerms} onChange={setEditPerms} />
+          <DepartmentField id="staff-edit-dept" value={editDept} onChange={setEditDept} />
         </div>
       </SidePanel>
 

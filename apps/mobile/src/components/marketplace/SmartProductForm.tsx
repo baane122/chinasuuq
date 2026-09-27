@@ -1,5 +1,7 @@
 // SmartProductForm — capture + MOQ-aware review flow for ChinaSuuq
-// Now integrated with the MOQ engine and the 5-section ProductReviewSheet
+// The captured page text is resolved by moqOrderRules() (@/lib/moqIngest) into a
+// minimum + price ladder + carton size, shown with its provenance in
+// MoqEvidenceCard, and validated by the MOQ engine (@/lib/moq).
 
 import React, { useState, useEffect, useMemo } from "react";
 import {
@@ -19,15 +21,16 @@ import { BottomSheet } from "@/components/BottomSheet";
 import { useCartStore } from "@/store/cart";
 import type { Marketplace, Product } from "@/types";
 import { getCnyPerUsd } from "@/lib/exchange";
-import { saveSourcingCapture } from "@/db";
+import { saveSourcingCapture, saveMoqDecision, enrichMoqWithAi } from "@/db";
 import { whatsappOrderLink } from "@/lib/utils";
+import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
 import {
   type OrderRules,
   validateMOQ,
   calculateTierPrice,
   getSuggestedQuantities,
-  createDefaultRules,
 } from "@/lib/moq";
+import MoqEvidenceCard from "./MoqEvidenceCard";
 import ProductReviewSheet from "./ProductReviewSheet";
 
 export interface CapturedListing {
@@ -38,6 +41,8 @@ export interface CapturedListing {
   brand: string;
   platform: string; // marketplace id
   sourceId: string;
+  /** MOQ-related lines scraped from the page (PRODUCT_CAPTURE_SCRIPT). */
+  moqText?: string;
 }
 
 interface SmartProductFormProps {
@@ -61,6 +66,11 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
   const [estKg, setEstKg] = useState("");
   const [estCbm, setEstCbm] = useState("");
   const [showReviewSheet, setShowReviewSheet] = useState(false);
+  /** A minimum the reviewer accepted or typed — beats any machine reading. */
+  const [manualMoq, setManualMoq] = useState<{ moq: number; raw: string | null } | null>(null);
+
+  /** MOQ evidence scraped from the listing page. */
+  const moqText = listing?.moqText ?? null;
 
   // Build a stable Product object from the listing (memoized for the review sheet)
   const product = useMemo<Product | null>(() => {
@@ -77,7 +87,12 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
       category: "",
       attributes: specs,
       variants: [],
-      moq: 1,
+      // A fresh capture has NO evidence: moq 1 is the column default, i.e. "not
+      // stated", so resolveMoq() reads the page text instead of trusting a 1.
+      moq: manualMoq?.moq ?? 1,
+      moq_source: manualMoq ? "manual" : null,
+      moq_confidence: manualMoq ? 1 : null,
+      moq_raw_text: manualMoq?.raw ?? null,
       price_cny_min: priceCny,
       price_cny_max: priceCny,
       price_usd_estimated: usd,
@@ -88,13 +103,18 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
       last_synced_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     };
-  }, [listing, specs, priceCny, usd]);
+  }, [listing, specs, priceCny, usd, manualMoq]);
 
-  // MOQ rules derived from the product
-  const moqRules = useMemo<OrderRules>(() => {
-    if (!product) return { productMoq: 1, tiers: [] };
-    return createDefaultRules(product);
-  }, [product]);
+  // MOQ rules resolved from the captured page text (floor, ladder, carton, 混批)
+  const order = useMemo(
+    () => (product ? moqOrderRules(product, moqText) : null),
+    [product, moqText]
+  );
+  const moqRules = useMemo<OrderRules>(
+    () => order?.rules ?? { productMoq: 1, tiers: [] },
+    [order]
+  );
+  const resolution = order?.resolution ?? null;
 
   // MOQ validation
   const validation = useMemo(() => validateMOQ(moqRules, qty), [moqRules, qty]);
@@ -111,6 +131,7 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
     setSpecs({});
     setEstKg("");
     setEstCbm("");
+    setManualMoq(null);
     const p = Number(listing.price) || 0;
     setPriceCny(p);
     getCnyPerUsd().then((r) => {
@@ -119,7 +140,18 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
     });
   }, [listing]);
 
+  // Land the customer on the real floor, not on a quantity they cannot buy.
+  useEffect(() => {
+    setQty((q) => (q < moqRules.productMoq ? moqRules.productMoq : q));
+  }, [moqRules.productMoq]);
+
   if (!listing) return null;
+
+  /** Accept/override: remember it as manual, and hand it to the data layer. */
+  const handleMoqDecision = (moq: number, rawText: string | null) => {
+    setManualMoq({ moq, raw: rawText });
+    if (product) void saveMoqDecision(product.id, { moq, source: "manual", confidence: 1, rawText });
+  };
 
   const handleAdd = () => {
     if (!validation.valid) {
@@ -216,8 +248,26 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
           <View style={styles.block}>
             <Text style={styles.blockLabel}>
               Quantity{"  "}
-              <Text style={styles.moqHint}>(MOQ: {moqRules.productMoq} pcs)</Text>
+              <Text style={styles.moqHint}>
+                ({resolution ? describeMoq(resolution) : "MOQ: " + moqRules.productMoq + " pcs"})
+              </Text>
             </Text>
+
+            {/* The detected minimum, its provenance, and the override control */}
+            <MoqEvidenceCard
+              product={product}
+              capturedText={moqText}
+              variant="compact"
+              onDecision={handleMoqDecision}
+              askAi={() =>
+                enrichMoqWithAi({
+                  productId: product?.id,
+                  title: listing.title,
+                  marketplace: listing.platform,
+                  capturedText: moqText,
+                })
+              }
+            />
             <View style={styles.qtyWrap}>
               <TouchableOpacity
                 style={[styles.qtyBtn, qty <= moqRules.productMoq && styles.disabled]}
@@ -251,6 +301,12 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
               <View style={styles.tierRow}>
                 <Text style={styles.tierText}>
                   💰 {tier.label || "Tier"} price: ¥{tier.priceCny.toFixed(2)}/pc
+                  {moqRules.packs?.[0]
+                    ? "  ·  sold in " +
+                      moqRules.packs[0].packLabel +
+                      "s of " +
+                      moqRules.packs[0].piecesPerPack
+                    : ""}
                 </Text>
               </View>
             ) : null}
@@ -358,11 +414,11 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
         </ScrollView>
       </BottomSheet>
 
-      {/* 5-section product review sheet */}
+      {/* 5-section product review sheet — resolves the same capture, no second parser */}
       <ProductReviewSheet
         visible={showReviewSheet}
         product={product}
-        rules={moqRules}
+        capturedText={moqText}
         onClose={() => {
           setShowReviewSheet(false);
           onClose();
@@ -372,6 +428,7 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
           onClose();
         }}
         onAskSmallerQty={handleAskSmallerQty}
+        onMoqConfirmed={handleMoqDecision}
       />
     </>
   );

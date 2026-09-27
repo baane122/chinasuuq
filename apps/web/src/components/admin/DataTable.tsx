@@ -1,8 +1,9 @@
 "use client";
 import { useState, useMemo, useCallback, ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Download, ChevronDown, ChevronUp, Filter } from "lucide-react";
+import { Search, Download, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { Density } from "@/components/admin/useTablePrefs";
 
 export interface Column<T> {
   key: string;
@@ -11,10 +12,13 @@ export interface Column<T> {
   className?: string;
   sortable?: boolean;
   hideOnMobile?: boolean;
+  /** true = never offered for hiding (e.g. the row's identifying column). */
+  fixed?: boolean;
 }
 
 export function DataTable<T extends { id: string }>({
   columns, data, searchKeys, onRowClick, actions, emptyMessage = "No data found",
+  search, onSearchChange, density = "comfortable", hiddenKeys, toolbar, exportRows,
 }: {
   columns: Column<T>[];
   data: T[];
@@ -22,10 +26,24 @@ export function DataTable<T extends { id: string }>({
   onRowClick?: (row: T) => void;
   actions?: ReactNode;
   emptyMessage?: string;
+  /** Controlled search: pass both to keep the query in the URL. Omit them and
+   *  the table keeps its own local search exactly as it did before. */
+  search?: string;
+  onSearchChange?: (value: string) => void;
+  density?: Density;
+  hiddenKeys?: Set<string>;
+  /** Rendered in the toolbar next to the search box (density/column controls). */
+  toolbar?: ReactNode;
+  /** Override what Export writes (e.g. the page's richer CSV shape). */
+  exportRows?: () => void;
 }) {
-  const [search, setSearch] = useState("");
+  const [internalSearch, setInternalSearch] = useState("");
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const controlled = onSearchChange !== undefined;
+  const searchValue = controlled ? (search ?? "") : internalSearch;
+  const setSearchValue = controlled ? onSearchChange! : setInternalSearch;
 
   const handleSort = useCallback((key: string) => {
     setSortKey((prev) => {
@@ -38,10 +56,15 @@ export function DataTable<T extends { id: string }>({
     });
   }, []);
 
+  const visibleColumns = useMemo(
+    () => (hiddenKeys ? columns.filter((c) => c.fixed || !hiddenKeys.has(c.key)) : columns),
+    [columns, hiddenKeys]
+  );
+
   const filtered = useMemo(() => {
     let rows = data;
-    if (search && searchKeys?.length) {
-      const q = search.toLowerCase();
+    if (searchValue && searchKeys?.length) {
+      const q = searchValue.toLowerCase();
       rows = rows.filter((row) =>
         searchKeys.some((k) => {
           const val = (row as Record<string, unknown>)[k];
@@ -58,12 +81,13 @@ export function DataTable<T extends { id: string }>({
       });
     }
     return rows;
-  }, [data, search, searchKeys, sortKey, sortDir]);
+  }, [data, searchValue, searchKeys, sortKey, sortDir]);
 
   const handleExport = useCallback(() => {
-    const header = columns.filter((c) => c.sortable !== false).map((c) => c.label).join(",");
+    if (exportRows) return exportRows();
+    const header = visibleColumns.filter((c) => c.sortable !== false).map((c) => c.label).join(",");
     const rows = filtered.map((row) =>
-      columns.filter((c) => c.sortable !== false).map((c) => {
+      visibleColumns.filter((c) => c.sortable !== false).map((c) => {
         const val = (row as Record<string, unknown>)[c.key];
         return typeof val === "string" ? `"${val.replace(/"/g, '""')}"` : String(val ?? "");
       }).join(",")
@@ -76,7 +100,9 @@ export function DataTable<T extends { id: string }>({
     a.download = `export-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [filtered, columns]);
+  }, [filtered, visibleColumns, exportRows]);
+
+  const pad = density === "compact" ? "px-3 py-1.5" : "px-4 py-3";
 
   return (
     <div className="rounded-2xl border border-dark-900/5 bg-white shadow-sm">
@@ -85,13 +111,14 @@ export function DataTable<T extends { id: string }>({
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30" />
           <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchValue}
+            onChange={(e) => setSearchValue(e.target.value)}
             placeholder="Search..."
             className="h-10 w-full rounded-xl border border-dark-900/10 bg-dark-50 pl-9 pr-3 text-sm placeholder:text-dark-900/30 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {toolbar}
           {actions}
           <button onClick={handleExport} className="inline-flex h-10 items-center gap-2 rounded-xl border border-dark-900/10 bg-white px-3 text-sm font-medium text-dark-900/70 transition hover:bg-dark-50 hover:text-dark-900">
             <Download className="h-4 w-4" />
@@ -102,15 +129,15 @@ export function DataTable<T extends { id: string }>({
 
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
+        <table className={cn("w-full text-left text-sm", density === "compact" && "text-[13px]")}>
           <thead>
             <tr className="border-b border-dark-900/5 bg-dark-50/50 text-xs font-semibold uppercase tracking-wider text-dark-900/40">
-              {columns.map((col) => (
+              {visibleColumns.map((col) => (
                 <th
                   key={col.key}
                   onClick={() => col.sortable !== false && handleSort(col.key)}
                   className={cn(
-                    "px-4 py-3",
+                    pad,
                     col.sortable !== false && "cursor-pointer select-none hover:text-dark-900/60",
                     col.className,
                     col.hideOnMobile && "hidden lg:table-cell"
@@ -138,8 +165,8 @@ export function DataTable<T extends { id: string }>({
                     onRowClick && "cursor-pointer"
                   )}
                 >
-                  {columns.map((col) => (
-                    <td key={col.key} className={cn("px-4 py-3 text-dark-900", col.className, col.hideOnMobile && "hidden lg:table-cell")}>
+                  {visibleColumns.map((col) => (
+                    <td key={col.key} className={cn(pad, "text-dark-900", col.className, col.hideOnMobile && "hidden lg:table-cell")}>
                       {col.render ? col.render(row, i) : String((row as Record<string, unknown>)[col.key] ?? "")}
                     </td>
                   ))}

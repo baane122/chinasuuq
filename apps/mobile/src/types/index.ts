@@ -33,6 +33,16 @@ export interface Product {
   attributes: Record<string, string>;
   variants: ProductVariant[];
   moq: number;
+  /** Provenance of `moq`: manual = a human typed/confirmed it, regex = the
+   *  local parser (@/lib/moqIngest), ai = the product-enrich model pass.
+   *  NOTE: `source_products.moq` defaults to 1, so `moq: 1` with no source is
+   *  the ABSENCE of evidence, not a real one-piece minimum. Always read MOQ
+   *  through resolveMoq()/moqOrderRules() instead of using `moq` directly. */
+  moq_source?: "manual" | "regex" | "ai" | null;
+  /** 0..1 — how much the stored value deserves to be trusted. */
+  moq_confidence?: number | null;
+  /** Verbatim marketplace wording the number came from, e.g. "10件起批". */
+  moq_raw_text?: string | null;
   price_cny_min: number;
   price_cny_max: number;
   price_usd_estimated: number;

@@ -2,7 +2,8 @@
 // Marketplace pages are UNTRUSTED content. This function:
 //   1. requires a staff/admin JWT (consumes AI credits, internal tooling),
 //   2. rejects prompt-injection markers before any model call,
-//   3. loads the admin-configured provider from public.settings (ai_provider),
+//   3. loads the admin-configured provider from ai_provider_config
+//      (service_role-only table; was public.settings, anonymously readable),
 //   4. calls the OpenAI-compatible /chat/completions endpoint with ZERO tools
 //      and a strict JSON contract, then validates the output against the
 //      required schema before returning it.
@@ -11,6 +12,7 @@
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { requireStaffOrAdmin, unauthorized } from "../_shared/auth.ts";
+import { loadAiProviderConfig } from "../_shared/ai-provider.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const INJECTION_MARKERS = [
@@ -59,28 +61,18 @@ export async function handler(req: Request) {
     const fields = parseSchema(body.schema);
     if (fields.length === 0) return json({ ok: false, error: "schema_invalid", blocked: true }, 422);
 
-    // Load provider config (admin-managed via ai-settings).
+    // Load the provider credential from ai_provider_config (service_role only)
+    // and vet its base_url with the shared SSRF guard before any fetch.
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
-    const { data: settingRow } = await supabase
-      .from("settings")
-      .select("value")
-      .eq("key", "ai_provider")
-      .maybeSingle();
-    const cfg = (settingRow?.value ?? {}) as Record<string, unknown>;
-    const baseUrl = String(cfg.base_url || "").replace(/\/+$/, "");
-    const apiKey = String(cfg.api_key || "");
-    const model = String(cfg.model || "");
-    if (!cfg.is_configured || !baseUrl || !apiKey || !model) {
+    const provider = await loadAiProviderConfig(supabase);
+    if (!provider) {
       return json({ ok: false, error: "ai_provider_not_configured" }, 503);
     }
-    // Guardrail: only https and no internal hosts through the stored base_url.
-    if (!baseUrl.startsWith("https://") || /@(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.)/.test(baseUrl)) {
-      return json({ ok: false, error: "ai_provider_base_url_not_allowed" }, 503);
-    }
+    const { baseUrl, apiKey, model } = provider;
 
     // Strict-JSON extraction call. Zero tools — the model can only return text.
     const system = [

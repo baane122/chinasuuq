@@ -168,8 +168,10 @@ export default function AdminLoginPage() {
         <div className="relative mt-auto pt-12">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/admin/login_hero.png"
+            src="/admin/login_hero.webp"
             alt="ChinaSuuq Mission Control"
+            loading="lazy"
+            decoding="async"
             className="mx-auto w-full max-w-md drop-shadow-2xl"
           />
           <p className="mt-6 text-center text-xs text-white/50">© 2026 ChinaSuuq · Hargeisa → China</p>

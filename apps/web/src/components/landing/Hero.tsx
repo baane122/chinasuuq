@@ -35,13 +35,13 @@ const steps = [
 ];
 
 const platformChips = [
-  { name: "1688", img: "/images/marketplaces/1688.png" },
-  { name: "Taobao", img: "/images/marketplaces/taobao.png" },
-  { name: "YiwuGo", img: "/images/marketplaces/yiwugo.png" },
-  { name: "Alibaba", img: "/images/marketplaces/alibaba.png" },
-  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.png" },
-  { name: "JD", img: "/images/marketplaces/jd.png" },
-  { name: "1$ Dollar Store", img: "/images/marketplaces/dollarstore.png" },
+  { name: "1688", img: "/images/marketplaces/1688.webp" },
+  { name: "Taobao", img: "/images/marketplaces/taobao.webp" },
+  { name: "YiwuGo", img: "/images/marketplaces/yiwugo.webp" },
+  { name: "Alibaba", img: "/images/marketplaces/alibaba.webp" },
+  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.webp" },
+  { name: "JD", img: "/images/marketplaces/jd.webp" },
+  { name: "1$ Dollar Store", img: "/images/marketplaces/dollarstore.webp" },
 ];
 
 const stats = [
@@ -316,7 +316,7 @@ export default function Hero() {
             <div className="relative z-10">
               <div className="relative rounded-[2.5rem] overflow-hidden shadow-2xl shadow-brand-500/20 border border-brand-500/10">
                 <Image
-                  src="/images/hero/hero-main.png"
+                  src="/images/hero/hero-main.webp"
                   alt="ChinaSuuq shopping app"
                   width={720}
                   height={720}

@@ -8,37 +8,37 @@ import Image from "next/image";
 const STEPS = [
   {
     key: "step1",
-    img: "/images/how-v2/01-browse.png",
+    img: "/images/how-v2/01-browse.webp",
     iconBg: "from-brand-500 to-brand-600",
     accent: "bg-brand-500",
   },
   {
     key: "step2",
-    img: "/images/how-v2/02-capture.png",
+    img: "/images/how-v2/02-capture.webp",
     iconBg: "from-brand-400 to-brand-500",
     accent: "bg-brand-400",
   },
   {
     key: "step3",
-    img: "/images/how-v2/03-customize.png",
+    img: "/images/how-v2/03-customize.webp",
     iconBg: "from-dark-900 to-dark-800",
     accent: "bg-dark-900",
   },
   {
     key: "step4",
-    img: "/images/how-v2/04-pay.png",
+    img: "/images/how-v2/04-pay.webp",
     iconBg: "from-emerald-500 to-emerald-600",
     accent: "bg-emerald-500",
   },
   {
     key: "step5",
-    img: "/images/how-v2/05-track.png",
+    img: "/images/how-v2/05-track.webp",
     iconBg: "from-brand-500 to-brand-600",
     accent: "bg-brand-500",
   },
   {
     key: "step6",
-    img: "/images/how-v2/06-receive.png",
+    img: "/images/how-v2/06-receive.webp",
     iconBg: "from-warm-200 to-warm-100",
     accent: "bg-warm-200",
   },
@@ -46,12 +46,12 @@ const STEPS = [
 
 // 6 Chinese marketplace platforms we integrate — used in the subtitle chip row
 const PLATFORMS = [
-  { name: "1688", img: "/images/marketplaces/1688.png" },
-  { name: "Taobao", img: "/images/marketplaces/taobao.png" },
-  { name: "YiwuGo", img: "/images/marketplaces/yiwugo.png" },
-  { name: "Alibaba", img: "/images/marketplaces/alibaba.png" },
-  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.png" },
-  { name: "JD", img: "/images/marketplaces/jd.png" },
+  { name: "1688", img: "/images/marketplaces/1688.webp" },
+  { name: "Taobao", img: "/images/marketplaces/taobao.webp" },
+  { name: "YiwuGo", img: "/images/marketplaces/yiwugo.webp" },
+  { name: "Alibaba", img: "/images/marketplaces/alibaba.webp" },
+  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.webp" },
+  { name: "JD", img: "/images/marketplaces/jd.webp" },
 ];
 
 export default function HowItWorks() {

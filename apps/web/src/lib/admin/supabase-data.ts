@@ -60,60 +60,113 @@ export function mapDbStatusToMobile(s: string): string {
   return DB_TO_MOBILE[s] || s || "pending";
 }
 
-// ─── Dashboard KPIs ───────────────────────────────────────────────
-export async function getDashboardKpis() {
-  try {
-    const [ordersRes, customersRes, productsRes, sourcingRes] = await Promise.all([
-      supabase
-        .from("admin_orders_view")
-        .select("id, total, status, payment_status, created_at"),
-      supabase
-        .from("admin_customers_view")
-        .select("id, total_orders, total_spent"),
-      supabase
-        .from("source_products")
-        .select("id, marketplace, price_usd_estimated, stock_status, sales_count")
-        .eq("stock_status", "in_stock"),
-      supabase
-        .from("admin_sourcing_view")
-        .select("id, status, created_at"),
-    ]);
-    const orders = (ordersRes.data as any[]) || [];
-    const customers = (customersRes.data as any[]) || [];
-    const products = (productsRes.data as any[]) || [];
-    const sourcing = (sourcingRes.data as any[]) || [];
-    const totalRevenue = orders.reduce((s, o) => s + (o.total || 0), 0);
-    const activeOrders = orders.filter(
-      (o) => !["delivered", "completed", "cancelled"].includes(o.status)
-    ).length;
-    const deliveredOrders = orders.filter((o) =>
-      ["delivered", "completed"].includes(o.status)
-    ).length;
-    const today = new Date().toISOString().slice(0, 10);
-    const todaysOrders = orders.filter(
-      (o) => (o.created_at || "").slice(0, 10) === today
-    );
-    const pendingSourcing = sourcing.filter((s) =>
-      ["pending", "reviewing"].includes(s.status)
-    ).length;
-    return {
-      ok: true,
-      kpis: {
-        totalRevenue,
-        totalOrders: orders.length,
-        activeOrders,
-        deliveredOrders,
-        totalCustomers: customers.length,
-        totalProducts: products.length,
-        todaysOrders: todaysOrders.length,
-        todaysRevenue: todaysOrders.reduce((s, o) => s + (o.total || 0), 0),
-        pendingSourcing,
-        avgOrderValue: orders.length ? totalRevenue / orders.length : 0,
-        deliveryRate: orders.length ? (deliveredOrders / orders.length) * 100 : 0,
-      },
+// ─── Dashboard metrics (computed in Postgres) ───────────────────
+// These five functions used to pull every row of four tables into the browser
+// and reduce them here, which meant the numbers could only be as honest as a
+// client-side filter. The math now lives in admin_kpis() et al
+// (migration 202609240003_admin_rollups.sql), which also return the real
+// previous-period value so deltas are measured rather than typed in.
+export interface Metric {
+  value: number;
+  /** Null when the server has no prior period to compare against. */
+  prevValue: number | null;
+  deltaPct: number | null;
+}
+
+/** Keyed by the metric names emitted by admin_kpis(). */
+export type KpiMap = Record<string, Metric>;
+
+export async function getAdminKpis(): Promise<{
+  ok: boolean;
+  metrics: KpiMap;
+  error?: string;
+}> {
+  const { data, error } = await supabase.rpc("admin_kpis");
+  if (error) return { ok: false, metrics: {}, error: error.message };
+  const metrics: KpiMap = {};
+  for (const row of (data as any[]) || []) {
+    metrics[row.metric] = {
+      value: Number(row.value ?? 0),
+      prevValue: row.prev_value === null ? null : Number(row.prev_value),
+      deltaPct: row.delta_pct === null ? null : Number(row.delta_pct),
     };
+  }
+  return { ok: true, metrics };
+}
+
+/** Convenience accessor: the scalar for a metric, or 0 before it has loaded. */
+export function kpiValue(metrics: KpiMap, metric: string): number {
+  return metrics[metric]?.value ?? 0;
+}
+
+export async function getAdminRevenueDaily(days = 7) {
+  const { data, error } = await supabase.rpc("admin_revenue_daily", {
+    p_days: days,
+  });
+  return {
+    ok: !error,
+    error: error?.message,
+    series: ((data as any[]) || []).map((r) => ({
+      date: String(r.day),
+      revenue: Number(r.revenue ?? 0),
+      orders: Number(r.orders ?? 0),
+    })),
+  };
+}
+
+/** Status distribution over the whole window, not the last N rows. */
+export async function getAdminOrderStatusCounts(days = 90) {
+  const { data, error } = await supabase.rpc("admin_order_status_counts", {
+    p_days: days,
+  });
+  return {
+    ok: !error,
+    error: error?.message,
+    counts: ((data as any[]) || []).map((r) => ({
+      status: String(r.status),
+      count: Number(r.orders ?? 0),
+    })),
+  };
+}
+
+/**
+ * Per-marketplace revenue from real order provenance (line items, falling back
+ * to orders.target_marketplace). Anything with neither is 'Unattributed' —
+ * legacy orders genuinely have no recorded source, and guessing one from the
+ * customer's city was the bug this replaces.
+ */
+export async function getAdminRevenueByMarketplace(days = 90) {
+  const { data, error } = await supabase.rpc("admin_revenue_by_marketplace", {
+    p_days: days,
+  });
+  return {
+    ok: !error,
+    error: error?.message,
+    rows: ((data as any[]) || []).map((r) => ({
+      marketplace: String(r.marketplace),
+      revenue: Number(r.revenue ?? 0),
+      orders: Number(r.orders ?? 0),
+    })),
+  };
+}
+
+/**
+ * Line-level provenance for one order: what was bought, in which app, at what
+ * MOQ and cost. Legacy orders come back with marketplace_key 'unknown', which
+ * is the honest answer — the app was never recorded for them.
+ */
+export async function getOrderItems(orderId: string) {
+  try {
+    const { data, error } = await supabase
+      .from("admin_order_items_view")
+      .select(
+        "id, order_id, order_ref, product_name, image_url, quantity, unit_price, cost_price, currency, total_price, unit_price_cny, exchange_rate, moq_at_purchase, variant_name, source_url, origin, marketplace_key, marketplace_name, marketplace_logo, is_sourced, is_purchased, is_received, is_inspected, customer_name, created_at"
+      )
+      .eq("order_id", orderId)
+      .order("created_at", { ascending: true });
+    return { ok: !error, items: (data as any[]) || [], error: error?.message };
   } catch (e) {
-    return { ok: false, error: String(e) };
+    return { ok: false, items: [], error: String(e) };
   }
 }
 
@@ -147,7 +200,31 @@ export async function listOrders({
       );
     }
     const { data, error } = await q;
-    return { ok: !error, orders: data || [], error: error?.message };
+    const orders = (data as any[]) || [];
+    if (error) return { ok: false, error: error.message, orders: [] };
+
+    // One merge query for the whole page rather than a join the JS client cannot
+    // express: `apps` is what the orders list shows so staff can see, per row,
+    // which marketplace each order was actually bought in.
+    const ids = orders.map((o) => o.id).filter(Boolean);
+    if (ids.length) {
+      const { data: lines } = await supabase
+        .from("admin_order_items_view")
+        .select("order_id, marketplace_key")
+        .in("order_id", ids);
+      const byOrder = new Map<string, Set<string>>();
+      for (const line of (lines as any[]) || []) {
+        if (!line?.order_id) continue;
+        const set = byOrder.get(line.order_id) || new Set<string>();
+        set.add(line.marketplace_key);
+        byOrder.set(line.order_id, set);
+      }
+      for (const order of orders) {
+        const set = byOrder.get(order.id);
+        order.apps = set ? [...set].sort() : [];
+      }
+    }
+    return { ok: true, orders };
   } catch (e) {
     return { ok: false, error: String(e), orders: [] };
   }
@@ -168,9 +245,16 @@ export async function updateOrder(id: string, patch: Record<string, any>) {
 // ─── Customers ────────────────────────────────────────────────────
 export async function listCustomers({ search }: { search?: string } = {}) {
   try {
+    // A verified subset of admin_customers_view's fixed column list
+    // (20260813_admin_view_layer_corrected.sql:98-115): every field the
+    // customers list, its filters/KPIs, CSV export and row-click actually read.
+    // A view's output columns are atomic — if the view exists these all exist —
+    // so this is drift-safe, unlike a base-table projection.
     let q = supabase
       .from("admin_customers_view")
-      .select("*")
+      .select(
+        "id, full_name, email, phone, city, customer_type, business_name, tier, total_orders, total_spent, created_at"
+      )
       .order("created_at", { ascending: false })
       .limit(500);
     if (search) {
@@ -186,76 +270,92 @@ export async function listCustomers({ search }: { search?: string } = {}) {
 }
 
 // ─── Products ─────────────────────────────────────────────────────
+/**
+ * Did this request fail because it named a column the live schema does not
+ * have? PostgREST answers 400/PGRST204 and Postgres itself 42703; both mean
+ * "narrow the query", not "the admin is out of order", so callers retry.
+ */
+export function isMissingColumnError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (error.code === "42703" || error.code === "PGRST204") return true;
+  return /does not exist|could not find the/i.test(error.message ?? "");
+}
+
+/**
+ * The catalog list, with an optional substring search.
+ *
+ * The search predicate is tried in two shapes because the table has two
+ * vocabularies: `source_title` exists since 202408010004, while the curated
+ * `title_english`/`title_original`/`title_somali`/`category` only arrive with
+ * 202609250004. One unknown column makes PostgREST reject the WHOLE statement,
+ * so the wider predicate is attempted first and narrowed on a schema error
+ * rather than guessing which deploy this project is on.
+ */
 export async function listProducts({ search, marketplace }: { search?: string; marketplace?: string } = {}) {
   try {
-    let q = supabase
-      .from("source_products")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(500);
-    if (search) {
-      q = q.or(
-        `title_english.ilike.%${search}%,title_original.ilike.%${search}%,title.ilike.%${search}%,name.ilike.%${search}%`
-      );
+    const build = (predicate: string | null) => {
+      let q = supabase
+        .from("source_products")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (predicate) q = q.or(predicate);
+      if (marketplace) q = q.eq("marketplace", marketplace);
+      return q;
+    };
+
+    let { data, error } = search
+      ? await build(`${curatedTitlePredicate(search)},${baseTitlePredicate(search)}`)
+      : await build(null);
+
+    if (error && isMissingColumnError(error)) {
+      const retry = search ? await build(baseTitlePredicate(search)) : await build(null);
+      data = retry.data;
+      error = retry.error;
     }
-    if (marketplace) q = q.eq("marketplace", marketplace);
-    const { data, error } = await q;
     return { ok: !error, products: data || [], error: error?.message };
   } catch (e) {
     return { ok: false, error: String(e), products: [] };
   }
 }
 
-export async function saveProduct(p: any) {
-  try {
-    const row: any = {
-      title_english: p.title_english || p.title || "",
-      title_original: p.title_original || p.title || "",
-      title_somali: p.title_somali || p.title_english || "",
-      description_english: p.description_english || "",
-      description_original: p.description_original || "",
-      marketplace: p.marketplace || "1688",
-      category: p.category || "",
-      price_cny_min: Number(p.price_cny_min) || 0,
-      price_cny_max: Number(p.price_cny_max) || p.price_cny_min || 0,
-      price_usd_estimated: Number(p.price_usd_estimated) || 0,
-      moq: Number(p.moq) || 1,
-      stock_status: p.stock_status || "in_stock",
-      source_url: p.source_url || "",
-      sales_count: Number(p.sales_count) || 0,
-      supplier_rating: Number(p.supplier_rating) || 0,
-      images: p.images || [],
-      updated_at: new Date().toISOString(),
-    };
-    let res;
-    if (p.id) {
-      res = await supabase.from("source_products").update(row).eq("id", p.id).select().single();
-    } else {
-      row.created_at = new Date().toISOString();
-      res = await supabase.from("source_products").insert(row).select().single();
-    }
-    return { ok: !res.error, product: res.data, error: res.error?.message };
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
+/**
+ * PostgREST reads `,` and `.` inside or=() as structure, so one search box could
+ * otherwise smuggle extra predicates into the query (`shoes%,moq.eq.1`). All
+ * three characters are escaped with the backslash PostgREST documents.
+ */
+function escapeFilter(term: string): string {
+  return term.replace(/[\\,.]/g, (c) => `\\${c}`);
 }
 
-export async function deleteProduct(id: string) {
-  try {
-    const { error } = await supabase.from("source_products").delete().eq("id", id);
-    return { ok: !error, error: error?.message };
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
+function baseTitlePredicate(search: string): string {
+  return `source_title.ilike.%${escapeFilter(search)}%`;
+}
+
+function curatedTitlePredicate(search: string): string {
+  const like = `%${escapeFilter(search)}%`;
+  return (
+    `title_english.ilike.${like},title_original.ilike.${like},` +
+    `title_somali.ilike.${like},category.ilike.${like}`
+  );
 }
 
 // ─── Marketplaces (shared accounts) ─────────────────────────────
+/**
+ * The live table has no `marketplace`, `password`, `cookies` or
+ * `last_refreshed_at`: the real columns are marketplace_type, username,
+ * phone, email, notes, is_shared and updated_at. `password_encrypted` is
+ * deliberately absent from the select — an admin list query must not pull a
+ * credential blob into the browser cache, masked or not.
+ */
 export async function listMarketplaceAccounts() {
   try {
     const { data, error } = await supabase
       .from("marketplace_accounts")
-      .select("id, marketplace, username, password, cookies, is_active, last_refreshed_at, created_at")
-      .order("marketplace");
+      .select(
+        "id, marketplace_type, account_label, username, phone, email, notes, is_shared, is_active, updated_at, created_at"
+      )
+      .order("marketplace_type");
     return { ok: !error, accounts: data || [], error: error?.message };
   } catch (e) {
     return { ok: false, error: String(e), accounts: [] };
@@ -265,13 +365,18 @@ export async function listMarketplaceAccounts() {
 export async function saveMarketplaceAccount(a: any) {
   try {
     const row: any = {
-      marketplace: a.marketplace,
+      marketplace_type: a.marketplace_type,
+      account_label: a.account_label || "",
       username: a.username || "",
-      password: a.password || "",
-      cookies: a.cookies || "",
+      phone: a.phone || "",
+      email: a.email || "",
+      notes: a.notes || "",
+      is_shared: !!a.is_shared,
       is_active: !!a.is_active,
-      last_refreshed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
+    // No client-side write touches password_encrypted: the credential is stored
+    // encrypted and is only ever managed through the secure edge path.
     let res;
     if (a.id) res = await supabase.from("marketplace_accounts").update(row).eq("id", a.id).select().single();
     else res = await supabase.from("marketplace_accounts").insert(row).select().single();
@@ -358,7 +463,7 @@ export async function listExchangeRates() {
     const { data, error } = await supabase
       .from("exchange_rates")
       .select("*")
-      .order("valid_from", { ascending: false })
+      .order("effective_from", { ascending: false })
       .limit(200);
     return { ok: !error, rates: data || [], error: error?.message };
   } catch (e) {
@@ -368,14 +473,17 @@ export async function listExchangeRates() {
 
 export async function saveExchangeRate(r: any) {
   try {
+    // Production's vocabulary is from_currency / to_currency / effective_from /
+    // effective_until, and it has no `source` column — the free-text note goes
+    // in `reason`. The old names made every FX save fail on an unknown column.
     const row: any = {
-      source_currency: r.source_currency || "CNY",
-      target_currency: r.target_currency || "USD",
+      from_currency: r.from_currency || "CNY",
+      to_currency: r.to_currency || "USD",
       rate: Number(r.rate) || 0,
-      source: r.source || "manual",
+      reason: r.reason || null,
       is_active: r.is_active !== false,
-      valid_from: r.valid_from || new Date().toISOString(),
-      valid_until: r.valid_until || null,
+      effective_from: r.effective_from || new Date().toISOString(),
+      effective_until: r.effective_until || null,
     };
     let res;
     if (r.id) res = await supabase.from("exchange_rates").update(row).eq("id", r.id).select().single();
@@ -438,20 +546,20 @@ export async function listShipments() {
 
 export async function createShipment(s: any) {
   try {
+    // Exactly the live `shipments` columns — no order_id/origin_country/
+    // weight_grams; freight quantity lives in total_packages.
     const row: any = {
-      order_id: s.order_id,
-      carrier: s.carrier || "China Post",
+      reference: s.reference,
+      method: s.method || "sea",
       status: s.status || "pending",
-      origin_country: s.origin_country || "CN",
-      origin_warehouse: s.origin_warehouse || "Guangzhou",
-      destination_country: s.destination_country || "SO",
-      destination_city: s.destination_city || "",
-      destination_address: s.destination_address || "",
-      weight_grams: Number(s.weight_grams) || 0,
-      package_count: Number(s.package_count) || 1,
-      shipping_cost: Number(s.shipping_cost) || 0,
-      currency: s.currency || "USD",
-      estimated_delivery_date: s.estimated_delivery_date || null,
+      origin: s.origin || "",
+      destination: s.destination || "",
+      total_packages: Number(s.total_packages) || 0,
+      tracking_number: s.tracking_number || null,
+      carrier: s.carrier || null,
+      departure_date: s.departure_date || null,
+      estimated_arrival: s.estimated_arrival || null,
+      notes: s.notes || null,
     };
     const res = await supabase.from("shipments").insert(row).select().single();
     return { ok: !res.error, shipment: res.data, error: res.error?.message };
@@ -462,10 +570,11 @@ export async function createShipment(s: any) {
 
 export async function updateShipmentStatus(id: string, status: string) {
   try {
-    const patch: any = { status, updated_at: new Date().toISOString() };
-    if (status === "shipped") patch.shipped_at = new Date().toISOString();
-    if (status === "delivered") patch.delivered_at = new Date().toISOString();
-    const { error } = await supabase.from("shipments").update(patch).eq("id", id);
+    // shipments has no shipped_at/delivered_at stamps; only updated_at moves.
+    const { error } = await supabase
+      .from("shipments")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", id);
     return { ok: !error, error: error?.message };
   } catch (e) {
     return { ok: false, error: String(e) };

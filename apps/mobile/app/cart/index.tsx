@@ -19,6 +19,8 @@ import CartItem from "@/components/cart/CartItem";
 import EmptyCart from "@/components/cart/EmptyCart";
 import { formatUSD } from "@/lib/utils";
 import type { Marketplace } from "@/types";
+import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
+import { validateCartItem } from "@/lib/cartValidation";
 
 const MARKET_NAMES: Record<string, string> = {
   "1688": "1688.com",
@@ -42,7 +44,7 @@ const MARKET_COLORS: Record<string, string> = {
 
 export default function CartScreen() {
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const items = useCartStore((s) => s.items);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
   const removeItem = useCartStore((s) => s.removeItem);
@@ -51,16 +53,66 @@ export default function CartScreen() {
   const total = getTotal();
   const marketCount = getMarketplaceCount();
 
+  /**
+   * Every line, re-checked against ITS OWN supplier rules. moqOrderRules() reads
+   * the MOQ provenance the product was captured with (manual > confident machine
+   * reading > stated minimum), so a 50-piece listing no longer sits in the cart
+   * looking like a 1-piece purchase.
+   */
+  const lines = useMemo(
+    () =>
+      items.map((item) => {
+        const { rules, resolution, structure } = moqOrderRules(
+          item.product,
+          item.product.moq_raw_text
+        );
+        const check = validateCartItem({
+          itemId: item.id,
+          quantity: item.quantity,
+          rules,
+          locale,
+        });
+        const notes: string[] = [];
+        if (check.status === "valid" || check.status === "draft") {
+          notes.push(describeMoq(resolution, locale));
+        }
+        if (structure.packSize) {
+          notes.push(
+            locale === "so"
+              ? `Waa la iibiyaa sanduuqyo ${structure.packSize} xabbo ah`
+              : `Sold in cartons of ${structure.packSize} pieces`
+          );
+        }
+        // Next price break, from the ladder scraped off the listing.
+        const next = rules.tiers.find((tr) => tr.minQty > item.quantity);
+        if (next) {
+          notes.push(
+            locale === "so"
+              ? `Ku dar ${next.minQty - item.quantity} → ¥${next.priceCny.toFixed(2)}/xabbo`
+              : `Add ${next.minQty - item.quantity} more → ¥${next.priceCny.toFixed(2)}/pc`
+          );
+        }
+        return { item, check, notes };
+      }),
+    [items, locale]
+  );
+
+  const blockedLines = lines.filter((l) => l.check.status === "needs_review").length;
+
   // Group items by marketplace
   const grouped = useMemo(() => {
+    const byId = new Map(lines.map((l) => [l.item.id, l]));
     const map = new Map<Marketplace, typeof items>();
     for (const it of items) {
       const m = it.product.marketplace;
       if (!map.has(m)) map.set(m, []);
       map.get(m)!.push(it);
     }
-    return Array.from(map.entries());
-  }, [items]);
+    return Array.from(map.entries()).map(([mkt, mktItems]) => ({
+      marketplace: mkt,
+      lines: mktItems.map((it) => byId.get(it.id)!).filter(Boolean),
+    }));
+  }, [items, lines]);
 
   // Shipping estimate comment removed — no cost calc in cart
 
@@ -118,14 +170,14 @@ export default function CartScreen() {
               </View>
             )}
 
-            {grouped.map(([mkt, mktItems]) => (
+            {grouped.map(({ marketplace: mkt, lines: groupLines }) => (
               <View key={mkt} style={styles.group}>
                 <View style={styles.groupHeader}>
                   <View style={[styles.groupDot, { backgroundColor: MARKET_COLORS[mkt] || COLORS.primary }]} />
                   <Text style={styles.groupName}>{MARKET_NAMES[mkt] || mkt}</Text>
-                  <Text style={styles.groupCount}>{mktItems.length}</Text>
+                  <Text style={styles.groupCount}>{groupLines.length}</Text>
                 </View>
-                {mktItems.map((item) => (
+                {groupLines.map(({ item, check, notes }) => (
                   <CartItem
                     key={item.id}
                     image={item.product.images?.[0] || ""}
@@ -133,6 +185,23 @@ export default function CartScreen() {
                     variant={Object.values(item.selected_options).join(", ") || "Default"}
                     quantity={item.quantity}
                     price={formatUSD(item.price_usd_estimated)}
+                    warning={check.problems[0] ?? null}
+                    fixLabel={
+                      check.fixTo && check.fixTo !== item.quantity
+                        ? locale === "so"
+                          ? `Waad ku qori ${check.fixTo}`
+                          : `Set ${check.fixTo}`
+                        : null
+                    }
+                    onFix={
+                      check.fixTo && check.fixTo !== item.quantity
+                        ? () => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            updateQuantity(item.id, check.fixTo!);
+                          }
+                        : undefined
+                    }
+                    notes={notes}
                     onIncrease={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       updateQuantity(item.id, item.quantity + 1);
@@ -154,6 +223,15 @@ export default function CartScreen() {
 
           {/* Bottom Section */}
           <View style={styles.bottomSection}>
+            {blockedLines > 0 && (
+              <View style={styles.reviewStrip}>
+                <Text style={styles.reviewStripText}>
+                  {blockedLines} {blockedLines === 1 ? "line is" : "lines are"} below the
+                  supplier minimum — raise the quantities marked above
+                </Text>
+              </View>
+            )}
+
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>{t("cart.subtotal")}</Text>
               <Text style={styles.totalPrice}>{formatUSD(total.subtotalUSD)}</Text>
@@ -232,6 +310,14 @@ const styles = StyleSheet.create({
   totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: SPACING.md },
   totalLabel: { fontSize: 16, fontFamily: FONTS.semibold, color: COLORS.black },
   totalPrice: { fontSize: 22, fontFamily: FONTS.bold, color: COLORS.black },
+  reviewStrip: {
+    backgroundColor: COLORS.warningBg,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
+  reviewStripText: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.warning },
   checkoutBtn: { height: 50, borderRadius: RADIUS.lg, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", marginBottom: SPACING.sm },
   checkoutText: { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.white },
   whatsappBtn: { height: 48, borderRadius: RADIUS.lg, backgroundColor: COLORS.darkSurface, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: SPACING.sm },

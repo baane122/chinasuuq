@@ -227,6 +227,9 @@ export default function MarketplaceBrowser() {
             brand: p.brand || "",
             platform: marketplace || "1688",
             sourceId: srcId,
+            // The MOQ wording scraped off the page (PRODUCT_CAPTURE_SCRIPT).
+            // Dropping it here is what left the review sheet blind to "10件起批".
+            moqText: typeof p.moqText === "string" ? p.moqText : "",
           });
         }
       } catch {}
@@ -364,6 +367,8 @@ export default function MarketplaceBrowser() {
     brand: "",
     platform: marketplace || "1688",
     sourceId: String(Date.now()),
+    // Nothing has been scraped yet — the sheet then honestly says "no minimum found".
+    moqText: "",
   };
 
   const requestCheckout = useCallback(() => {

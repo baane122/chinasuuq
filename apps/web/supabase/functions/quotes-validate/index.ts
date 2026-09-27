@@ -41,9 +41,17 @@ export async function handler(req: Request) {
       if (!item.productId) { status = "needs_review"; problem = "missing_product_id"; }
       else if (!Number.isFinite(item.quantity) || item.quantity <= 0) { status = "needs_review"; problem = "invalid_quantity"; }
       else {
-        // Re-read the product price from the DB (not client-supplied).
-        const { data } = await supabase.from("products").select("price_cny").eq("id", item.productId).maybeSingle();
-        const dbPrice = data?.price_cny;
+        // Re-read the product price from the DB (not client-supplied). The live
+        // catalog is `source_products`; `products` does not exist, and querying
+        // it made every line come back needs_review: missing_price. Its price is
+        // price_cny_min, declared NOT NULL DEFAULT 0, so 0 means "unpriced" —
+        // the same absence as NULL.
+        const { data } = await supabase
+          .from("source_products")
+          .select("price_cny_min")
+          .eq("id", item.productId)
+          .maybeSingle();
+        const dbPrice = Number(data?.price_cny_min ?? 0) > 0 ? data?.price_cny_min : null;
         if (dbPrice == null) { status = "needs_review"; problem = "missing_price"; }
         else if (Math.abs(Number(dbPrice) - Number(item.unitPriceCny || 0)) > 0.005) {
           status = "needs_review"; problem = "price_mismatch";

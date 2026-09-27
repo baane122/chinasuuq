@@ -9,6 +9,8 @@ import {
   Image,
   Dimensions,
   Animated,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -30,17 +32,20 @@ import { ProductCard } from "@/components/home/ProductCard";
 import { CategoryChips } from "@/components/home/CategoryChips";
 import { ShopByCategory } from "@/components/home/ShopByCategory";
 import { WhatsAppCard } from "@/components/home/WhatsAppCard";
+import { TrendingRow, TrendingRowSkeleton } from "@/components/home/TrendingRow";
 import { ProductCardSkeleton } from "@/components/ui/SkeletonLoader";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
+import { EmptyState } from "@/components/EmptyState";
 import { getProducts } from "@/db";
+import { getTrendingFeed, type TrendingItem, type TrendingStatus } from "@/api/trending";
 import { MARKETPLACES } from "@/lib/marketplaces";
 import type { Product } from "@/types";
 
 // Brand assets — clean circular app icon (NOT the busy promo image)
 const LOGO = require("../../assets/images/logo.jpg");
 
-const { width: SCREEN_W } = Dimensions.get("window");
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
 // ─── Hero banner data with generated images ───
 const HERO_BANNERS = [
@@ -151,6 +156,15 @@ export default function HomeTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
+  // ── Trending this week — event-ranked, read through the offline-first layer ──
+  const [trendingItems, setTrendingItems] = useState<TrendingItem[]>([]);
+  const [trendingStatus, setTrendingStatus] = useState<TrendingStatus>("unavailable");
+  const [trendingLoading, setTrendingLoading] = useState(true);
+  // Engagement only counts once the row is on screen (see TrendingRow).
+  const [trendingOnScreen, setTrendingOnScreen] = useState(false);
+  const trendingBox = useRef({ top: 0, height: 0 });
+  const hasScrolledRef = useRef(false);
+
   const loadProducts = useCallback(async (force = false) => {
     setError(false);
     try {
@@ -163,23 +177,71 @@ export default function HomeTab() {
     }
   }, []);
 
+  const loadTrending = useCallback(async (force = false) => {
+    try {
+      const feed = await getTrendingFeed({ force });
+      setTrendingItems(feed.items);
+      setTrendingStatus(feed.status);
+    } catch {
+      // A trending feed must never be why home failed to render.
+      setTrendingStatus("unavailable");
+    } finally {
+      setTrendingLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadProducts();
-  }, [loadProducts]);
+    loadTrending();
+  }, [loadProducts, loadTrending]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await loadProducts(true); // skip cache, pull fresh from Supabase
+    // skip cache, pull fresh from Supabase
+    await Promise.all([loadProducts(true), loadTrending(true)]);
     setRefreshing(false);
-  }, [loadProducts]);
+  }, [loadProducts, loadTrending]);
 
-  const trending = products
+  /**
+   * Marks the trending section as seen so the cards may report real views.
+   * Once set it stays set — the dedupe that prevents repeats lives in
+   * TrendingRow and the 60s throttle lives in record_product_event.
+   */
+  const onHomeScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (Math.abs(e.nativeEvent.contentOffset.y) > 4) hasScrolledRef.current = true;
+    if (trendingOnScreen) return;
+    const { top, height } = trendingBox.current;
+    if (!top || !height) return;
+    const y = e.nativeEvent.contentOffset.y;
+    const overlap = Math.min(top + height, y + SCREEN_H) - Math.max(top, y);
+    if (overlap > Math.min(height * 0.5, 120)) setTrendingOnScreen(true);
+  }, [trendingOnScreen]);
+
+  /**
+   * Home opens at scroll offset 0, so a section already inside the viewport is
+   * genuinely seen — and nothing would ever say so, because a customer who
+   * never scrolls produces no scroll event. Without this the trending feed
+   * could never gather its first views.
+   */
+  const onTrendingLayout = useCallback((y: number, height: number) => {
+    trendingBox.current = { top: y, height };
+    if (!trendingOnScreen && !hasScrolledRef.current && y < SCREEN_H - 120) {
+      setTrendingOnScreen(true);
+    }
+  }, [trendingOnScreen]);
+
+  const catalogBySales = products
     .filter((p) => selectedCategory === "all" || p.category === selectedCategory)
     .slice()
     .sort((a, b) => b.sales_count - a.sales_count);
 
-  const showAll = trending.length <= 0 && products.length > 0;
+  const showAll = catalogBySales.length <= 0 && products.length > 0;
+
+  // Nothing to show and nothing honest to say → the section disappears rather
+  // than leaving a broken spinner or an empty card.
+  const showTrendingSection =
+    trendingLoading || trendingItems.length > 0 || trendingStatus === "empty";
 
   return (
     <ErrorBoundary>
@@ -188,6 +250,8 @@ export default function HomeTab() {
         style={styles.container}
         contentContainerStyle={{ paddingTop: insets.top + SPACING.lg }}
         showsVerticalScrollIndicator={false}
+        onScroll={onHomeScroll}
+        scrollEventThrottle={64}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -244,6 +308,49 @@ export default function HomeTab() {
         </TouchableOpacity>
         {/* ── Hero Banner Carousel ── */}
         <HeroBannerCarousel />
+
+        {/* ── Trending this week — real photos, one-tap add ── */}
+        {showTrendingSection && (
+          <View
+            style={styles.section}
+            onLayout={(e) =>
+              onTrendingLayout(e.nativeEvent.layout.y, e.nativeEvent.layout.height)
+            }
+          >
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>
+                {locale === "en" ? "Trending this week" : "Alaabta Trending ee toddobaadkan"}
+              </Text>
+              <TouchableOpacity onPress={() => router.push("/search")}>
+                <Text style={styles.seeAll}>{t("home.seeAll")}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {trendingLoading ? (
+              <TrendingRowSkeleton />
+            ) : trendingItems.length > 0 ? (
+              <TrendingRow
+                items={trendingItems}
+                active={trendingOnScreen}
+                stale={trendingStatus === "cache"}
+              />
+            ) : (
+              <EmptyState
+                compact
+                title={
+                  locale === "en"
+                    ? "Nothing is trending yet"
+                    : "Wali ma jiro alaab Trending ah"
+                }
+                subtitle={
+                  locale === "en"
+                    ? "Once customers start looking at products, the most-wanted items this week appear here."
+                    : "Marka macmiilku bilaabo in uu alaab eego, alaabta ugu caansan toddobaadkan ayaa halkan ka muuqan doonta."
+                }
+              />
+            )}
+          </View>
+        )}
 
         {/* ── Marketplace Shortcuts ── */}
         <View style={styles.section}>
@@ -310,7 +417,11 @@ export default function HomeTab() {
         {/* ── Product Grid ── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{t("home.trending")}</Text>
+            {/* "Trending" belongs to the event-ranked row above; this grid is
+                the catalog itself, ordered by the sales the marketplace shows. */}
+            <Text style={styles.sectionTitle}>
+              {locale === "en" ? "Browse products" : "Eeg Alaabta"}
+            </Text>
             <TouchableOpacity onPress={() => router.push("/search")}>
               <Text style={styles.seeAll}>{t("home.seeAll")}</Text>
             </TouchableOpacity>
@@ -330,7 +441,7 @@ export default function HomeTab() {
                 We couldn't load products right now. Pull to refresh.
               </Text>
             </View>
-          ) : trending.length === 0 && showAll ? (
+          ) : catalogBySales.length === 0 && showAll ? (
             <View style={styles.sectionFallback}>
               <Text style={styles.fallbackEmoji}>🛍️</Text>
               <Text style={styles.fallbackTitle}>No products yet</Text>
@@ -338,7 +449,7 @@ export default function HomeTab() {
                 New products will appear here once the catalog is loaded.
               </Text>
             </View>
-          ) : trending.length === 0 ? (
+          ) : catalogBySales.length === 0 ? (
             <View style={styles.productGrid}>
               {products.map((product) => (
                 <ProductCard
@@ -350,7 +461,7 @@ export default function HomeTab() {
             </View>
           ) : (
             <View style={styles.productGrid}>
-              {trending.map((product) => (
+              {catalogBySales.map((product) => (
                 <ProductCard
                   key={product.id}
                   product={product}

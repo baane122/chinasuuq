@@ -52,6 +52,7 @@ interface ShipmentForm {
   method: "air" | "sea" | "land";
   origin: string;
   destination: string;
+  total_packages: string;
   departure_date: string;
   estimated_arrival: string;
   tracking_number: string;
@@ -59,7 +60,7 @@ interface ShipmentForm {
 
 const emptyForm: ShipmentForm = {
   reference: "", method: "air", origin: "", destination: "",
-  departure_date: "", estimated_arrival: "", tracking_number: "",
+  total_packages: "", departure_date: "", estimated_arrival: "", tracking_number: "",
 };
 
 /* ── Component ─────────────────────────────────────────────────── */
@@ -172,6 +173,7 @@ export default function ShipmentsPage() {
       method: shipment.method,
       origin: shipment.origin,
       destination: shipment.destination,
+      total_packages: shipment.total_packages != null ? String(shipment.total_packages) : "",
       departure_date: shipment.departure_date ? shipment.departure_date.slice(0, 10) : "",
       estimated_arrival: shipment.estimated_arrival ? shipment.estimated_arrival.slice(0, 10) : "",
       tracking_number: shipment.tracking_number ?? "",
@@ -193,6 +195,11 @@ export default function ShipmentsPage() {
         method: form.method,
         origin: form.origin.trim(),
         destination: form.destination.trim(),
+        // The live table stores `total_packages` (a count), not a `packages`
+        // list. Blank input stays null — the count is not guessed.
+        total_packages: form.total_packages.trim() === ""
+          ? null
+          : Math.max(0, Number(form.total_packages) || 0),
         departure_date: form.departure_date || null,
         estimated_arrival: form.estimated_arrival || null,
         tracking_number: form.tracking_number.trim() || null,
@@ -208,7 +215,7 @@ export default function ShipmentsPage() {
       } else {
         const { error: insertError } = await supabase
           .from("shipments")
-          .insert({ ...payload, status: "preparing", packages: [], documents: [], created_at: new Date().toISOString() });
+          .insert({ ...payload, status: "preparing", documents: [], created_at: new Date().toISOString() });
         if (insertError) throw insertError;
         success("Shipment created");
       }
@@ -435,7 +442,9 @@ export default function ShipmentsPage() {
                       <td className="px-6 py-3.5">
                         <div className="flex items-center gap-1.5">
                           <Package className="h-3.5 w-3.5 text-dark-400" />
-                          <span className="text-sm text-dark-600">{shipment.packages.length}</span>
+                          <span className="text-sm text-dark-600" title={shipment.total_packages === null ? "Package count not recorded" : undefined}>
+                            {shipment.total_packages ?? "—"}
+                          </span>
                         </div>
                       </td>
                       <td className="px-6 py-3.5">
@@ -677,6 +686,7 @@ export default function ShipmentsPage() {
             <FormInput label="Origin" name="origin" value={form.origin} onChange={updateField("origin")} placeholder="e.g. Guangzhou, China" required />
             <FormInput label="Destination" name="destination" value={form.destination} onChange={updateField("destination")} placeholder="e.g. Mogadishu, Somalia" required />
           </div>
+          <FormInput label="Total Packages" name="total_packages" value={form.total_packages} onChange={updateField("total_packages")} type="number" placeholder="Leave blank if not recorded yet" />
           <div className="grid grid-cols-2 gap-4">
             <FormInput label="Departure Date" name="departure_date" value={form.departure_date} onChange={updateField("departure_date")} type="text" placeholder="YYYY-MM-DD" />
             <FormInput label="Estimated Arrival" name="estimated_arrival" value={form.estimated_arrival} onChange={updateField("estimated_arrival")} type="text" placeholder="YYYY-MM-DD" />

@@ -2,8 +2,10 @@
 
 import { useEffect, useState, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { hasAdminFallbackSession, isDevBuild } from "@/lib/adminSession";
+import { bumpLive, setLiveConnected, useLiveConnected, useLiveVersion } from "@/lib/admin/live-store";
 import Link from "next/link";
 import {
   Loader2,
@@ -81,6 +83,26 @@ const ALL_ROUTES: SearchResult[] = NAV_ITEMS_BASE.map((item) => ({
   icon: item.icon,
 }));
 
+/* ─── Realtime: tables whose writes invalidate the admin shell ────
+ * source_products is here because the Products screen and the dashboard's
+ * category badges read it, and without a membership it only ever refreshed on
+ * an unrelated order write. */
+const LIVE_TABLES = [
+  "orders",
+  "sourcing_requests",
+  "notifications",
+  "shipments",
+  "source_products",
+  "payments",
+] as const;
+const LIVE_CHANNEL_NAME = "admin-live";
+
+// Module scope, not state: the layout can remount before the previous
+// removeChannel() has been acknowledged, and supabase.channel() hands back the
+// instance still registered under that name rather than a fresh one.
+let liveChannel: RealtimeChannel | null = null;
+let liveLayoutMounts = 0;
+
 /* ─── Sidebar layout ────────────────────────────────────────────── */
 export default function ProtectedLayout({
   children,
@@ -92,7 +114,11 @@ export default function ProtectedLayout({
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [navItems, setNavItems] = useState<NavItem[]>([]);
+  // Starting empty meant one failed head-count (or a slow first batch) left the
+  // whole navigation blank — the sidebar renders nothing for missing items.
+  const [navItems, setNavItems] = useState<NavItem[]>(
+    NAV_ITEMS_BASE.map((item) => ({ ...item, badge: null }))
+  );
   const [notifCount, setNotifCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
@@ -100,6 +126,11 @@ export default function ProtectedLayout({
   const [adminName, setAdminName] = useState("Admin");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminRole, setAdminRole] = useState("admin");
+  const [online, setOnline] = useState(true);
+  const liveConnected = useLiveConnected();
+  const liveVersion = useLiveVersion(
+    ["orders", "payments", "sourcing_requests", "shipments", "notifications"]
+  );
   const searchRef = useRef<HTMLDivElement>(null);
 
   /* ─── Auth check ─────────────────────────────────────────── */
@@ -160,43 +191,106 @@ export default function ProtectedLayout({
     return () => subscription.unsubscribe();
   }, [router]);
 
+  /* ─── Connectivity ───────────────────────────────────────── */
+  useEffect(() => {
+    const sync = () => setOnline(navigator.onLine);
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    return () => {
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
+
+  /* ─── Realtime: one channel shared by the whole admin shell ── */
+  useEffect(() => {
+    if (!isAuthenticated || !online) return;
+
+    liveLayoutMounts += 1;
+
+    if (!liveChannel) {
+      let channel = supabase.channel(LIVE_CHANNEL_NAME);
+      liveChannel = channel;
+
+      for (const table of LIVE_TABLES) {
+        for (const event of ["INSERT", "UPDATE"] as const) {
+          channel = channel.on(
+            "postgres_changes",
+            { event, schema: "public", table },
+            () => bumpLive([table])
+          );
+        }
+      }
+
+      channel.subscribe((status) => {
+        // A dropped socket must flip the indicator off; only acking SUBSCRIBED
+        // left "Live" glowing over a dead channel.
+        if (status !== "SUBSCRIBED") {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setLiveConnected(false);
+          return;
+        }
+        setLiveConnected(true);
+        // Anything written between the first data fetch and this ack is
+        // invisible to us, so let every subscriber catch up once.
+        bumpLive([...LIVE_TABLES]);
+      });
+    }
+
+    return () => {
+      liveLayoutMounts -= 1;
+      // React's dev double-mount tears down and remounts synchronously, before
+      // this microtask runs; the remount has already claimed the counter, so
+      // only a real unmount reaches removeChannel().
+      queueMicrotask(() => {
+        if (liveLayoutMounts > 0 || !liveChannel) return;
+        const closing = liveChannel;
+        liveChannel = null;
+        setLiveConnected(false);
+        void supabase.removeChannel(closing);
+      });
+    };
+  }, [isAuthenticated, online]);
+
   /* ─── Fetch badge counts & notifications ─────────────────── */
   useEffect(() => {
     if (!isAuthenticated) return;
 
     (async () => {
       try {
-        // Fetch notification count
-        const { data: notifs } = await supabase
-          .from("notifications")
-          .select("id", { count: "exact", head: true })
-          .is("read_at", null);
-        setNotifCount(notifs?.length ?? 0);
+        // Notification count first, but in the same batch: awaiting it on its
+        // own added a full round trip before the four badges even started.
+        // The live table flags read state with the boolean `read`; there is no
+        // `read_at` column to null-check.
+        const [
+          notifRes,
+          ordersRes,
+          paymentsRes,
+          sourcingRes,
+          shipmentsRes,
+        ] = await Promise.all([
+          supabase
+            .from("notifications")
+            .select("id", { count: "exact", head: true })
+            .eq("read", false),
+          supabase
+            .from("admin_orders_view")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["pending", "awaiting_payment", "purchasing"]),
+          supabase
+            .from("payments")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+          supabase
+            .from("admin_sourcing_view")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "open"),
+          supabase
+            .from("admin_shipments_view")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["pending", "in_transit"]),
+        ]);
 
-        // Fetch badge counts for nav items
-        const [ordersRes, paymentsRes, sourcingRes, shipmentsRes] =
-          await Promise.all([
-            supabase
-              .from("admin_orders_view")
-              .select("id", { count: "exact", head: true })
-              .in("status", [
-                "pending",
-                "awaiting_payment",
-                "purchasing",
-              ]),
-            supabase
-              .from("payments")
-              .select("id", { count: "exact", head: true })
-              .eq("status", "pending"),
-            supabase
-              .from("admin_sourcing_view")
-              .select("id", { count: "exact", head: true })
-              .eq("status", "open"),
-            supabase
-              .from("admin_shipments_view")
-              .select("id", { count: "exact", head: true })
-              .in("status", ["pending", "in_transit"]),
-          ]);
+        setNotifCount(notifRes.error ? 0 : (notifRes.count ?? 0));
 
         const badgeMap: Record<string, number> = {};
         if (ordersRes.count && ordersRes.count > 0)
@@ -220,20 +314,22 @@ export default function ProtectedLayout({
         );
       }
     })();
-  }, [isAuthenticated]);
+    // Nav badges used to be computed once at mount, so "3 pending orders"
+    // stayed on screen all day. liveVersion only moves while connected.
+  }, [isAuthenticated, liveVersion]);
 
-  /* ─── Live polling for notification count ─────────────────── */
+  /* ─── Notification badge: polled only as the no-Realtime fallback ── */
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || liveConnected) return;
     const interval = setInterval(async () => {
       const { count } = await supabase
         .from("notifications")
         .select("id", { count: "exact", head: true })
-        .is("read_at", null);
+        .eq("read", false);
       setNotifCount(count ?? 0);
     }, 30000);
     return () => clearInterval(interval);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, liveConnected]);
 
   /* ─── Search logic ───────────────────────────────────────── */
   useEffect(() => {

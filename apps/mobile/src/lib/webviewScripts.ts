@@ -247,7 +247,7 @@ true;`;
 // ---------------------------------------------------------------------------
 export const PRODUCT_CAPTURE_SCRIPT = `(function () {
   try {
-    var out = { title: "", price: 0, currency: "CNY", image: "", url: location.href, brand: "" };
+    var out = { title: "", price: 0, currency: "CNY", image: "", url: location.href, brand: "", moqText: "" };
 
     // TITLE
     var titleSel = ["h1", ".title", ".item-title", ".tb-detail-hd h1", ".d-title", ".sku-name", ".detail-title", ".product-name", ".goods-detail h1"];
@@ -281,6 +281,22 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
       if (mm) { var bv = parseFloat(mm[1].replace(/,/g, "")); if (!isNaN(bv) && bv > 0 && bv < 100000000) best = bv; }
     }
     out.price = best;
+
+    // MOQ EVIDENCE — the minimum-order wording, handed to the parser in
+    // src/lib/moqIngest.ts. A WebView cannot read 1688's structured MOQ field,
+    // and posting all of innerText on every capture would be wasteful and
+    // pointless, so only the lines that could carry a rule are shipped.
+    var moqLines = [];
+    var moqRe = /起批|起订|最小|moq|min\\.?\\s*order|minimum\\s*order|每箱|装箱|整箱|混批|[≥>]\\s*\\d|件以上|[¥￥]\\s*\\d/i;
+    var rawLines = String((document.body && document.body.innerText) || "").split("\\n");
+    var seenLine = {};
+    for (var b = 0; b < rawLines.length && moqLines.length < 40; b++) {
+      var ln = rawLines[b].replace(/\\s+/g, " ").trim();
+      if (!ln || ln.length > 160 || seenLine[ln] || !moqRe.test(ln)) continue;
+      seenLine[ln] = 1;
+      moqLines.push(ln);
+    }
+    out.moqText = moqLines.join("\\n").slice(0, 4000);
 
     // IMAGE — broad selectors to cover all marketplaces, not just 1688/Taobao
     var og = document.querySelector("meta[property='og:image']");

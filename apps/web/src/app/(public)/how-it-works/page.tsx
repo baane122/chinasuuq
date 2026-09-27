@@ -20,21 +20,21 @@ import {
 } from "lucide-react";
 
 const STEPS = [
-  { key: "step1", img: "/images/how-v2/01-browse.png", glow: "from-brand-500/30 to-brand-400/0", accent: "from-brand-500 to-brand-600" },
-  { key: "step2", img: "/images/how-v2/02-capture.png", glow: "from-brand-400/30 to-amber-400/0", accent: "from-brand-400 to-brand-500" },
-  { key: "step3", img: "/images/how-v2/03-customize.png", glow: "from-purple-500/25 to-brand-400/0", accent: "from-dark-900 to-dark-800" },
-  { key: "step4", img: "/images/how-v2/04-pay.png", glow: "from-emerald-500/30 to-emerald-400/0", accent: "from-emerald-500 to-emerald-600" },
-  { key: "step5", img: "/images/how-v2/05-track.png", glow: "from-sky-500/25 to-brand-400/0", accent: "from-brand-500 to-brand-600" },
-  { key: "step6", img: "/images/how-v2/06-receive.png", glow: "from-warm-200/40 to-brand-200/0", accent: "from-warm-200 to-warm-100" },
+  { key: "step1", img: "/images/how-v2/01-browse.webp", glow: "from-brand-500/30 to-brand-400/0", accent: "from-brand-500 to-brand-600" },
+  { key: "step2", img: "/images/how-v2/02-capture.webp", glow: "from-brand-400/30 to-amber-400/0", accent: "from-brand-400 to-brand-500" },
+  { key: "step3", img: "/images/how-v2/03-customize.webp", glow: "from-purple-500/25 to-brand-400/0", accent: "from-dark-900 to-dark-800" },
+  { key: "step4", img: "/images/how-v2/04-pay.webp", glow: "from-emerald-500/30 to-emerald-400/0", accent: "from-emerald-500 to-emerald-600" },
+  { key: "step5", img: "/images/how-v2/05-track.webp", glow: "from-sky-500/25 to-brand-400/0", accent: "from-brand-500 to-brand-600" },
+  { key: "step6", img: "/images/how-v2/06-receive.webp", glow: "from-warm-200/40 to-brand-200/0", accent: "from-warm-200 to-warm-100" },
 ] as const;
 
 const PLATFORMS = [
-  { name: "1688", img: "/images/marketplaces/1688.png" },
-  { name: "Taobao", img: "/images/marketplaces/taobao.png" },
-  { name: "YiwuGo", img: "/images/marketplaces/yiwugo.png" },
-  { name: "Alibaba", img: "/images/marketplaces/alibaba.png" },
-  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.png" },
-  { name: "JD", img: "/images/marketplaces/jd.png" },
+  { name: "1688", img: "/images/marketplaces/1688.webp" },
+  { name: "Taobao", img: "/images/marketplaces/taobao.webp" },
+  { name: "YiwuGo", img: "/images/marketplaces/yiwugo.webp" },
+  { name: "Alibaba", img: "/images/marketplaces/alibaba.webp" },
+  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.webp" },
+  { name: "JD", img: "/images/marketplaces/jd.webp" },
 ];
 
 // Step mini-icons shown in the side rail (lucide — fallback for visual rhythm)

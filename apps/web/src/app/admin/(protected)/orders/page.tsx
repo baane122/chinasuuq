@@ -1,16 +1,23 @@
 "use client";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { Suspense, useState, useEffect, useMemo, useCallback } from "react";
 import { DataTable, Column } from "@/components/admin/DataTable";
 import { StatusBadge } from "@/components/admin/StatusBadge";
-import { PageHeader, StatCard, PageGrid, FilterChips, TableShell, EMPTY_IMAGES } from "@/components/admin/ui";
+import { PageHeader, StatCard, PageGrid, FilterChips, TableShell, SkeletonTable, EMPTY_IMAGES } from "@/components/admin/ui";
+import { TableControls } from "@/components/admin/TableControls";
+import { useUrlFilters, useDebouncedFilterValue } from "@/components/admin/useUrlFilters";
+import { useTablePrefs } from "@/components/admin/useTablePrefs";
+import Customer360Drawer from "@/components/admin/Customer360Drawer";
+import { useLiveVersion } from "@/lib/admin/live-store";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Package, CreditCard, MapPin, Clock3, Loader2,
   CheckSquare, Square, Printer, Truck, User, Phone, CalendarDays,
-  ChevronRight, ExternalLink, RefreshCw, Check, ArrowRight
+  ChevronRight, ExternalLink, RefreshCw, Check, ArrowRight, Download, RotateCcw
 } from "lucide-react";
 import { cn, formatUSD, formatDate, formatDateTime } from "@/lib/utils";
 import { listOrders, updateOrder } from "@/lib/admin/supabase-data";
+import { ORDERS_CSV_COLUMNS, downloadCsv, stamp, toCsv } from "@/lib/admin/csv";
+import OrderProvenance from "@/components/admin/OrderProvenance";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 
@@ -77,44 +84,95 @@ function getProgressPercent(status: string): number {
 
 /* ── Component ────────────────────────────────────────────────── */
 
+/**
+ * Filters live in the query string, not in component state, so a filtered view
+ * can be reloaded, bookmarked or pasted to a colleague. Keys and their defaults:
+ * module scope keeps the object identity stable for the hook.
+ *   status  order status chip        q  free-text search (server-side ilike)
+ *   app     marketplace of any line  from/to  created-at window (client-side)
+ */
+const FILTER_DEFAULTS = { status: "all", q: "", app: "", from: "", to: "" };
+
+const ORDER_COLUMNS: { key: string; label: string }[] = [
+  { key: "order_number", label: "Order" },
+  { key: "customer_name", label: "Customer" },
+  { key: "apps", label: "Bought in" },
+  { key: "shipping_method", label: "Mode" },
+  { key: "total", label: "Total" },
+  { key: "status", label: "Status" },
+  { key: "payment_status", label: "Payment" },
+  { key: "created_at", label: "Created" },
+];
+
 export default function OrdersPage() {
+  // useSearchParams() inside a statically prerendered page must sit under a
+  // Suspense boundary, otherwise `next export` bails the whole route to CSR.
+  return (
+    <Suspense
+      fallback={
+        <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+          <SkeletonTable />
+        </div>
+      }
+    >
+      <OrdersPageContent />
+    </Suspense>
+  );
+}
+
+function OrdersPageContent() {
   const { success, error: toastError } = useToast();
+
+  const { values, set, setMany, reset, isFiltered } = useUrlFilters(FILTER_DEFAULTS);
+  const tablePrefs = useTablePrefs("orders");
+  // Orders list only needs order writes; payments and notifications used to
+  // re-pull this whole table on every burst.
+  const liveVersion = useLiveVersion(["orders"]);
 
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<any | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [search, setSearch] = useState("");
+  const [customer360, setCustomer360] = useState<{ id: string; name?: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  const statusFilter = values.status;
+  const appFilter = values.app;
 
   // Bulk
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [bulkTargetStatus, setBulkTargetStatus] = useState("confirmed");
 
-  // Date range
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // Date range (from the URL)
+  const dateFrom = values.from;
+  const dateTo = values.to;
+
+  // The search box is drafted locally and committed to the URL debounced, so
+  // typing does not push one history entry per keystroke.
+  const commitSearch = useCallback((v: string) => set("q", v), [set]);
+  const [search, setSearch] = useDebouncedFilterValue(values.q, commitSearch);
 
   // Bulk confirm
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
 
-  const load = useCallback(async (s?: string) => {
+  const committedSearch = values.q;
+
+  const load = useCallback(async (status?: string, q?: string) => {
     setLoading(true);
     setError(null);
-    const res = await listOrders({ status: s === "all" ? undefined : s, search });
+    const res = await listOrders({ status: status === "all" ? undefined : status, search: q });
     if (res.ok) {
       setOrders(res.orders);
     } else {
       setError(res.error || "Failed to load orders");
     }
     setLoading(false);
-  }, [search]);
+  }, []);
 
   useEffect(() => {
-    load(statusFilter);
-  }, [statusFilter, load]);
+    load(statusFilter, committedSearch);
+    // liveVersion re-reads the list when realtime confirms a write elsewhere.
+  }, [statusFilter, committedSearch, load, liveVersion]);
 
   /* ── Filtered ──────────────────────────────────────────────── */
 
@@ -123,6 +181,11 @@ export default function OrdersPage() {
     if (statusFilter !== "all") {
       result = result.filter((o) => o.status === statusFilter);
     }
+    if (appFilter) {
+      result = result.filter(
+        (o) => Array.isArray(o.apps) && o.apps.some((a: string) => a === appFilter)
+      );
+    }
     if (dateFrom) {
       result = result.filter((o) => o.created_at && o.created_at.slice(0, 10) >= dateFrom);
     }
@@ -130,7 +193,24 @@ export default function OrdersPage() {
       result = result.filter((o) => o.created_at && o.created_at.slice(0, 10) <= dateTo);
     }
     return result;
-  }, [orders, statusFilter, dateFrom, dateTo]);
+  }, [orders, statusFilter, appFilter, dateFrom, dateTo]);
+
+  /**
+   * Apps offered by the "which app" filter, and how many loaded orders contain
+   * them. Read straight off the line provenance this page already fetched, so
+   * an app only appears when a line really recorded it.
+   */
+  const appOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    orders.forEach((o) => {
+      for (const app of (Array.isArray(o.apps) ? o.apps : [])) {
+        counts.set(app, (counts.get(app) || 0) + 1);
+      }
+    });
+    return [...counts.entries()]
+      .map(([app, count]) => ({ app, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [orders]);
 
   /* ── KPIs ──────────────────────────────────────────────────── */
 
@@ -154,6 +234,17 @@ export default function OrdersPage() {
   }, [orders]);
 
   /* ── Status update ─────────────────────────────────────────── */
+
+  /**
+   * Customer 360 needs the customer's profile id, not the name: admin_orders_view
+   * exposes it as profile_id. An order with no linked profile says so instead of
+   * matching on a name, which is how two customers called Abdi got mixed.
+   */
+  const openCustomer = (order: any) => {
+    const id = order?.profile_id || order?.customer_id;
+    if (id) setCustomer360({ id, name: order.customer_name || undefined });
+    else toastError("This order has no linked customer profile, so there is no account history to open.");
+  };
 
   const setStatus = async (id: string, newStatus: string) => {
     setSaving(true);
@@ -196,14 +287,25 @@ export default function OrdersPage() {
 
   const handleBulkStatusUpdate = async () => {
     const ids = Array.from(selectedIds);
-    for (const id of ids) {
-      await updateOrder(id, { status: bulkTargetStatus });
+    // The result of each write is counted instead of assumed: the old version
+    // patched the rows in local state whether or not Supabase accepted them, so
+    // a rejected update still rendered as done until the next reload.
+    setSaving(true);
+    const results = await Promise.all(
+      ids.map((id) => updateOrder(id, { status: bulkTargetStatus }))
+    );
+    const written = results.filter((r) => r.ok).length;
+    const failed = results.find((r) => !r.ok)?.error;
+    await load(statusFilter, committedSearch);
+    if (written < ids.length) {
+      toastError(`${ids.length - written} of ${ids.length} order(s) were not updated${failed ? `: ${failed}` : ""}`);
+    } else {
+      success(`${written} order(s) updated to ${bulkTargetStatus.replace(/_/g, " ")}`);
     }
-    setOrders((prev) => prev.map((o) => selectedIds.has(o.id) ? { ...o, status: bulkTargetStatus } : o));
-    success(`${ids.length} order(s) updated to ${bulkTargetStatus.replace(/_/g, " ")}`);
     setSelectedIds(new Set());
     setBulkStatusOpen(false);
     setBulkConfirmOpen(false);
+    setSaving(false);
   };
 
   /* ── Print Invoice ─────────────────────────────────────────── */
@@ -279,6 +381,7 @@ export default function OrdersPage() {
       key: "order_number",
       label: "Order",
       sortable: true,
+      fixed: true,
       render: (r) => (
         <div className="flex items-center gap-2">
           <button
@@ -301,10 +404,62 @@ export default function OrdersPage() {
       sortable: true,
       render: (r) => (
         <div>
-          <p className="font-medium text-dark-900">{r.customer_name || "Guest"}</p>
+          {/* Clicking the name opens the customer's whole history with per-line
+              provenance, instead of only this one order. */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openCustomer(r);
+            }}
+            className="font-medium text-dark-900 underline-offset-2 hover:text-brand-600 hover:underline"
+            title="Open customer history"
+          >
+            {r.customer_name || "Guest"}
+          </button>
           <p className="text-xs text-dark-900/45">{r.phone || r.city || "—"}</p>
         </div>
       ),
+    },
+    {
+      key: "apps",
+      label: "Bought in",
+      className: "hidden lg:table-cell",
+      fixed: true,
+      render: (r) => {
+        const apps: string[] = Array.isArray(r.apps) ? r.apps : [];
+        if (apps.length === 0) {
+          return (
+            <span
+              className="text-xs text-dark-900/35"
+              title="No line items were recorded for this order, so its source apps are unknown."
+            >
+              not recorded
+            </span>
+          );
+        }
+        return (
+          <div className="flex flex-wrap items-center gap-1">
+            {apps.map((app) => (
+              <span
+                key={app}
+                className={cn(
+                  "rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                  app === "unknown"
+                    ? "bg-dark-100 text-dark-900/45"
+                    : "bg-brand-500/10 text-brand-700"
+                )}
+                title={
+                  app === "unknown"
+                    ? "This line predates per-item provenance."
+                    : app
+                }
+              >
+                {app === "unknown" ? "?" : app}
+              </span>
+            ))}
+          </div>
+        );
+      },
     },
     {
       key: "shipping_method",
@@ -371,33 +526,66 @@ export default function OrdersPage() {
         title="Orders"
         subtitle="Manage and fulfil customer orders from China to Somalia"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() =>
+                downloadCsv(
+                  `chinasuuq-orders-${stamp()}`,
+                  toCsv(ORDERS_CSV_COLUMNS, filtered)
+                )
+              }
+              disabled={filtered.length === 0}
+              className="flex items-center gap-2 rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs font-medium text-dark-600 transition-colors hover:bg-dark-50 disabled:opacity-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export {filtered.length}
+            </button>
             <input
               type="date"
               value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
+              onChange={(e) => set("from", e.target.value)}
               className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+              aria-label="Created from"
               placeholder="From"
             />
             <span className="text-dark-300 text-xs">to</span>
             <input
               type="date"
               value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
+              onChange={(e) => set("to", e.target.value)}
               className="rounded-xl border border-dark-900/10 bg-white px-3 py-1.5 text-xs outline-none focus:border-brand-500"
+              aria-label="Created to"
               placeholder="To"
             />
+            {isFiltered && (
+              <button
+                onClick={() => {
+                  reset();
+                  setSearch("");
+                }}
+                className="flex items-center gap-1.5 rounded-xl border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-100"
+                title="Clears every filter and the query string"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset filters
+              </button>
+            )}
           </div>
         }
       />
 
-      {/* ── KPIs ── */}
+      {/* ── KPIs ──
+          These five cards describe the rows THIS list loaded (the newest page of
+          orders matching the filters), and the label says so. The lifetime
+          numbers with real previous-period deltas come from admin_kpis() and live
+          on the dashboard — repeating them here over a filtered page would put two
+          different "revenue" figures in front of the operator. */}
       <PageGrid className="sm:grid-cols-2 lg:grid-cols-5">
-        <StatCard label="Total Orders" value={kpis.total} icon={Package} tone="brand" delay={0} />
-        <StatCard label="Pending" value={kpis.pending} icon={Clock3} tone="warning" delay={1} />
-        <StatCard label="Active" value={kpis.active} icon={RefreshCw} tone="info" delay={2} />
-        <StatCard label="Delivered" value={kpis.delivered} icon={Check} tone="success" delay={3} />
-        <StatCard label="Revenue" value={formatUSD(kpis.revenue)} icon={CreditCard} tone="violet" delay={4} />
+        <StatCard label="In this view" value={kpis.total} icon={Package} tone="brand" delay={0} />
+        <StatCard label="Pending (view)" value={kpis.pending} icon={Clock3} tone="warning" delay={1} />
+        <StatCard label="Active (view)" value={kpis.active} icon={RefreshCw} tone="info" delay={2} />
+        <StatCard label="Delivered (view)" value={kpis.delivered} icon={Check} tone="success" delay={3} />
+        <StatCard label="Revenue (view)" value={formatUSD(kpis.revenue)} icon={CreditCard} tone="violet" delay={4} />
       </PageGrid>
 
       {/* ── Bulk Actions ── */}
@@ -452,16 +640,37 @@ export default function OrdersPage() {
           count: statusCounts[s],
         }))}
         value={statusFilter}
-        onChange={setStatusFilter}
+        onChange={(s) => set("status", s)}
       />
+
+      {/* ── Which app the order's lines were bought in ── */}
+      {appOptions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-dark-900/40">
+            Bought in
+          </span>
+          <FilterChips<string>
+            options={[
+              { value: "", label: "Any app", count: orders.length },
+              ...appOptions.map(({ app, count }) => ({
+                value: app,
+                label: app === "unknown" ? "not recorded" : app,
+                count,
+              })),
+            ]}
+            value={appFilter}
+            onChange={(v) => set("app", v)}
+          />
+        </div>
+      )}
 
       {/* ── Table ── */}
       <TableShell
         isLoading={loading}
         error={error}
-        errorRetry={() => load(statusFilter)}
+        errorRetry={() => load(statusFilter, committedSearch)}
         hasData={filtered.length > 0}
-        filtered={statusFilter !== "all" || !!dateFrom || !!dateTo}
+        filtered={statusFilter !== "all" || !!appFilter || !!dateFrom || !!dateTo || !!committedSearch}
         emptyImage={EMPTY_IMAGES.orders}
         emptyTitle="No orders yet"
         emptySubtitle="Orders placed by customers will appear here in real time."
@@ -469,8 +678,15 @@ export default function OrdersPage() {
         <DataTable
           columns={columns}
           data={filtered}
-          searchKeys={["order_number", "reference", "customer_name", "city", "phone", "recipient_name"]}
           onRowClick={setSelected}
+          search={search}
+          onSearchChange={setSearch}
+          density={tablePrefs.density}
+          hiddenKeys={tablePrefs.hidden}
+          exportRows={() =>
+            downloadCsv(`chinasuuq-orders-${stamp()}`, toCsv(ORDERS_CSV_COLUMNS, filtered))
+          }
+          toolbar={<TableControls columns={ORDER_COLUMNS} prefs={tablePrefs} />}
         />
       </TableShell>
 
@@ -645,6 +861,9 @@ export default function OrdersPage() {
                   </div>
                 </div>
 
+                {/* Items & source: what was bought, in which app */}
+                <OrderProvenance orderId={selected.id} />
+
                 {/* Shipping breakdown */}
                 <div className="space-y-3 rounded-2xl bg-white border border-dark-100/50 p-4">
                   <p className="text-xs font-semibold text-dark-900/50 uppercase tracking-wider">Payment Breakdown</p>
@@ -697,6 +916,17 @@ export default function OrdersPage() {
         loading={saving}
         danger={false}
       />
+
+      {/* ── Customer 360 (real order + per-line provenance history) ── */}
+      <AnimatePresence>
+        {customer360 && (
+          <Customer360Drawer
+            customerId={customer360.id}
+            fallbackName={customer360.name}
+            onClose={() => setCustomer360(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
