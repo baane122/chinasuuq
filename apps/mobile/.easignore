@@ -1,5 +1,6 @@
-# EAS build upload ignore — this drastically shrinks the upload archive.
-# node_modules is NOT uploaded; EAS installs dependencies on its own servers.
+# EAS build upload ignore — this shrinks the upload archive.
+# NOTE: the archive has stayed ~226 MB with these rules in place, so this list does
+# not actually keep node_modules out; see doc.md §12 before assuming it does.
 node_modules
 **/node_modules
 

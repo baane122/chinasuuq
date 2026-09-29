@@ -47,9 +47,23 @@ jobs:
       - name: Verify static export output
         working-directory: apps/web
         run: |
-          test -f out/index.html || { echo "out/index.html missing"; exit 1; }
           test -f out/app/chinasuuq.apk || { echo "out/app/chinasuuq.apk missing"; exit 1; }
+          test -f out/index.html || { echo "out/index.html missing"; exit 1; }
           echo "Static export OK ($(du -sh out | cut -f1))"
+
+      - name: Verify the APK is a complete archive
+        working-directory: apps/web
+        run: |
+          # A truncated download still starts with PK\x03\x04 and has a plausible
+          # byte count, but has no central directory, so Android rejects it as
+          # "package appears to be invalid". Existence checks cannot see that.
+          entries=$(unzip -l public/app/chinasuuq.apk | tail -1 | awk '{print $2}') || exit 1
+          if [ -z "$entries" ] || [ "$entries" -lt 500 ]; then
+            echo "public/app/chinasuuq.apk is not a complete APK archive (entries: ${entries:-0}); re-download from EAS"
+            exit 1
+          fi
+          cmp public/app/chinasuuq.apk out/app/chinasuuq.apk
+          echo "APK OK: $entries entries, $(stat -c%s public/app/chinasuuq.apk) bytes, exported unchanged"
 
       - name: Check APK download link wired in UI
         run: |

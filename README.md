@@ -78,12 +78,13 @@ The Vercel project is rooted at the **repository root**; root `vercel.json` driv
 
 The mobile APK is a static asset of the web app:
 
-1. Build with EAS (`eas build -p android --profile preview`, project `@baaaane24/chinasuuq-mobile`).
-2. Download the APK and replace `apps/web/public/app/chinasuuq.apk`.
-3. Bump the version in `apps/mobile/app.json` (`expo.version`, `expo.android.versionCode`).
-4. Commit; the next Vercel deploy serves it at `https://chinasuuq.com/app/chinasuuq.apk`.
+1. Build with EAS (`eas build -p android --profile preview`, project `@baaaane24/chinasuuq-mobile`). The `preview` profile is arm-only (`ORG_GRADLE_PROJECT_reactNativeArchitectures`), which is what keeps the artifact at ~75 MB and inside GitHub's 100 MB per-file push limit.
+2. Download the APK from the finished build's `artifacts.buildUrl` and replace `apps/web/public/app/chinasuuq.apk`.
+3. Verify the file is a complete archive — `unzip -l apps/web/public/app/chinasuuq.apk | tail -1` should report ~1,300 entries. A truncated download looks like a valid file by size and header but Android rejects it; that is how an un-installable APK shipped once (doc.md §9).
+4. Bump `expo.version` in `apps/mobile/app.json` for the human-visible version; `cli.appVersionSource: "remote"` means EAS owns the real `versionCode`.
+5. Commit; the next Vercel deploy serves it at `https://chinasuuq.com/app/chinasuuq.apk`.
 
-CI fails the web build if `out/app/chinasuuq.apk` is missing or the landing page stops referencing `app/chinasuuq.apk`.
+CI fails the web build if `out/app/chinasuuq.apk` is missing, if the landing page stops referencing `app/chinasuuq.apk`, or if the APK has no central directory (fewer than 500 entries).
 
 ### Performance pass (2026-09-27)
 
