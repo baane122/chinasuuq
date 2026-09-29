@@ -70,7 +70,7 @@ jobs:
           grep -rq "app/chinasuuq.apk" apps/web/src || { echo "Landing page no longer references /app/chinasuuq.apk"; exit 1; }
 
   mobile-config:
-    name: Mobile — Expo config sanity
+    name: Mobile — Expo typecheck + Metro bundle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +78,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
 
       - name: Validate EAS + app config JSON/YAML
         run: |
@@ -85,6 +87,37 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('apps/mobile/eas.json','utf8')); console.log('eas.json OK')"
           node -e "const y=require('js-yaml'); ['apps/mobile/.eas/workflows/build-dev.yml','apps/mobile/.eas/workflows/production.yml'].forEach(f=>y.load(require('fs').readFileSync(f,'utf8'))); console.log('workflows OK')" \
             || echo "::warning::js-yaml unavailable — skipped YAML validation"
+
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        # apps/mobile is a self-contained npm project (its own package-lock.json
+        # and node_modules), NOT part of the root workspaces — see README.
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: apps/mobile
+        # Verified locally: ~17s cold, exit 0. This is the hard gate — do NOT
+        # wrap in continue-on-error.
+        run: npx tsc --noEmit
+
+      - name: Bundle with Metro (iOS export)
+        working-directory: apps/mobile
+        # Proves native module shims + every asset require() path resolve —
+        # exactly what `tsc` cannot see. Verified locally: ~2m35s, 81 files,
+        # 5.8MB Hermes bundle. Fits well inside a CI window.
+        env:
+          EXPO_NO_TELEMETRY: "1"
+          CI: "1"
+        run: |
+          rm -rf /tmp/cs-export-verify
+          npx expo export --platform ios --output-dir /tmp/cs-export-verify --non-interactive
+          test -d /tmp/cs-export-verify/_expo/static/js/ios \
+            || { echo "Metro export produced no iOS bundle directory"; exit 1; }
+          files=$(find /tmp/cs-export-verify -type f | wc -l)
+          if [ "$files" -lt 5 ]; then
+            echo "Metro export produced too few files ($files)"; exit 1
+          fi
+          echo "Metro iOS bundle OK ($files files, $(du -sh /tmp/cs-export-verify | cut -f1))"
 
   guard:
     name: Repo hygiene guard
