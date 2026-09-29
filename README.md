@@ -92,8 +92,8 @@ No iOS artifact can be installed on a phone today, and it is an account problem,
 
 Two ways forward (full detail and citations in doc.md §9):
 
-- **Free, local, needs a Mac + any Apple ID.** Accept the Xcode license, add the Apple ID in Xcode ▸ Settings ▸ Accounts, then from `apps/mobile`: `npx expo prebuild --clean -p ios` and `npx expo run:ios --device`. A free Personal Team profile expires every **7 days** (rebuild to reinstall) and caps at 3 devices / 10 App IDs.
-- **Paid, hosted.** With a $99/yr Apple Developer Program team linked to Expo, `eas build -p ios --profile preview` yields an installable `.ipa` for registered UDIDs and `--profile production` + `eas submit -p ios` goes to TestFlight. This needs `appleTeamId`, an App Store Connect API key, and the `ios` half of `eas.json`'s `submit` block, which does not exist yet.
+- **Free, local, needs a Mac + any Apple ID.** Accept the Xcode license, add the Apple ID in Xcode ▸ Settings ▸ Accounts, then from `apps/mobile`: `npx expo prebuild --clean -p ios` and `npx expo run:ios --device`. On the phone: trust the USB connection and switch on **Developer Mode** (Settings ▸ Privacy &amp; Security — requires a restart); the iOS floor is **16.4**. A free Personal Team profile expires every **7 days** (rebuild to reinstall) and caps at 3 devices / 10 App IDs.
+- **Paid, hosted.** With a $99/yr Apple Developer Program team linked to Expo, `eas build -p ios --profile preview` yields an installable `.ipa` for registered UDIDs and `--profile production` + `eas submit -p ios` goes to TestFlight — up to 100 internal team testers with no review, or 10,000 external testers after Beta App Review, and no UDID registration for TestFlight. This needs `appleTeamId`, an App Store Connect API key, and the `ios` half of `eas.json`'s `submit` block, which does not exist yet.
 
 Until then the landing page offers the APK; its Play and App Store buttons deep-link to WhatsApp rather than a store.
 
