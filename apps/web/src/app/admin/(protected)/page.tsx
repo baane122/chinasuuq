@@ -683,11 +683,6 @@ export default function AdminDashboard() {
     })();
   }, [liveVersion]);
 
-  const unread = useMemo(
-    () => activities.filter((a) => a.type === "order").length,
-    [activities]
-  );
-
   return (
     <div className="space-y-6">
       {/* ─── Header ─────────────────────────────────────────── */}

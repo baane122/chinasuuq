@@ -90,3 +90,9 @@ screenshots/
 scripts/gen_image.py
 scripts/gen_admin_assets.sh
 scripts/gen_all_assets.sh
+
+# Expo prebuild / local build output (EAS prebuilds on its own servers)
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/dist/
+apps/mobile/web-build/

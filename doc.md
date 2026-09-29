@@ -390,11 +390,25 @@ Because the web app is a static export, Next.js `headers()`/`proxy.ts` never run
 
 ### APK release process
 
-1. `eas build -p android --profile preview` (or production profile as needed).
-2. Download the APK from the EAS dashboard.
-3. Replace `apps/web/public/app/chinasuuq.apk`.
-4. Bump `expo.version` / `expo.android.versionCode` in `apps/mobile/app.json`.
-5. Commit and push; Vercel serves the new APK at `https://chinasuuq.com/app/chinasuuq.apk` (with `Content-Disposition: attachment`). CI verifies the file ships in the static export and that the landing page still links it.
+`eas.json` sets `cli.appVersionSource: "remote"`, so **EAS assigns the Android `versionCode`**
+on its own — `expo.android.versionCode` in `app.json` is ignored for the build (EAS prints
+"android.versionCode field in app config is ignored when version source is set to remote") and
+only survives as a value inside the `expo-constants` manifest. Bump `expo.version` for the
+human-visible version and let the remote counter handle install-over upgrades; keep the local
+`versionCode`/`buildNumber` in step anyway so a reader is not misled.
+
+1. `npx eas-cli build --platform android --profile preview` (add `--no-wait` to get the build id back immediately, then poll with `eas-cli build:list --platform android --limit 1 --json`). `preview` is `distribution: internal` with `android.buildType: "apk"`, so the artifact is a directly installable APK, not an AAB.
+2. Credentials come from the Expo server (keystore `Build Credentials aIUFZopWVH`), not from a local keystore — the build works from any machine logged in as `baaaane24`.
+3. Download the APK: the `artifacts.buildUrls.apk` link in that JSON, or `npx eas-cli build:download --platform android --build-id <id>` to the **local** path (see the `expo.dev/accounts/baaaane24/projects/chinasuuq-mobile/builds/<id>` page for the same file).
+4. Replace `apps/web/public/app/chinasuuq.apk` with the downloaded file and check the size changed.
+5. **Validate the artifact before committing.** An APK is a zip: it must end with an end-of-central-directory record. `python3 -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); print(len(z.namelist()))" apps/web/public/app/chinasuuq.apk` prints the entry count, or `unzip -l` lists it. A truncated download passes `file(1)` (`PK\x03\x04` header), has a plausible size, and is still un-installable — Android refuses it with "package appears to be invalid".
+6. Commit and push; Vercel serves it at `https://chinasuuq.com/app/chinasuuq.apk` (with `Content-Disposition: attachment`, set in root `vercel.json`). CI verifies the file ships in the static export and that the landing page still links it, and the push is also the production web deploy.
+
+**Incident (2026-09-27).** The APK committed in `a2fa662` and served by chinasuuq.com since then was a partial file: 15,359,883 bytes containing 8 local file headers, **zero central-directory headers and no EOCD** — a corrupt archive nobody could install. It passed CI because the workflow only asserts `out/app/chinasuuq.apk` exists. Any complete build of this app is ~10× that size, so a size drop of that order is a corruption signal, not an optimisation. Step 5 above is the guard.
+
+The remaining weight is structural, not artwork: the `preview` APK is a universal binary carrying `libreactnative.so`, `libhermesvm.so`, `libappmodules.so` and friends for four ABIs (`armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`) with the `.so` files stored uncompressed and page-aligned, plus four `classes*.dex`. The two emulator ABIs are dead weight for a direct download and are the next thing to cut (§12).
+
+The EAS upload archive used to be ~194 MB because `apps/mobile/assets/` (51 MB) rode along — `node_modules`, `ios`, `android`, `.expo` and the 26 MB local `dist/` are already excluded by `.easignore`. `apps/mobile/assets/` is now 12.9 MB: every illustration was a 1024–1254 px PNG rendered at 36–260 dp, so each file was resized to its display bucket (`sips -Z`, formats and `require()` paths unchanged) — hero carousel 828 px, onboarding 600 px, screen/empty-state art 512 px, category and marketplace tiles 160 px, brand marks 320 px. `assets/icon.png`, `assets/adaptive-icon.png` and `assets/splash.png` stay at store resolution because they are build inputs, not app art.
 
 
 ## 10. Design System
@@ -502,7 +516,10 @@ framer-motion, and `optimizePackageImports` already covers `lucide-react` /
 14. **`expo-secure-store`** declared but unused in mobile.
 15. **Legacy admin mock store** (`src/lib/admin/store.ts`, `seed*.ts`) is unreferenced dead code.
 16. ~~No realtime~~ — DONE: the admin console streams (`admin-live`, §3/§6). Mobile is still intentionally pull-based.
-17. **Column-contract risk stays open** — the repo cannot be the source of truth for the live schema (§6). Any new projection must be checked against `information_schema` first, and the safest UI pattern is a fallback ladder or an explicit "unknown", because a single missing column voids the whole request.
+17. **`android.versionCode` in `app.json` is decorative** — `eas.json` uses `appVersionSource: "remote"`, so EAS owns the real counter (see §9's APK process). Nothing breaks, but the number in the repo is not the number on the device.
+18. ~~Mobile artwork~~ — DONE: `apps/mobile/assets/` went from 51 MB to 12.9 MB by resizing every illustration to its display bucket (§9). The follow-up is structural, not artistic: the `preview` APK is a universal binary that stores four ABIs of native libraries uncompressed, and the two emulator ABIs (`x86`, `x86_64`) are dead weight for a direct download. Cutting them needs `reactNativeArchitectures` (via a config plugin or an EAS `gradleCommand` override) and must be verified against a real build before it is trusted.
+19. **Column-contract risk stays open** — the repo cannot be the source of truth for the live schema (§6). Any new projection must be checked against `information_schema` first, and the safest UI pattern is a fallback ladder or an explicit "unknown", because a single missing column voids the whole request.
+20. **CI does not validate the APK** — `.github/workflows/ci.yml` asserts `out/app/chinasuuq.apk` exists, which is exactly the check that let a truncated, un-installable APK ship (§9 incident). Unzip it in CI (entry count, EOCD present) or compare it against the build artifact's checksum.
 
 ## 13. Appendix — Key Constants
 
