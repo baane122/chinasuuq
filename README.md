@@ -86,6 +86,17 @@ The mobile APK is a static asset of the web app:
 
 CI fails the web build if `out/app/chinasuuq.apk` is missing, if the landing page stops referencing `app/chinasuuq.apk`, or if the APK has no central directory (fewer than 500 entries).
 
+### iOS — why there is no iPhone build yet, and how to get one
+
+No iOS artifact can be installed on a phone today, and it is an account problem, not a code problem: `eas device:list` reports **`No Apple teams found for account baaaane24`**, so EAS has no Apple signing identity — an iOS `preview` build fails instantly with "EAS CLI couldn't find any credentials suitable for internal distribution". The iOS builds that do finish are `development` with `ios.simulator: true`, whose artifact is a `.tar.gz` **Mac Simulator** app that a phone cannot install. Expo Go is not a workaround either: the App Store build is pinned to SDK 54 and this app is SDK 57, so it refuses to load.
+
+Two ways forward (full detail and citations in doc.md §9):
+
+- **Free, local, needs a Mac + any Apple ID.** Accept the Xcode license, add the Apple ID in Xcode ▸ Settings ▸ Accounts, then from `apps/mobile`: `npx expo prebuild --clean -p ios` and `npx expo run:ios --device`. A free Personal Team profile expires every **7 days** (rebuild to reinstall) and caps at 3 devices / 10 App IDs.
+- **Paid, hosted.** With a $99/yr Apple Developer Program team linked to Expo, `eas build -p ios --profile preview` yields an installable `.ipa` for registered UDIDs and `--profile production` + `eas submit -p ios` goes to TestFlight. This needs `appleTeamId`, an App Store Connect API key, and the `ios` half of `eas.json`'s `submit` block, which does not exist yet.
+
+Until then the landing page offers the APK; its Play and App Store buttons deep-link to WhatsApp rather than a store.
+
 ### Performance pass (2026-09-27)
 
 - Every photographic/illustrated artwork file the site renders is now WebP (converted with `cwebp -q 80`): the referenced set dropped from ~34 MB to ~0.6 MB and `apps/web/public` from 117 MB to ~50 MB. Two non-WebP images are still referenced — the header/footer logo (108 KB JPG) and `og-image.png`, which only appears in metadata — and `images.unoptimized` stays `true`, because a static export has no image server.
@@ -146,8 +157,8 @@ Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffO
 
 `.github/workflows/ci.yml` runs on push/PR to `main` (Node 22):
 
-1. **web-build** — `tsc --noEmit`, `eslint` (non-blocking; see gaps below), `next build`, then verifies `out/index.html` and `out/app/chinasuuq.apk` exist and that the landing page still references the APK path.
-2. **mobile-config** — JSON validation of `apps/mobile/app.json` and `eas.json`, YAML validation of `apps/mobile/.eas/workflows/*.yml`.
+1. **web-build** — `tsc --noEmit`, `eslint` (non-blocking; see gaps below), `next build`, then verifies `out/index.html` and `out/app/chinasuuq.apk` exist, that the APK is a complete zip archive (≥500 central-directory entries, `cmp`'d against the exported copy), and that the landing page still references the APK path.
+2. **mobile-config** — JSON validation of `apps/mobile/app.json` and `eas.json`, YAML validation of `apps/mobile/.eas/workflows/*.yml`, then `npm ci` + `tsc --noEmit` (hard gate) + `npx expo export --platform ios` in `apps/mobile`. The export proves every `require()`'d asset path and native-module shim resolves — the one check that catches what `tsc` can't see. There are no unit tests in this repo, so this is the whole mobile safety net.
 3. **guard** — fails if agent/tool state dirs or junk files (`.agent-teams/`, `.DS_Store`, `supabase/.temp/`, …) are tracked in git.
 
 ## Known gaps & follow-ups
@@ -157,6 +168,7 @@ Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffO
 - **`admin_orders_view` exposes no items JSONB** — the view selects `NULL::jsonb AS items` — so the dashboard's recent-orders and derivation paths read `orders` (plus `admin_order_items_view`) directly.
 - **~33 MB of legacy PNG/JPG artwork** still sits unreferenced in `apps/web/public/images/` (`hero/hero1-3.png`, `how/`, `marketing/`, `categories/*.jpg`, `onboarding/slide3.png`) — kept until product sign-off, not deleted.
 - **`apps/mobile/ios/` is untracked** prebuild output; EAS prebuilds iOS on its own servers, so nothing is missing from the repo.
+- **No installable iOS build** — the Expo account has no Apple developer team, and App Store Expo Go is pinned to SDK 54 while the app is SDK 57; see *iOS* above for the free (local Xcode, 7-day profile) and paid ($99/yr, EAS + TestFlight) routes. Both are blocked on user-side Apple credentials.
 - **Production `source_products` is empty (0 rows)**, so the catalog-dependent surfaces above have no real data to show yet, and `categories.image_url` is NULL for all 12 categories.
 - **Guest order tracking**: orders with `user_id IS NULL` are anon-readable via the `orders_select_own` policy (pending replacement with tokenized reference lookup + app change — documented in the `202609210001` migration footer).
 - **`quote_items.cost_price`** is visible to quote owners through RLS (business-sensitive; migration footer proposes moving supplier costs to `supplier_options`).

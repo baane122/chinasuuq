@@ -384,7 +384,7 @@ Because the web app is a static export, Next.js `headers()`/`proxy.ts` never run
 - **i18n**: `src/i18n/en.json` + `so.json` via `src/lib/i18n.tsx` context. UI chrome is translated from the bundled dictionaries; catalog text is not machine-translated yet — `src/api/translate.ts` is a complete client for the `ai-translate` function (batch ≤ 40 texts, LRU + AsyncStorage cache, fails open to the source string) but no screen imports it.
 - **No realtime**: the app polls or reads once per focus and falls back to AsyncStorage; the change stream in §6 is consumed by the admin console only.
 - **Marketplace browsing**: WebView flow; shared marketplace accounts come from the `get_shared_marketplace_account` RPC (returns only active `is_shared = true` accounts).
-- **EAS build profiles** (`eas.json`): `development`, `preview` (Android APK), `production`. EAS workflow YAMLs live in `apps/mobile/.eas/workflows/` (`build-dev.yml`, `production.yml`) — these are EAS workflows, not GitHub Actions.
+- **EAS build profiles** (`eas.json`): `development` (Android APK + iOS **Simulator** artifact), `preview` (arm-only Android APK; iOS device profile that cannot currently be signed), `production` (AAB / App Store). EAS workflow YAMLs live in `apps/mobile/.eas/workflows/` (`build-dev.yml`, `production.yml`) — these are EAS workflows, not GitHub Actions. See the iOS subsection below for why no iPhone build has ever shipped.
 - **`apps/mobile/.easignore`** keeps `node_modules`, `dist`, `ios`, `android`, `web-build`, `.expo` and `.vercel` out of the EAS upload (EAS installs dependencies and prebuilds on its own servers); `package-lock.json` is deliberately kept for reproducible installs. `apps/mobile/ios/` exists locally as `expo prebuild` output and is intentionally untracked.
 - **Scripts**: `npm run android` / `ios` in `apps/mobile` use `expo run:android` / `expo run:ios` (local native build), not `expo start`.
 
@@ -419,6 +419,34 @@ The `preview` profile sets `ORG_GRADLE_PROJECT_reactNativeArchitectures` to `arm
 
 `apps/mobile/assets/` went from 51 MB to 12.9 MB: every illustration was a 1024–1254 px PNG rendered at 36–260 dp, so each file was resized to its display bucket (`sips -Z`, formats and `require()` paths unchanged) — hero carousel 828 px, onboarding 600 px, screen/empty-state art 512 px, category and marketplace tiles 160 px, brand marks 320 px. `assets/icon.png`, `assets/adaptive-icon.png` and `assets/splash.png` stay at store resolution because they are build inputs, not app art. The upload archive did **not** shrink with the artwork (194 MB before, 226 MB after, despite `.easignore` naming `node_modules`), so the bundle EAS sends is dominated by dependencies rather than app files — `.easignore`'s `node_modules` line does not do what its comment claims and needs a separate look (§12).
 
+### iOS — why no iPhone build has ever existed, and the two ways to get one
+
+There is no iOS artifact to test because the account has **no Apple developer identity at all**, not because the config is missing. Both facts are directly observable:
+
+- `npx eas-cli device:list` → `No Apple teams found for account baaaane24`. No Apple Developer Program team is linked to the Expo account, so EAS cannot mint a signing certificate or provisioning profile.
+- `npx eas-cli build --platform ios --profile preview` fails at once: *"EAS CLI couldn't find any credentials suitable for internal distribution."* `preview` already sets `ios.simulator: false`, so it is a device profile — it just cannot be signed.
+- The only iOS builds that have ever finished are `development` with `ios.simulator: true` (e.g. `a6a89de8-da02-4e3a-9522-fcf6569523e6`, FINISHED, app version 1.0.2). Its `artifacts.buildUrl` is a **`.tar.gz`**, which is a Mac **Simulator** `.app` bundle: [per Expo's own docs](https://docs.expo.dev/develop/development-builds/create-a-build.md) simulator builds "can only be installed on simulators and not on real devices". That is the whole reason an EAS iOS build exists yet nothing can be put on a phone.
+- Local builds are blocked on this machine too: the Xcode license has not been accepted (`sudo xcodebuild -license`, needs a password) and `security find-identity -v -p codesigning` reports **0 valid identities**.
+
+**Expo Go is not an option for this app.** The App Store Expo Go is frozen at **SDK 54**, and "SDK 55 and later are not available there" ([version-mismatch doc](https://docs.expo.dev/troubleshooting/expo-go-version-mismatch.md)); this project is SDK 57, so Expo Go refuses with "Project is incompatible with this version of Expo Go" rather than degrading. The library set is not the problem — `react-native-webview`, Reanimated 4 + worklets, screens, gesture-handler and svg are all Expo-Go-supported ([third-party overview](https://docs.expo.dev/versions/latest/sdk/third-party-overview.md)) — the SDK pin is. Self-hosting Expo Go through TestFlight ([expo.fyi](https://expo.fyi/deploy-expo-go-testflight)) costs the same $99/yr membership as route 2 below.
+
+**Route 1 — $0, free Apple ID, local build (recommended to start).** Expo states local compilation is the only way to put a development build on an iPhone without a paid account ([development builds intro](https://docs.expo.dev/develop/development-builds/introduction.md)). Run from `apps/mobile` on a Mac with Xcode:
+
+```
+sudo xcodebuild -license accept          # user action — needs the account password
+# Xcode ▸ Settings ▸ Accounts ▸ add the Apple ID, note the "Personal Team" ID
+npm install -g cocoapods                  # run:ios executes `pod install`
+npx expo prebuild --clean -p ios          # recreates the gitignored ios/
+npx expo run:ios --device                 # auto-registers the attached iPhone
+```
+
+Then add `expo.ios.teamId` to `app.json` if auto-signing can't pick the team (UNVERIFIED which error appears without it — expect an ambiguous no-signing-identity failure). Free Personal Team limits ([Apple](https://developer.apple.com/support/compare-memberships/)): the profile **expires after 7 days** (rebuild to reinstall), ≤10 App IDs, ≤3 devices. `expo run:ios --device` passes `-allowProvisioningUpdates -allowProvisioningDeviceRegistration`, so the device registers itself.
+
+**Route 2 — $99/yr Apple Developer Program, then EAS.** Once a team is linked, `eas build -p ios --profile preview` produces an installable `.ipa` for registered UDIDs (`eas device:create` registers them), and `--profile production` + `eas submit -p ios` goes to **TestFlight**: up to 10,000 internal testers with no UDID registration, external testers need Beta App Review ([internal distribution](https://docs.expo.dev/build/internal-distribution.md), [TestFlight](https://docs.expo.dev/submit/testflight.md)). Submitting requires an App Store Connect API key (generated by the Account Holder/Admin) plus `appleTeamId`, and `eas.json`'s `submit` block currently has an `android` half only — the `ios` half does not exist yet.
+
+**Not yet needed either way**: `app.json` has no `ios.config`, no entitlements and no associated domains, and the only plugin is `expo-router`. That is fine for a WebView shopping app; it would need revisiting for push notifications, Sign in with Apple, or universal links.
+
+Until one of the two routes is taken, the landing page is honest: `apps/web/src/components/landing/AppDownload.tsx` offers the direct APK, while the Google Play and App Store buttons both deep-link to WhatsApp rather than a store.
 
 ## 10. Design System
 
@@ -453,19 +481,23 @@ Tailwind v4 runs through `@tailwindcss/postcss`, with optional pinned platform p
 ### Web — Vercel (project root = repo root)
 
 - Root `vercel.json`: install `npm install`, build `cd apps/web && npm run build`, output `apps/web/out`, redirects + all security headers.
-- Auto-deploys on push to `main`. The build is a full static export (`next build --webpack` with `output: "export"`, type errors NOT ignored). CI additionally asserts `out/index.html` and `out/app/chinasuuq.apk` exist.
+- Auto-deploys on push to `main`. The build is a full static export (`next build --webpack` with `output: "export"`, type errors NOT ignored). CI additionally asserts `out/index.html` exists and that the shipped APK is a complete archive (§9 step 5).
 - There is no server runtime: no API routes, no ISR, no middleware. Dynamic behavior = client-side Supabase + Edge Functions.
 
 ### Mobile — EAS
 
 - Profiles: `development` / `preview` (APK) / `production` in `apps/mobile/eas.json`.
-- EAS workflows: `apps/mobile/.eas/workflows/build-dev.yml`, `production.yml` (validated by CI; YAML check is best-effort if `js-yaml` is unavailable).
+- `preview` pins `ORG_GRADLE_PROJECT_reactNativeArchitectures=armeabi-v7a,arm64-v8a` (arm-only APK — see §9); `development` keeps all four ABIs for x86 emulators; `production` ships an AAB so Play does the splitting.
+- iOS: `development.ios.simulator: true` (Simulator `.tar.gz` only), `preview.ios.simulator: false` (a device profile it cannot currently sign — see §9 "iOS"). `submit` has an `android` block only.
+- EAS workflows: `apps/mobile/.eas/workflows/build-dev.yml`, `production.yml` (they define `build_ios_dev`, `build_ios_production` and `submit_ios`; validated by CI, best-effort if `js-yaml` is unavailable).
 
 ### CI (`.github/workflows/ci.yml`, Node 22, push/PR → `main`)
 
-1. **web-build**: `tsc --noEmit` → `eslint` (non-blocking) → `next build` → verify static output (`out/index.html`, `out/app/chinasuuq.apk`) → verify landing page references `app/chinasuuq.apk`.
-2. **mobile-config**: `app.json` + `eas.json` JSON validation, EAS workflow YAML validation.
+1. **web-build**: `tsc --noEmit` → `eslint` (non-blocking) → `next build` → verify static output (`out/index.html`, `out/app/chinasuuq.apk`) → **unzip the APK** and require ≥500 central-directory entries plus `cmp` against the exported copy → verify the landing page still references `app/chinasuuq.apk`.
+2. **mobile-config** ("Mobile — Expo typecheck + Metro bundle"): `app.json` + `eas.json` JSON validation and EAS workflow YAML validation, then `npm ci` in `apps/mobile` (a self-contained npm project, not a root workspace), `tsc --noEmit` as a **hard gate**, and `npx expo export --platform ios` asserting `_expo/static/js/ios` exists with ≥5 files. The export is the only check that proves every `require()`'d asset path and native-module shim resolves — exactly what `tsc` cannot see. Measured on the runner: 1 m 28 s for the whole job.
 3. **guard**: repo hygiene — fails when agent/tool state dirs (`.agent-teams/`, `.hermes/`, `.zcode/`, `supabase/.temp/`, `.DS_Store`) are tracked.
+
+There are **no unit or integration tests anywhere in the repository** and no test runner installed in either app, so these compile/bundle gates are the entire automated safety net for mobile.
 
 ### Querying production
 
@@ -530,6 +562,9 @@ framer-motion, and `optimizePackageImports` already covers `lucide-react` /
 19. **Column-contract risk stays open** — the repo cannot be the source of truth for the live schema (§6). Any new projection must be checked against `information_schema` first, and the safest UI pattern is a fallback ladder or an explicit "unknown", because a single missing column voids the whole request.
 20. ~~CI does not validate the APK~~ — DONE: `ci.yml` now unzips `public/app/chinasuuq.apk`, fails under 500 entries, and `cmp`s it against the exported copy, so a truncated archive fails the build instead of shipping.
 21. **`.easignore` does not exclude `node_modules` the way its comment claims** — the EAS upload archive stayed at 226 MB after the app's own files shrank to ~14 MB, so dependencies are still being packed. Worth finding the real mechanism (EAS has a separate node-modules ignore file) before trusting the comment in `apps/mobile/.easignore`.
+22. **No iPhone build until someone pays or plugs in** — iOS has no installable artifact because the Expo account has no Apple team (`device:list` → "No Apple teams found"), not because of repo config; and App Store Expo Go is pinned to SDK 54 while this app is SDK 57. Both routes and their exact commands are in §9 "iOS". Blocked on user actions either way: accept the Xcode license, add an Apple ID to Xcode (free route), or buy the $99/yr Apple Developer Program (EAS/TestFlight route).
+23. **`eas.json`'s `submit` block has no `ios` half** — `apps/mobile/.eas/workflows/production.yml` defines `submit_ios`, so the workflow and the profile config disagree; submitting to TestFlight will need `appleTeamId` and an App Store Connect API key first.
+24. **Mobile has no tests at all** — `apps/mobile/package.json` has no `test` script and no jest/vitest anywhere in the repo. CI's typecheck + Metro export are the entire automated net for the app that takes real orders (§9).
 
 ## 13. Appendix — Key Constants
 
