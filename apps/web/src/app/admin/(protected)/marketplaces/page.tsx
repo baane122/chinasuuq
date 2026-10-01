@@ -12,7 +12,6 @@ import {
   RefreshCw,
   ExternalLink,
   Globe,
-  Globe2,
   ShieldCheck,
   Loader2,
   Store,
@@ -424,14 +423,6 @@ export default function AdminMarketplacesPage() {
                     className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-brand-500 transition-colors hover:bg-brand-50"
                   >
                     <ExternalLink className="h-3.5 w-3.5" /> Open {meta.name}
-                  </a>
-                  <a
-                    href={`/marketplaces/${acc.marketplace_type}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-dark-900/50 transition-colors hover:bg-dark-900/5 hover:text-dark-900"
-                  >
-                    <Globe2 className="h-3.5 w-3.5" /> Public page
                   </a>
                 </div>
               </div>

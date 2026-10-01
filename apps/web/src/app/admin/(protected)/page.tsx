@@ -895,7 +895,7 @@ export default function AdminDashboard() {
               <Settings className="h-3.5 w-3.5" />
             </a>
             <a
-              href="/marketplaces"
+              href="/"
               target="_blank"
               rel="noopener noreferrer"
               className="admin-btn-outline h-9 px-3 text-xs"

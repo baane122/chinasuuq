@@ -19,7 +19,6 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { waLink } from "@/lib/whatsapp";
 
@@ -335,7 +334,8 @@ export default function Hero() {
                 <div className="absolute inset-0 bg-gradient-to-t from-dark-900/20 to-transparent" />
               </div>
 
-              {/* Floating platform chips */}
+              {/* Floating platform chips — brand logos, no links (the
+                  marketplace browser lives in the mobile app) */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -348,9 +348,8 @@ export default function Hero() {
                     whileHover={{ scale: 1.05 }}
                     className="shrink-0"
                   >
-                    <Link
-                      href={`/marketplaces/${p.id}`}
-                      className="flex items-center gap-1 pl-1 pr-3 py-1 rounded-full bg-warm-100/80 hover:bg-warm-200/80 transition-colors"
+                    <div
+                      className="flex items-center gap-1 pl-1 pr-3 py-1 rounded-full bg-warm-100/80 transition-colors"
                       title={`${p.name} — order via ChinaSuuq`}
                     >
                       <img
@@ -363,7 +362,7 @@ export default function Hero() {
                         className="w-6 h-6 rounded-md object-cover"
                       />
                       <span className="text-[11px] font-semibold text-dark-900">{p.name}</span>
-                    </Link>
+                    </div>
                   </motion.div>
                 ))}
               </motion.div>

@@ -27,7 +27,6 @@ const footerColumns: { section: string; links: { tKey: string; href: string }[] 
   {
     section: "services",
     links: [
-      { tKey: "nav.markets", href: "/marketplaces" },
       { tKey: "nav.shipping", href: "/shipping" },
       { tKey: "nav.howItWorks", href: "/how-it-works" },
     ],
