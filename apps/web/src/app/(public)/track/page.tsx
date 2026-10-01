@@ -7,6 +7,7 @@ import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { supabase } from "@/lib/supabase";
+import AiShipmentConcierge from "@/components/ai/AiShipmentConcierge";
 import {
   Search, Package, MessageCircle, CheckCircle2, Circle, Loader2,
   ClipboardCheck, Boxes, Ship, Plane, MapPin, ShieldCheck, Home,
@@ -395,6 +396,9 @@ export default function TrackPage() {
                   ))}
                 </div>
               </div>
+
+              {/* AI Shipment Concierge */}
+              <AiShipmentConcierge orderReference={order.order_number} />
 
               {/* Support */}
               <div className="flex flex-col items-center justify-between gap-3 rounded-3xl border border-dark-900/[0.06] bg-white p-5 shadow-sm sm:flex-row">

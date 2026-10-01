@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS public.marketplace_accounts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    marketplace_type text NOT NULL,            -- '1688' | 'taobao' | 'yiwugo' | 'alibaba' | 'chinagoods' | 'jd'
+    marketplace_type text NOT NULL,            -- '1688' | 'taobao' | 'yiwugo' | 'chinagoods'
     account_label text NOT NULL DEFAULT '',     -- human label e.g. "Primary 1688 account"
     username text,
     password_encrypted text,                    -- encrypted credential (displayed/SHARED to users for in-app login)

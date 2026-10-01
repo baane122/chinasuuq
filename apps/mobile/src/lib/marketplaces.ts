@@ -8,9 +8,7 @@ export type MarketplaceId =
   | "1688"
   | "taobao"
   | "yiwugo"
-  | "alibaba"
   | "chinagoods"
-  | "jd"
   | "dollarstore";
 
 export interface Marketplace {
@@ -76,21 +74,6 @@ export const MARKETPLACES: Marketplace[] = [
     loginWalled: true,
   },
   {
-    id: "alibaba",
-    name: "Alibaba",
-    tagline_en: "Global B2B trade platform",
-    tagline_so: "Suuqa ganacsiga B2B",
-    desc_en: "Factories & suppliers for wholesale orders",
-    desc_so: "Warshado & iibiyeyaal jumlada",
-    stat_en: "200M+ items",
-    stat_so: "200M+ alaab",
-    icon: require("../../assets/marketplaces/alibaba.png"),
-    brandColor: "#FF6A00",
-    shortMark: "A",
-    homeUrl: "https://m.alibaba.com",
-    loginWalled: false,
-  },
-  {
     id: "chinagoods",
     name: "ChinaGoods",
     tagline_en: "Yiwu market online",
@@ -103,21 +86,6 @@ export const MARKETPLACES: Marketplace[] = [
     brandColor: "#E60012",
     shortMark: "CG",
     homeUrl: "https://www.chinagoods.com",
-    loginWalled: false,
-  },
-  {
-    id: "jd",
-    name: "JD.com",
-    tagline_en: "Quality electronics & tech",
-    tagline_so: "Elektiroonigga & teknooloji",
-    desc_en: "Genuine branded goods with fast delivery",
-    desc_so: "Alaab dhab ah oo si degdeg ah loo geeyo",
-    stat_en: "400M+ items",
-    stat_so: "400M+ alaab",
-    icon: require("../../assets/marketplaces/jd.png"),
-    brandColor: "#E1251B",
-    shortMark: "JD",
-    homeUrl: "https://m.jd.com",
     loginWalled: false,
   },
   {
@@ -151,9 +119,7 @@ export function detectMarketplaceFromUrl(input: string): MarketplaceId | null {
   if (lower.includes("1688.com")) return "1688";
   if (lower.includes("taobao.com")) return "taobao";
   if (lower.includes("yiwugo.com")) return "yiwugo";
-  if (lower.includes("alibaba.com")) return "alibaba";
   if (lower.includes("chinagoods.com")) return "chinagoods";
-  if (lower.includes("jd.com")) return "jd";
   if (lower.includes("huolangjun666.com")) return "dollarstore";
   return null;
 }

@@ -40,9 +40,7 @@ const platformChips = [
   { name: "1688", id: "1688", img: "/images/marketplaces/1688.webp" },
   { name: "Taobao", id: "taobao", img: "/images/marketplaces/taobao.webp" },
   { name: "YiwuGo", id: "yiwugo", img: "/images/marketplaces/yiwugo.webp" },
-  { name: "Alibaba", id: "alibaba", img: "/images/marketplaces/alibaba.webp" },
   { name: "ChinaGoods", id: "chinagoods", img: "/images/marketplaces/chinagoods.webp" },
-  { name: "JD", id: "jd", img: "/images/marketplaces/jd.webp" },
   { name: "1$ Dollar Store", id: "dollarstore", img: "/images/marketplaces/dollarstore.webp" },
 ];
 
@@ -213,8 +211,8 @@ export default function Hero() {
               className="text-base sm:text-lg text-dark-900/55 leading-relaxed mb-8 max-w-xl"
             >
               {locale === "en"
-                ? "Browse 1688, Taobao, YiwuGo, Alibaba, ChinaGoods and JD in one place. See translated products and USD prices, pay with familiar Somali payment methods, and let ChinaSuuq handle purchasing, inspection, and delivery."
-                : "Eeg 1688, Taobao, YiwuGo, Alibaba, ChinaGoods iyo JD hal meel. Arag alaab la turjumay iyo qiimaha USD, ku bixi hab-yada Soomaaliyeed, oo u daa ChinaSuuq inay maariso iibinta, hubinta, iyo gaarsiinta."}
+                ? "Browse 1688, Taobao, YiwuGo and ChinaGoods in one place. See translated products and USD prices, pay with familiar Somali payment methods, and let ChinaSuuq handle purchasing, inspection, and delivery."
+                : "Eeg 1688, Taobao, YiwuGo iyo ChinaGoods hal meel. Arag alaab la turjumay iyo qiimaha USD, ku bixi hab-yada Soomaaliyeed, oo u daa ChinaSuuq inay maariso iibinta, hubinta, iyo gaarsiinta."}
             </motion.p>
 
             {/* CTAs */}
@@ -387,7 +385,7 @@ export default function Hero() {
                       </div>
                       <div className="flex items-center gap-1 text-[11px] text-dark-900/50">
                         <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
-                        {locale === "en" ? "1688 · Taobao · JD +4 more" : "1688 · Taobao · JD +4"}
+                        {locale === "en" ? "1688 · Taobao · YiwuGo +2 more" : "1688 · Taobao · YiwuGo +2"}
                       </div>
                     </div>
                   </div>

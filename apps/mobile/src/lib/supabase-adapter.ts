@@ -110,14 +110,14 @@ export function unadaptOrderItem(it: any): LocalOrderItem {
 
 // Row shape of production's `sourcing_requests`, verified against the live
 // schema: id, user_id, marketplace (nullable enum: 1688 | taobao | yiwugo |
-// alibaba | chinagoods | jd), product_url, product_description, quantity,
+// chinagoods), product_url, product_description, quantity,
 // destination_city, status, created_at, updated_at. `id`, `created_at` and
 // `updated_at` are server-generated and must never be sent from the client —
 // the earlier adapter wrote nine columns that do not exist, so every mobile
 // sourcing sync was rejected by PostgREST.
 export interface SourcingRow {
   user_id: string | null;
-  marketplace: "1688" | "taobao" | "yiwugo" | "alibaba" | "chinagoods" | "jd" | null;
+  marketplace: "1688" | "taobao" | "yiwugo" | "chinagoods" | null;
   product_url: string | null;
   product_description: string;
   quantity: number;
@@ -130,9 +130,7 @@ const LIVE_SOURCING_MARKETPLACES = new Set([
   "1688",
   "taobao",
   "yiwugo",
-  "alibaba",
   "chinagoods",
-  "jd",
 ]);
 
 export function adaptSourcing(

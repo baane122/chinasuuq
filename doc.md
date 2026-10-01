@@ -31,7 +31,7 @@
 
 ## 1. Platform Overview
 
-ChinaSuuq connects Somali buyers with Chinese suppliers. The web app ships seven storefronts from `apps/web/src/lib/marketplaces.ts` — 1688, Taobao, YiwuGo, Alibaba, Chinagoods, JD and the 1$ Dollar Store — and the mobile app ships the same seven. The live `marketplaces` table is a **different** list (1688, alibaba, chinagoods, jd, taobao, yiwugo, `chinasuuq-deals`: no `dollarstore`), which is the schema-drift pattern in §6 — public pages read the code list, `logo_url` is NULL for every row. The platform covers discovery → sourcing requests → quotes → orders → payment (Somali mobile money) → warehouse consolidation → international air/sea freight → delivery.
+ChinaSuuq connects Somali buyers with Chinese suppliers. The web app ships five storefronts from `apps/web/src/lib/marketplaces.ts` — 1688, Taobao, YiwuGo, Chinagoods and the 1$ Dollar Store — and the mobile app ships the same five. The live `marketplaces` table is a **different** list (1688, chinagoods, taobao, yiwugo, `chinasuuq-deals`: no `dollarstore`), which is the schema-drift pattern in §6 — public pages read the code list, `logo_url` is NULL for every row. The platform covers discovery → sourcing requests → quotes → orders → payment (Somali mobile money) → warehouse consolidation → international air/sea freight → delivery.
 
 **Verified user-facing facts** (constants in `packages/shared/constants.ts` and `apps/mobile/src/lib/shipping.ts`):
 
@@ -121,7 +121,7 @@ All pages are statically exported (`trailingSlash: true`, images unoptimized; re
 |-------|---------|
 | `/` | Landing: hero, search, marketplace cards, how-it-works, trust bar, app download, footer |
 | `/marketplaces/` | Marketplace index |
-| `/marketplaces/{1688,taobao,yiwugo,alibaba,chinagoods,jd,dollarstore}/` | Per-marketplace pages (`[id]` route; slugs from `src/lib/marketplaces.ts`) |
+| `/marketplaces/{1688,taobao,yiwugo,chinagoods,dollarstore}/` | Per-marketplace pages (`[id]` route; slugs from `src/lib/marketplaces.ts`) |
 | `/how-it-works/` | Process explainer |
 | `/shipping/` | Air vs sea comparison, rates, delivery cities |
 | `/business/` | B2B sourcing / bulk orders |
@@ -165,7 +165,7 @@ The mobile APK is linked from the landing page as `/app/chinasuuq.apk` (CI enfor
 | Warehouse `/admin/warehouse` | `warehouse_packages` (list, insert, update, delete) |
 | Staff `/admin/staff` | `staff_profiles` (list, insert, update; `is_super_admin` flag) |
 | Marketplaces `/admin/marketplaces` | `marketplace_accounts` (list, insert, update, delete) |
-| Settings `/admin/settings` | `settings` key/value, password change (`auth.updateUser`), AI provider tab via Edge Functions (`ai-settings`, `ai-test-connection`) |
+| Settings `/admin/settings` | `settings` key/value, password change (`auth.updateUser`), AI provider tab via Edge Functions (`ai-settings`, `ai-test-connection`) — global provider + per-task overrides (copilot / translation / vision / extraction), each with save / test / reset-to-global |
 
 ### Live behaviour and provenance
 
@@ -203,7 +203,7 @@ through the Management API (§11), recording each version in
 | `202408010009_support_notifications_audit.sql` | Support tickets, `notifications`, audit |
 | `202408010010_rls_policies.sql` | Baseline RLS |
 | `202408010011_triggers_functions.sql` | Triggers + functions |
-| `202408010012_add_marketplaces_chinagoods_jd.sql` | Adds ChinaGoods + JD marketplaces |
+| `202408010012_add_marketplaces_chinagoods_jd.sql` | Adds ChinaGoods + JD marketplaces (superseded — JD removed Oct 2026) |
 | `202408010013_marketplace_accounts.sql` | `marketplace_accounts` |
 | `202408010014_admin_view_layer.sql` | First admin view layer |
 | `20260813_admin_view_layer_corrected.sql` | Corrected admin views (`admin_orders_view`, `admin_customers_view`, `admin_sourcing_view`, `admin_payments_view`, `admin_shipments_view`, `admin_quotes_view`, `admin_warehouse_view`, `admin_staff_view`) |
@@ -221,6 +221,7 @@ through the Management API (§11), recording each version in
 | `202609250005_live_catalog_columns.sql` | Aligns the repo contract with the live shape: `status` (`draft/active/archived`), `category`, `price_usd_estimated`, plus `idx_source_products_status_stock` |
 | `202609260001_mobile_order_submit.sql` | `submit_mobile_order(...)` — the mobile write path (details in §9) + `_cs_*` item/enum helpers |
 | `202609270001_admin_live_and_counts.sql` | Publishes `source_products` and `payments` for Realtime; `admin_category_product_counts()` (active categories + per-category head-count in one request) |
+| `202610010001_ai_provider_tasks.sql` | `ai_provider_tasks` — per-task AI provider overrides (`copilot`/`translation`/`vision`/`extraction`), service-role-only containment, fallback to the global `ai_provider_config` row |
 
 Apply through the Supabase Management API (§11) and record the version in
 `supabase_migrations.schema_migrations`; `supabase db push` is **not** used here, because the
@@ -248,6 +249,7 @@ Added by the 2026-09 work:
 - `product_events` (`product_id`, `event_type` in `view|add_to_cart|order|search_click`, `marketplace_key`, `session_id`, `created_at`) — append-only from anon and authenticated, SELECT only for staff.
 - `translations` (`source_text`, `source_hash`, `target_lang`, `translated_text`, `provider`, `model`; PK `(source_hash, target_lang)`) — the AI translation cache; `authenticated` may read, only the service role writes.
 - `ai_provider_config` — see "Secret containment" below. Not readable by any client role.
+- `ai_provider_tasks` (`task` PK in `copilot|translation|vision|extraction`, `base_url`, `api_key`, `model`, `is_configured`, `updated_by`, `updated_at`) — per-task provider overrides (migration `202610010001`). Same containment as `ai_provider_config`: RLS enabled, no policies, all grants revoked from `anon`/`authenticated`; only the service role reads it. An unconfigured task falls back to the global `ai_provider_config` row.
 
 ### Money-integrity rules (migration `202609210001`)
 
@@ -271,11 +273,11 @@ Documented follow-ups (migration footer): replace guest-order anon readability w
 
 ## 7. Edge Functions
 
-Location: `apps/web/supabase/functions/<name>/index.ts` — 8 functions. Shared: `_shared/auth.ts` (`requireRole`, `requireAdmin`, `requireStaffOrAdmin`, `unauthorized`), `_shared/cors.ts` (permissive CORS `*`), `_shared/ai-provider.ts` (`validateProviderBaseUrl`, `loadAiProviderConfig`).
+Location: `apps/web/supabase/functions/<name>/index.ts` — 10 functions. Shared: `_shared/auth.ts` (`requireRole`, `requireAdmin`, `requireStaffOrAdmin`, `unauthorized`), `_shared/cors.ts` (permissive CORS `*`), `_shared/ai-provider.ts` (`validateProviderBaseUrl`, `loadAiProviderConfig`, `loadAiProviderForTask`).
 
 Deploy: `supabase functions deploy <name> --project-ref athkmrvsaijwgsyvwrbp`
 
-Caller status (verified by grep): `ai-settings` + `ai-test-connection` (admin settings), `ai-extraction` (admin Products page), `cart-validate` (mobile checkout via `src/lib/cartValidateRemote.ts`), `product-enrich` (mobile `enrichMoqWithAi()`), `ai-translate` (only `apps/mobile/src/api/translate.ts`, which no screen imports yet). `quotes-validate` and `operational-queue` are deployed with no callers.
+Caller status (verified by grep): `ai-settings` + `ai-test-connection` (admin settings), `ai-extraction` (admin Products page), `ai-proxy` (admin AI Copilot page), `ai-vision` (mobile AI Scan, server-first with direct fallback), `cart-validate` (mobile checkout via `src/lib/cartValidateRemote.ts`), `product-enrich` (mobile `enrichMoqWithAi()`), `ai-translate` (only `apps/mobile/src/api/translate.ts`, which no screen imports yet). `quotes-validate` and `operational-queue` are deployed with no callers.
 
 ### `_shared/ai-provider.ts`
 
@@ -283,6 +285,7 @@ The three AI functions share one provider-config reader instead of each parsing 
 
 - `validateProviderBaseUrl(raw)` — https only, no userinfo, port 443 only, and the host is rejected when it is `localhost`/`*.internal`, an IPv4 private / CGNAT / link-local address (including `169.254.169.254`), multicast or reserved, or an IPv6 loopback / ULA / link-local / v4-mapped address. This is the SSRF guard; the previous inline check in `ai-extraction` only looked for an internal host after an `@`.
 - `loadAiProviderConfig(client)` — reads the `ai_provider_config` row `id = 1` (`base_url`, `api_key`, `model`, `is_configured`) with a **service-role** client and returns `null` when unconfigured or when the URL fails validation. The key is only ever placed in the `Authorization` header of the provider call; it is never logged, returned, or echoed in an error.
+- `loadAiProviderForTask(client, task)` — per-task resolution added `2026-10-01`: reads `ai_provider_tasks` for `task` (`copilot|translation|vision|extraction`) and falls back to `loadAiProviderConfig()` when the task has no configured override (or the table does not exist yet, so pre-migration deployments behave identically). Used by `ai-translate` (`translation`), `ai-extraction` + `product-enrich` (`extraction`), `ai-proxy` (`copilot`) and `ai-vision` (`vision`).
 
 ### `ai-translate` (POST) — any signed-in role
 
@@ -291,12 +294,27 @@ The three AI functions share one provider-config reader instead of each parsing 
 - → `{ ok:true, results:[{ source, translated, cached }], target_lang, counts:{ requested, cached, translated } }`. Errors: `authentication_required`(401), `ai_provider_not_configured`(503), `cache_read_failed`(500), `model_call_failed`/`model_output_not_json`/`model_output_unexpected`(502), `model_timeout`/`translation_failed`(500).
 - **Caller:** `apps/mobile/src/api/translate.ts` (LRU + AsyncStorage cache, fail-open to the original string). No screen imports that module yet, so the mobile UI is still English/Somali from the bundled dictionaries.
 
-### `ai-settings` (GET/POST) — admin only
+### `ai-settings` (GET/POST/DELETE) — admin only
 
-- GET → `{ ok, is_configured, base_url, model, api_key_masked, updated_at, updated_by }` or `{ ok:false, error:"not_configured" }`. API key masked to first 4 + last 4 chars.
+- GET → `{ ok, is_configured, base_url, model, api_key_masked, updated_at, updated_by, tasks:[{ task, base_url, model, api_key_masked, configured, updated_at }] }` or `{ ok:false, error:"not_configured", tasks }`. API key masked to first 4 + last 4 chars. `GET ?task=<name>` reads one per-task override (`{ ok, configured, override, base_url, model, api_key_masked }`, `override:false` when unset).
 - POST `{ api_key, base_url, model }` → validation (`api_key` ≥ 10 chars, `base_url` https + `validateProviderBaseUrl()`, `model` required) → upserts the **`ai_provider_config`** row `id = 1` with `updated_by` taken from the verified admin JWT (never the body). Errors: `422 { ok:false, errors:[...] }`.
-- Storage moved out of `settings` in `202609240002_ai_secret_containment.sql`; `settings` now rejects secret-shaped keys outright. Only the function reaches the table (service role), and the migration deleted the old `ai_provider` row after copying it.
-- Called by `src/components/admin/AiSettingsTab.tsx`.
+- POST `{ task, api_key?, base_url, model }` → same validation, but upserts **`ai_provider_tasks`** for `task` in `copilot|translation|vision|extraction`. An omitted/empty `api_key` keeps the previously stored secret, so a model change does not require re-pasting the key. `DELETE ?task=<name>` removes the override — the task falls back to the global provider.
+- Storage moved out of `settings` in `202609240002_ai_secret_containment.sql`; `settings` now rejects secret-shaped keys outright. Only the function reaches the table (service role), and the migration deleted the old `ai_provider` row after copying it. Per-task rows live in `ai_provider_tasks` (`202610010001_ai_provider_tasks.sql`), same containment.
+- Called by `src/components/admin/AiSettingsTab.tsx` (global card + four per-task cards, each with Save / Test connection / Use global).
+
+### `ai-proxy` (POST) — staff/admin only
+
+- POST `{ messages:[{role,content}...], temperature?, max_tokens? }` → resolves the provider with `loadAiProviderForTask(client, "copilot")` (per-task `copilot` override → global fallback) and performs the `chat/completions` call **server-side**. The provider key never reaches the browser: this replaces the Copilot page's old direct browser→provider call with a hardcoded bundle key.
+- Caps: 24 messages, 12 000 chars per message, temperature 0–2, `max_tokens` 16–4000 (default 1200). Only `system`/`user`/`assistant` roles accepted.
+- → `{ ok, content, model }`. Errors: `401 staff_required`, `422 messages_required|too_many_messages|no_valid_messages`, `503 ai_provider_not_configured`, `502 provider_error|empty_response`.
+- **Caller:** Mission Control AI Copilot (`apps/web/src/app/admin/(protected)/ai/page.tsx`) via `copilotChat()`.
+
+### `ai-vision` (POST) — any signed-in role
+
+- POST `{ screenshot_base64?, snapshot?{ title?, price?, priceMax?, moqText?, url? } }` → resolves `loadAiProviderForTask(client, "vision")` and runs one vision `chat/completions` call (temperature 0.1, `max_tokens: 900`) whose prompt embeds the same extraction rules and MOQ-authority instructions as the mobile fallback, so both paths produce the same `VisionListing` JSON shape. `raw` is returned unparsed — the client owns JSON extraction so fallback and server paths share one parser.
+- Caps: screenshot ≤ ~3 MB base64, MOQ evidence ≤ 1200 chars.
+- → `{ ok, raw, model }`. Errors: `401 auth_required`, `413 screenshot_too_large`, `422 nothing_to_scan`, `503 ai_provider_not_configured`, `502 provider_error|empty_response`.
+- **Caller:** mobile AI Scan (`apps/mobile/src/lib/aiVision.ts` `serverVisionScan()`) — tried FIRST, with the direct provider call as automatic fallback when the function is unavailable or the user is logged out. Switching/rotating the vision provider in Mission Control therefore requires no app release.
 
 ### `ai-test-connection` (POST) — admin only
 
@@ -345,8 +363,8 @@ Turns captured marketplace page text into structured MOQ/price data, and is the 
 - **No service-role client in the web bundle** — `apps/web/src/lib/supabase.ts` exports the anon client and `edgeFetch()` only. Service-role access exists exclusively inside Edge Functions, behind caller verification.
 - **Admin auth** — Supabase Auth email/password at `/admin/login`; the `(protected)` layout redirects unauthenticated users (UX guard only). Recovery/fallback code paths are gated by `NEXT_PUBLIC_DEV_BUILD` and inert in production (`src/lib/adminSession.ts`).
 - **Role forcing at signup** and **money guards** — see §6.
-- **Edge Function auth model** — `_shared/auth.ts` verifies the bearer JWT against Supabase Auth, loads `profiles.role`, and allows only listed roles; privileged queries then run with the service role. Anonymous callers can only reach `cart-validate` and `quotes-validate` (product/MOQ validation, no user data); `ai-settings`, `ai-test-connection`, `ai-extraction` and `operational-queue` require staff/admin; `ai-translate` and `product-enrich` require any signed-in role (they cost provider credits and write shared state, so an anonymous key cannot be spent).
-- **AI credentials** — the provider key lives in `public.ai_provider_config`, which has RLS enabled and **no policies**: no client role can read it, signed-in or not. Only Edge Functions holding the service key reach it, they mask it on read (`api_key_masked`, first 4 + last 4), and `settings` refuses secret-shaped keys so it cannot leak back into an anon-readable table. The key was pasted into a chat while wiring this up and still needs rotating at the provider.
+- **Edge Function auth model** — `_shared/auth.ts` verifies the bearer JWT against Supabase Auth, loads `profiles.role`, and allows only listed roles; privileged queries then run with the service role. Anonymous callers can only reach `cart-validate` and `quotes-validate` (product/MOQ validation, no user data); `ai-settings`, `ai-test-connection`, `ai-extraction`, `ai-proxy` and `operational-queue` require staff/admin; `ai-translate`, `ai-vision` and `product-enrich` require any signed-in role (they cost provider credits and write shared state, so an anonymous key cannot be spent).
+- **AI credentials** — the provider key lives in `public.ai_provider_config` (global) and `public.ai_provider_tasks` (per-task overrides), both with RLS enabled and **no policies**: no client role can read them, signed-in or not. Only Edge Functions holding the service key reach them; keys are masked on read (`api_key_masked`, first 4 + last 4), and `settings` refuses secret-shaped keys so they cannot leak back into an anon-readable table. As of `2026-10-01` the Copilot and mobile AI Scan no longer hold a provider key in the bundle: chat goes through `ai-proxy` (staff-gated) and vision tries `ai-vision` first with a direct fallback. The legacy direct-fallback keys were pasted into a chat while wiring this up and still need rotating at the provider.
 - **Append-only telemetry** — `product_events` grants INSERT to `anon`/`authenticated` but SELECT only to staff (`is_staff_or_admin()`), and `record_product_event()` throttles to one event per product/type/user per 60 s. `admin_product_events_view` deliberately omits `session_id`.
 - **MOQ authority** — a supplier's stated minimum is business data, not user data: any signed-in role may read `source_products.moq*`, but writes go through `record_moq_candidate()`, which is granted to `service_role` only and refuses to let a machine reading override a `manual` decision or raise a confidence above what the evidence supports.
 - **CORS** — `_shared/cors.ts` allows all origins for function calls; functions themselves authenticate callers.
@@ -355,7 +373,7 @@ Turns captured marketplace page text into structured MOQ/price data, and is the 
 
 | Header | Value |
 |--------|-------|
-| Content-Security-Policy | `default-src 'self'`; scripts `'self' 'unsafe-inline' 'unsafe-eval' https://*.vercel-scripts.com`; styles `'self' 'unsafe-inline'`; images self/data/blob + Supabase, WhatsApp, lk888.ai, Google avatars; connect self + Supabase (incl. `wss://`) + Vercel + lk888.ai + translate.googleapis.com; frames limited to 1688/Taobao/YiwuGo/Alibaba/ChinaGoods/JD (m. + www.); form-action wa.me; `frame-ancestors 'none'`; `upgrade-insecure-requests` |
+| Content-Security-Policy | `default-src 'self'`; scripts `'self' 'unsafe-inline' 'unsafe-eval' https://*.vercel-scripts.com`; styles `'self' 'unsafe-inline'`; images self/data/blob + Supabase, WhatsApp, lk888.ai, Google avatars; connect self + Supabase (incl. `wss://`) + Vercel + lk888.ai + translate.googleapis.com; frames limited to 1688/Taobao/YiwuGo/ChinaGoods (m. + www.); form-action wa.me; `frame-ancestors 'none'`; `upgrade-insecure-requests` |
 | Strict-Transport-Security | `max-age=63072000; includeSubDomains; preload` |
 | X-Frame-Options | `DENY` |
 | X-Content-Type-Options | `nosniff` |
@@ -379,7 +397,7 @@ Because the web app is a static export, Next.js `headers()`/`proxy.ts` never run
 - **MOQ as a provenance-tracked field** (`src/lib/moqIngest.ts` is the single reader): `resolveMoq(product, capturedText?)` decides what "minimum order" means, tagged with its source and confidence. `extractMoqLocal()` runs 11 ordered rules over captured page text (explicit 起批量/起订/MOQ phrasing at 0.95 down to a `¥N 起批` heuristic at 0.15, with an ambiguity cap); only a reading at or above `ENFORCE_CONFIDENCE = 0.8` may block a purchase, a confident reading never *lowers* the supplier's stated minimum, and `moq_source = 'manual'` short-circuits everything. `extractOrderStructure()` additionally reads price tiers, pack size and mixed-batch minimums. Staff/customer decisions are saved by `saveMoqDecision()` (which deliberately does **not** call the service-role RPC — a customer's UPDATE simply matches no rows, so the decision stays on-device and rides along in the order snapshot), and the optional `product-enrich` AI pass can only raise confidence, never override a manual value.
 - **Cart gate** (`app/cart/index.tsx` + `src/lib/cartValidation.ts`): per line, `moqOrderRules()` → `validateCartItem()` → `{ status, problems, fixTo, minimum }`, where `fixTo` is the exact quantity that clears the rule (so the UI can offer one-tap repair instead of an error). `payableNow()` prices only the lines it actually knows and returns the unknown components as pending — it never invents a landed cost. At checkout, `cartValidateRemote.ts` calls the `cart-validate` function with the resolved minimums and blocks on `below_moq`, `insufficient_stock`, `out_of_stock`, `not_available`, `invalid_quantity`; when the function is unreachable or fails open, the local resolution takes over (`moq.enforce && quantity < displayMoq`).
 - **Home trending feed** (`src/api/trending.ts` + `src/components/home/TrendingRow.tsx`): `fn_trending_products(days, limit)` ranks the last 7 days of `product_events` (view 1 / search_click 2 / add_to_cart 4 / order 8, halving every 3 days), with a 3.5 s race, a 10-minute AsyncStorage cache under `chinasuuq-trending-products`, and a status of `live | cache | empty | unavailable` — a cold offline launch shows the saved list with a "from the last saved list" note rather than an empty row. Each card adds straight to cart when the product resolves; otherwise it opens the product page instead of inventing a line. `recordProductEvent()` writes the events (view / add_to_cart) with a 60 s per-product throttle.
-- **Marketplace registry** (`src/config/marketplaceRegistry.ts`): host allow-list, currency, rate key, "shows MOQ" flag, locales and search-URL template per marketplace (`1688, taobao, yiwugo, alibaba, chinagoods, jd, dollarstore`). The WebView host check and the admin/`marketplaces` artwork share this vocabulary; the file itself flags that its search URL templates are UNVERIFIED against the live sites, and no screen imports it yet.
+- **Marketplace registry** (`src/config/marketplaceRegistry.ts`): host allow-list, currency, rate key, "shows MOQ" flag, locales and search-URL template per marketplace (`1688, taobao, yiwugo, chinagoods, dollarstore`). The WebView host check and the admin/`marketplaces` artwork share this vocabulary; the file itself flags that its search URL templates are UNVERIFIED against the live sites, and no screen imports it yet.
 - **Status mapping** (`src/lib/supabase-adapter.ts`): bidirectional map between the mobile pipeline (`pending, confirmed, purchasing, purchased, in_transit_china, warehouse, inspection, consolidated, shipped, in_transit, arrived_somalia, customs, ready_for_pickup, out_for_delivery, delivered, cancelled`) and DB statuses (`in_warehouse`, `inspection_passed`, `customs_hold`, `out_for_delivery`, `sourcing`, `quoted`, `awaiting_payment`, …). The admin `supabase-data.ts` mirrors the same mappers.
 - **i18n**: `src/i18n/en.json` + `so.json` via `src/lib/i18n.tsx` context. UI chrome is translated from the bundled dictionaries; catalog text is not machine-translated yet — `src/api/translate.ts` is a complete client for the `ai-translate` function (batch ≤ 40 texts, LRU + AsyncStorage cache, fails open to the source string) but no screen imports it.
 - **No realtime**: the app polls or reads once per focus and falls back to AsyncStorage; the change stream in §6 is consumed by the admin console only.
@@ -579,8 +597,8 @@ framer-motion, and `optimizePackageImports` already covers `lucide-react` /
 | WhatsApp number / link | `8615277074143` / `https://wa.me/8615277074143` | `packages/shared/constants.ts` |
 | Air freight | $8.50/kg, min $15 | `apps/mobile/src/lib/shipping.ts` |
 | Sea freight | $2.20/kg, min $25, min chargeable 10 kg | `apps/mobile/src/lib/shipping.ts` |
-| Marketplaces (web + mobile slugs) | 1688, Taobao, YiwuGo, Alibaba, Chinagoods, JD, `dollarstore` (1$ Dollar Store) | `apps/web/src/lib/marketplaces.ts`, `apps/mobile/src/lib/marketplaces.ts` |
-| Marketplaces (live `marketplaces` table) | 1688, alibaba, chinagoods, jd, taobao, yiwugo, `chinasuuq-deals` — no `dollarstore`, all `logo_url` NULL | Supabase project |
+| Marketplaces (web + mobile slugs) | 1688, Taobao, YiwuGo, Chinagoods, `dollarstore` (1$ Dollar Store) | `apps/web/src/lib/marketplaces.ts`, `apps/mobile/src/lib/marketplaces.ts` |
+| Marketplaces (live `marketplaces` table) | 1688, chinagoods, taobao, yiwugo, `chinasuuq-deals` — no `dollarstore`, all `logo_url` NULL | Supabase project |
 | EAS project / owner | `a8484922-0c4f-4f79-b4be-f93fe1dd5747` / `baaaane24` | `apps/mobile/app.json` |
 | Android package | `com.chinasuuq.app` | `apps/mobile/app.json` |
 | Dev admin recovery code | `chinasuuq-dev` (only when `NEXT_PUBLIC_DEV_BUILD=1`) | `apps/web/src/lib/adminSession.ts` |

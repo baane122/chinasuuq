@@ -19,7 +19,8 @@ import {
   CheckCircle2,
   LayoutGrid,
   KeyRound,
-} from "lucide-react";
+  Cookie,
+  } from "lucide-react";
 import {
   PageHeader,
   PageGrid,
@@ -38,9 +39,7 @@ const MARKETPLACES = [
   { id: "1688", name: "1688", home: "https://www.1688.com", color: "#FF5000", stat: "50M+ items" },
   { id: "taobao", name: "Taobao", home: "https://www.taobao.com", color: "#FF6A00", stat: "100M+ items" },
   { id: "yiwugo", name: "YiwuGo", home: "https://www.yiwugo.com", color: "#1A8CFF", stat: "5M+ items" },
-  { id: "alibaba", name: "Alibaba", home: "https://www.alibaba.com", color: "#FF6A00", stat: "200M+ items" },
   { id: "chinagoods", name: "ChinaGoods", home: "https://www.chinagoods.com", color: "#E60012", stat: "2M+ items" },
-  { id: "jd", name: "JD.com", home: "https://www.jd.com", color: "#E1251B", stat: "400M+ items" },
   { id: "dollarstore", name: "1$ Dollar Store", home: "https://www.huolangjun666.com", color: "#FF5A0A", stat: "10K+ items" },
 ];
 
@@ -55,6 +54,10 @@ interface MarketplaceAccount {
   notes: string;
   is_shared: boolean;
   is_active: boolean;
+  cookies?: string | null;
+  cookies_updated_at?: string | null;
+  last_verified_at?: string | null;
+  health?: string | null;
   created_at: string;
 }
 
@@ -66,6 +69,7 @@ const emptyForm = {
   phone: "",
   email: "",
   notes: "",
+  cookies: "",
   is_shared: true,
   is_active: true,
 };
@@ -121,6 +125,7 @@ export default function AdminMarketplacesPage() {
       phone: acc.phone,
       email: acc.email,
       notes: acc.notes,
+      cookies: acc.cookies ?? "",
       is_shared: acc.is_shared,
       is_active: acc.is_active,
     });
@@ -132,17 +137,23 @@ export default function AdminMarketplacesPage() {
     setSaving(true);
     setError(null);
     try {
+      // Stamp cookie freshness on every save that touches the session fields
+      const payload = {
+        ...form,
+        cookies_updated_at: new Date().toISOString(),
+        health: form.cookies ? "fresh" : "unknown",
+      };
       if (editing) {
         const { error } = await supabase
           .from("marketplace_accounts")
-          .update(form)
+          .update(payload)
           .eq("id", editing.id);
         if (error) throw error;
         toast.success("Account updated");
       } else {
         const { error } = await supabase
           .from("marketplace_accounts")
-          .insert(form);
+          .insert(payload);
         if (error) throw error;
         toast.success("Account created");
       }
@@ -314,6 +325,30 @@ export default function AdminMarketplacesPage() {
                             <ShieldCheck className="h-3 w-3" /> Shared
                           </span>
                         )}
+                        {acc.cookies && (
+                          <span
+                            className={cn(
+                              "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                              acc.health === "dead"
+                                ? "border-red-200 bg-red-50 text-red-600"
+                                : acc.health === "aging"
+                                  ? "border-amber-200 bg-amber-50 text-amber-600"
+                                  : "border-emerald-200 bg-emerald-50 text-emerald-600"
+                            )}
+                            title={
+                              acc.cookies_updated_at
+                                ? `Cookies updated ${new Date(acc.cookies_updated_at).toLocaleDateString()}`
+                                : "Pre-login cookies set"
+                            }
+                          >
+                            <Cookie className="h-3 w-3" />
+                            {acc.health === "dead"
+                              ? "Session dead"
+                              : acc.health === "aging"
+                                ? "Aging"
+                                : "Pre-logged"}
+                          </span>
+                        )}
                       </p>
                       <p className="truncate text-xs text-dark-900/45">{meta.name} · {meta.stat}</p>
                     </div>
@@ -479,6 +514,19 @@ export default function AdminMarketplacesPage() {
               />
             </Field>
           </div>
+
+          <Field
+            label="Session Cookies (pre-login)"
+            hint="Paste the Cookie header from a logged-in browser (DevTools → Network → any request → Cookie). The app injects these so customers browse logged-in without ever seeing a login wall."
+          >
+            <textarea
+              value={form.cookies}
+              onChange={(e) => setForm({ ...form, cookies: e.target.value })}
+              rows={3}
+              placeholder="cookie2=...; t=...; cna=...; isg=..."
+              className="admin-input font-mono text-xs"
+            />
+          </Field>
 
           <Field label="Notes">
             <textarea

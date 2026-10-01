@@ -237,7 +237,7 @@ export default function HelpScreen() {
           style={styles.ticketLinkCard}
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            router.push("/support/index");
+            router.push("/support");
           }}
           android_ripple={{ color: COLORS.gray100 }}
         >

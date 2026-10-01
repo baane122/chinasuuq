@@ -34,7 +34,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 // server-side and verify the caller's JWT + admin role before acting.
 export async function edgeFetch<T = Record<string, unknown>>(
   functionName: string,
-  init: { method?: "GET" | "POST"; body?: unknown } = {}
+  init: { method?: "GET" | "POST" | "DELETE"; body?: unknown } = {}
 ): Promise<T> {
   const {
     data: { session },

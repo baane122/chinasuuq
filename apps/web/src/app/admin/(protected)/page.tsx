@@ -203,13 +203,11 @@ const STATUS_COLORS: Record<string, string> = {
 
 /** Keys are matched after normalising, because the RPC returns whatever the
  *  app recorded. The registered names in the marketplaces table are lowercase
- *  slugs (1688, taobao, yiwugo, jd, alibaba, chinagoods, dollarstore). */
+ *  slugs (1688, taobao, yiwugo, chinagoods, dollarstore). */
 const MARKETPLACE_STYLE: Record<string, { color: string; icon: string }> = {
   "1688": { color: "#FF5A0A", icon: "🏪" },
   taobao: { color: "#FF6A00", icon: "🛒" },
   yiwugo: { color: "#F97316", icon: "📦" },
-  jd: { color: "#FF6A00", icon: "📦" },
-  alibaba: { color: "#F97316", icon: "🏪" },
   chinagoods: { color: "#FF5A0A", icon: "🏪" },
   dollarstore: { color: "#F97316", icon: "🛒" },
   unattributed: { color: "#9CA3AF", icon: "📊" },
@@ -307,7 +305,7 @@ function MiniSparkline({
   const points = data
     .map(
       (v, i) =>
-        `${(i / (data.length - 1)) * 100},${100 - (v / max) * 80}`
+        `${(i / Math.max(data.length - 1, 1)) * 100},${100 - (v / max) * 80}`
     )
     .join(" ");
   return (

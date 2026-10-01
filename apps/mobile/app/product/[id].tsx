@@ -31,6 +31,7 @@ import type { Product, ProductVariant } from "@/types";
 import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
 import type { ResolvedMoq } from "@/lib/moqIngest";
 import { getSuggestedQuantities } from "@/lib/moq";
+import AiTranslateCard from "@/components/product/AiTranslateCard";
 import ImageCarousel from "@/components/product/ImageCarousel";
 import QuantitySelector from "@/components/product/QuantitySelector";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -517,6 +518,12 @@ export default function ProductDetailScreen() {
             )}
           </View>
         ) : null}
+
+        {/* AI Translate */}
+        <AiTranslateCard
+          title={product.title_original || product.title_english}
+          description={product.description_original}
+        />
 
         <View style={styles.bottomSpacer} />
       </ScrollView>

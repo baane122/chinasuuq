@@ -43,15 +43,21 @@ export default function CartItem({
 }: CartItemProps) {
   return (
     <View style={styles.card}>
-      <Image
-        source={{ uri: image }}
-        style={styles.image}
-        contentFit="cover"
-        transition={150}
-        cachePolicy="memory-disk"
-        recyclingKey={image}
-        placeholder={COLORS.gray100}
-      />
+      {image ? (
+        <Image
+          source={{ uri: image }}
+          style={styles.image}
+          contentFit="cover"
+          transition={150}
+          cachePolicy="memory-disk"
+          recyclingKey={image}
+          placeholder={COLORS.gray100}
+        />
+      ) : (
+        <View style={[styles.image, styles.imageFallback]}>
+          <Text style={styles.imageFallbackEmoji}>📦</Text>
+        </View>
+      )}
       <View style={styles.info}>
         <Text style={styles.name} numberOfLines={1}>
           {title}
@@ -185,4 +191,10 @@ const styles = StyleSheet.create({
     borderColor: COLORS.warning,
   },
   fixText: { fontSize: 11, fontFamily: FONTS.semibold, color: COLORS.warning },
+  imageFallback: {
+    backgroundColor: COLORS.gray100,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imageFallbackEmoji: { fontSize: 28 },
 });

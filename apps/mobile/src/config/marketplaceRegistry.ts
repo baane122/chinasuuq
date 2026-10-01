@@ -27,9 +27,7 @@ export type MarketplaceSlug =
   | "1688"
   | "taobao"
   | "yiwugo"
-  | "alibaba"
   | "chinagoods"
-  | "jd"
   | "dollarstore";
 
 export type Currency = "CNY" | "USD" | "SOS";
@@ -99,17 +97,6 @@ export const MARKETPLACE_REGISTRY: Record<MarketplaceSlug, MarketplaceDefinition
     showsMoq: true,
     locales: ALL_LOCALES,
   },
-  alibaba: {
-    slug: "alibaba",
-    name: "Alibaba",
-    baseUrl: "https://m.alibaba.com",
-    hosts: ["alibaba.com"],
-    searchUrlTemplate: "https://www.alibaba.com/trade/search?SearchText={query}",
-    currency: "CNY",
-    rateKey: CNY_TO_USD,
-    showsMoq: true,
-    locales: ALL_LOCALES,
-  },
   chinagoods: {
     slug: "chinagoods",
     name: "ChinaGoods",
@@ -119,17 +106,6 @@ export const MARKETPLACE_REGISTRY: Record<MarketplaceSlug, MarketplaceDefinition
     currency: "CNY",
     rateKey: CNY_TO_USD,
     showsMoq: true,
-    locales: ALL_LOCALES,
-  },
-  jd: {
-    slug: "jd",
-    name: "JD.com",
-    baseUrl: "https://m.jd.com",
-    hosts: ["jd.com"],
-    searchUrlTemplate: "https://search.jd.com/Search?keyword={query}",
-    currency: "CNY",
-    rateKey: CNY_TO_USD,
-    showsMoq: false,
     locales: ALL_LOCALES,
   },
   dollarstore: {

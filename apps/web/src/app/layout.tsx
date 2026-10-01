@@ -34,7 +34,7 @@ const CSP = [
   "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co https://*.whatsapp.com https://wa.me https://*.lk888.ai https://*.googleusercontent.com https://*.googleapis.com",
   "font-src 'self' data:",
   "connect-src 'self' https://*.supabase.co https://*.supabase.in https://athkmrvsaijwgsyvwrbp.supabase.co wss://*.supabase.co https://*.vercel-scripts.com https://*.vercel-insights.com https://*.lk888.ai https://translate.googleapis.com https://api.exchangerate-api.com",
-  "frame-src 'self' https://m.1688.com https://www.1688.com https://m.taobao.com https://www.taobao.com https://m.yiwugo.com https://www.yiwugo.com https://m.alibaba.com https://www.alibaba.com https://m.chinagoods.com https://www.chinagoods.com https://m.jd.com https://www.jd.com",
+  "frame-src 'self' https://m.1688.com https://www.1688.com https://m.taobao.com https://www.taobao.com https://m.yiwugo.com https://www.yiwugo.com https://m.chinagoods.com https://www.chinagoods.com",
   "form-action 'self' https://wa.me https://*.whatsapp.com",
   "base-uri 'self'",
   "object-src 'none'",
@@ -54,7 +54,7 @@ const JSON_LD = {
       url: "https://chinasuuq.com",
       logo: "https://chinasuuq.com/images/og-image.png",
       description:
-        "China-to-Somalia sourcing marketplace: buy from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD with USD quotes, quality inspection and tracked delivery.",
+        "China-to-Somalia sourcing marketplace: buy from 1688, Taobao, Yiwugo and ChinaGoods with USD quotes, quality inspection and tracked delivery.",
     },
     {
       "@type": "WebSite",
@@ -73,8 +73,8 @@ export const metadata: Metadata = {
     default: "ChinaSuuq - China to Somalia Marketplace",
     template: "%s | ChinaSuuq",
   },
-  description: "Browse millions of products from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD. Shop Chinese products with Somali prices and local delivery.",
-  keywords: ["China", "Somalia", "Somaliland", "Hargeisa", "Mogadishu", "marketplace", "1688", "Taobao", "Yiwugo", "Alibaba", "ChinaGoods", "JD", "sourcing", "import", "delivery", "East Africa"],
+  description: "Browse millions of products from 1688, Taobao, Yiwugo and ChinaGoods. Shop Chinese products with Somali prices and local delivery.",
+  keywords: ["China", "Somalia", "Somaliland", "Hargeisa", "Mogadishu", "marketplace", "1688", "Taobao", "Yiwugo", "ChinaGoods", "sourcing", "import", "delivery", "East Africa"],
   authors: [{ name: "ChinaSuuq" }],
   creator: "ChinaSuuq",
   publisher: "ChinaSuuq",
@@ -88,7 +88,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "ChinaSuuq - China to Somalia Marketplace",
-    description: "Browse millions of products from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD. Shop Chinese products with Somali prices and local delivery.",
+    description: "Browse millions of products from 1688, Taobao, Yiwugo and ChinaGoods. Shop Chinese products with Somali prices and local delivery.",
     siteName: "ChinaSuuq",
     locale: "en_US",
     type: "website",
@@ -105,7 +105,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "ChinaSuuq - China to Somalia Marketplace",
-    description: "Browse millions of products from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD. Shop Chinese products with Somali prices and local delivery.",
+    description: "Browse millions of products from 1688, Taobao, Yiwugo and ChinaGoods. Shop Chinese products with Somali prices and local delivery.",
     images: ["/images/og-image.png"],
   },
   // No global robots meta here — let the route (e.g. /admin) set its own.

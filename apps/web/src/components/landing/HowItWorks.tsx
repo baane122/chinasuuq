@@ -49,9 +49,7 @@ const PLATFORMS = [
   { name: "1688", img: "/images/marketplaces/1688.webp" },
   { name: "Taobao", img: "/images/marketplaces/taobao.webp" },
   { name: "YiwuGo", img: "/images/marketplaces/yiwugo.webp" },
-  { name: "Alibaba", img: "/images/marketplaces/alibaba.webp" },
   { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.webp" },
-  { name: "JD", img: "/images/marketplaces/jd.webp" },
 ];
 
 export default function HowItWorks() {

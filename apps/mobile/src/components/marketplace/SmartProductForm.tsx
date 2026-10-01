@@ -43,6 +43,9 @@ export interface CapturedListing {
   sourceId: string;
   /** MOQ-related lines scraped from the page (PRODUCT_CAPTURE_SCRIPT). */
   moqText?: string;
+  /** AI Vision results — optional; set by the AI Scan flow. */
+  aiVariants?: { label: string; options: string[] }[];
+  aiCategory?: string | null;
 }
 
 interface SmartProductFormProps {
@@ -222,16 +225,16 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
               <Text style={styles.sourceTag}>{listing.platform.toUpperCase()}</Text>
             </View>
             <View style={styles.priceEditWrap}>
-              <Text style={styles.priceEditLabel}>Price (CNY)</Text>
+              <Text style={styles.priceEditLabel}>Price (USD)</Text>
               <View style={styles.priceEditRow}>
-                <Text style={styles.priceEditPrefix}>¥</Text>
+                <Text style={styles.priceEditPrefix}>$</Text>
                 <TextInput
                   style={styles.priceEditInput}
-                  value={priceCny ? String(priceCny) : ""}
+                  value={usd ? usd.toFixed(2) : ""}
                   onChangeText={(t) => {
                     const v = parseFloat(t.replace(/[^\\d.]/g, "")) || 0;
-                    setPriceCny(v);
-                    setUsd(v > 0 ? v / rate : 0);
+                    setUsd(v);
+                    setPriceCny(v > 0 ? Math.round(v * rate * 100) / 100 : 0);
                   }}
                   keyboardType="decimal-pad"
                   placeholder="0.00"
@@ -239,7 +242,7 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
                 />
               </View>
               <Text style={styles.priceEditHint}>
-                {priceCny > 0 ? "≈ $" + (priceCny / rate).toFixed(2) + " USD" : "Enter price if auto-detect missed it"}
+                {usd > 0 ? "Auto-converted from supplier listing" : "Enter price if auto-detect missed it"}
               </Text>
             </View>
           </View>
@@ -300,7 +303,7 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
             ) : tier ? (
               <View style={styles.tierRow}>
                 <Text style={styles.tierText}>
-                  💰 {tier.label || "Tier"} price: ¥{tier.priceCny.toFixed(2)}/pc
+                  💰 {tier.label || "Tier"} price: ${(tier.priceCny / rate).toFixed(2)}/pc
                   {moqRules.packs?.[0]
                     ? "  ·  sold in " +
                       moqRules.packs[0].packLabel +
@@ -341,9 +344,45 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
             </View>
           </View>
 
-          {/* Smart specs */}
+          {/* Smart specs — AI-read variants appear as tappable option chips */}
           <View style={styles.block}>
-            <Text style={styles.blockLabel}>Specifications <Text style={styles.optional}>(pick what the customer sees — all added to cart)</Text></Text>
+            <Text style={styles.blockLabel}>
+              Specifications <Text style={styles.optional}>(pick what the customer sees — all added to cart)</Text>
+            </Text>
+            {/* AI variant chips (from AI Scan): one group per label */}
+            {(listing?.aiVariants ?? []).map((group) => (
+              <View key={group.label} style={{ marginBottom: 10 }}>
+                <Text style={styles.specGroupLabel}>{group.label}</Text>
+                <View style={styles.chipRow}>
+                  {group.options.map((opt) => {
+                    const key = group.label;
+                    const selected =
+                      (specs[key] || "").toLowerCase() === String(opt).toLowerCase();
+                    return (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[styles.optChip, selected && styles.optChipActive]}
+                        onPress={() => {
+                          Haptics.selectionAsync();
+                          setSpecs((p) => {
+                            const n = { ...p };
+                            if (selected) delete n[key];
+                            else n[key] = String(opt);
+                            return n;
+                          });
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.optChipText, selected && styles.optChipTextActive]}>
+                          {opt}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+            {/* Manual spec tabs — always available as fallback */}
             <ScrollView
               horizontal showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.specTabs}
@@ -532,5 +571,39 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: FONTS.semibold,
     color: COLORS.primary,
+  },
+
+  // ---- AI variant chips ----
+  specGroupLabel: {
+    fontSize: 12,
+    fontFamily: FONTS.semibold,
+    color: COLORS.textSecondary,
+    marginBottom: 6,
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  optChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+  },
+  optChipActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primary + "14",
+  },
+  optChipText: {
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    color: COLORS.black,
+  },
+  optChipTextActive: {
+    color: COLORS.primary,
+    fontFamily: FONTS.semibold,
   },
 });

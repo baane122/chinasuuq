@@ -7,8 +7,10 @@ import { COLORS, RADIUS, FONTS } from "@/lib/theme";
 import { useCartStore } from "@/store/cart";
 import { useAuthStore } from "@/store/auth";
 import { getUnreadNotificationCount } from "@/db";
+import { useI18n } from "@/lib/i18n";
 
 export default function TabLayout() {
+  const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const isMarketplaceFlow = pathname.startsWith("/marketplace/");
@@ -70,21 +72,21 @@ export default function TabLayout() {
       <Tabs.Screen
         name="home"
         options={{
-          title: "Home",
+          title: t("nav.home"),
           tabBarIcon: ({ color, size }) => <Home size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="markets"
         options={{
-          title: "Markets",
+          title: t("nav.markets"),
           tabBarIcon: ({ color, size }) => <Store size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="orders"
         options={{
-          title: "Orders",
+          title: t("nav.orders"),
           tabBarIcon: ({ color, size }) => (
             <View>
               <ShoppingBag size={size} color={color} />
@@ -102,7 +104,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="account"
         options={{
-          title: "Account",
+          title: t("nav.account"),
           tabBarIcon: ({ color, size }) => (
             <View>
               <User size={size} color={color} />

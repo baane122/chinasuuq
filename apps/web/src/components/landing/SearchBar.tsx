@@ -8,7 +8,7 @@ import QuoteRequestModal from "@/components/quote/QuoteRequestModal";
 
 /** Is this mostly likely a product URL rather than a search phrase? */
 function looksLikeUrl(v: string) {
-  return /https?:\/\/|\b1688\.com\b|\btaobao\.com\b|\byiwugo\.com\b|\balibaba\.com\b|\bchinagoods\.com\b|\bjd\.com\b/i.test(
+  return /https?:\/\/|\b1688\.com\b|\btaobao\.com\b|\byiwugo\.com\b|\bchinagoods\.com\b/i.test(
     v
   );
 }

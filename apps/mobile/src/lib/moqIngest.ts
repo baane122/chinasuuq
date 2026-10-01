@@ -129,8 +129,8 @@ const RULES: Rule[] = [
   { re: new RegExp(`(${NUM})[ \\t]*[${UNIT}]?[ \\t]*起[ \\t]*[批售]?`, "g"), confidence: 0.95, group: 1, pick: "lowest" },
   // "MOQ: 10" / "moq=100" / "最小购买量 20".
   { re: /(?:moq|最小购买量|最低购买量)[ \t]*[:：=]?[ \t]*(\d+)/gi, confidence: 0.9, group: 1, pick: "lowest" },
-  // "Min. order: 20 Pieces" / "Minimum Order Quantity 30 units" — Alibaba and
-  // YiwuGo spellings; the period belongs to the abbreviation.
+  // "Min. order: 20 Pieces" / "Minimum Order Quantity 30 units" — common
+  // YiwuGo/1688 spellings; the period belongs to the abbreviation.
   { re: /\bmin(?:imum)?\.?[ \t]*(?:(?:order|purchase|quantity|qty)[ \t]*){1,2}[:：=]?[ \t]*(\d+)/gi, confidence: 0.9, group: 1, pick: "lowest" },
   // Price ladder "2-19件 ¥12 / 20-99件 ¥10 / ≥100件 ¥8": group 1 is each tier's
   // lower bound, and the lowest of them is the quantity one buyer may order.

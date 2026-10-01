@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Marketplaces",
   description:
-    "Order from 1688, Taobao, Yiwugo, Alibaba, ChinaGoods and JD through ChinaSuuq — one warehouse, USD quotes, WhatsApp ordering.",
+    "Order from 1688, Taobao, Yiwugo and ChinaGoods through ChinaSuuq — one warehouse, USD quotes, WhatsApp ordering.",
   alternates: { canonical: "/marketplaces/" },
 };
 

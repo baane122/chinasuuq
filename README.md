@@ -2,7 +2,7 @@
 
 **China-to-Somalia e-commerce marketplace.**
 
-Browse products from six Chinese marketplaces (1688, Taobao, YiwuGo, Alibaba, ChinaGoods, JD), get quotes, and ship by air or sea freight to Somali cities. This repository contains the public web experience, a full admin operations console, and the mobile app, all backed by one Supabase project.
+Browse products from four Chinese marketplaces (1688, Taobao, YiwuGo, ChinaGoods) plus the 1$ Dollar Store, get quotes, and ship by air or sea freight to Somali cities. This repository contains the public web experience, a full admin operations console, and the mobile app, all backed by one Supabase project.
 
 ## Repository map
 
@@ -62,7 +62,7 @@ No `.env` file is required to build or run either app — the public-by-design S
 | `NEXT_PUBLIC_DEV_BUILD` | local `.env.local` only | Dev-only switch that enables the admin fallback/recovery entry point (`apps/web/src/lib/adminSession.ts`). Absent in production builds, where every fallback path is inert. |
 | `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` | `apps/mobile/app.config.js` | Optional overrides; defaults are the same baked values, exposed to the app via `expo-constants` (`extra.supabaseUrl` / `extra.supabaseAnonKey`) |
 
-Edge Functions read `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` from Supabase runtime env — never from the client bundle. AI provider credentials are **not** runtime env: they live in the single-row table `public.ai_provider_config`, editable only through `ai-settings` (admin). The old `settings` key `ai_provider` is gone, and a trigger now refuses secret-looking keys in `settings` (see Security model).
+Edge Functions read `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` from Supabase runtime env — never from the client bundle. AI provider credentials are **not** runtime env: they live in the single-row table `public.ai_provider_config` (global default) plus `public.ai_provider_tasks` (optional per-task overrides for `copilot` / `translation` / `vision` / `extraction`), editable only through `ai-settings` (admin). Every AI function resolves its provider through `loadAiProviderForTask()`: a configured task override wins, otherwise the global row applies. The old `settings` key `ai_provider` is gone, and a trigger now refuses secret-looking keys in `settings` (see Security model).
 
 ## Deployment (web + APK)
 
@@ -125,7 +125,9 @@ supabase functions deploy <name> --project-ref athkmrvsaijwgsyvwrbp
 
 | Function | Auth required | Purpose |
 |----------|---------------|---------|
-| `ai-settings` | admin | Read/save the AI provider config in `public.ai_provider_config` (key masked on read, `base_url` vetted at save time) |
+| `ai-settings` | admin | Read/save the AI provider config — global `public.ai_provider_config` row + per-task overrides in `public.ai_provider_tasks` (`copilot`/`translation`/`vision`/`extraction`); keys masked on read, `base_url` vetted at save time, `DELETE ?task=` resets a task to the global provider |
+| `ai-proxy` | staff/admin | Server-side chat completions through the `copilot`-task provider (fallback to global) — Mission Control Copilot never holds a provider key in the browser |
+| `ai-vision` | any signed-in role | Vision extraction through the `vision`-task provider (fallback to global); mobile AI Scan calls it first and falls back to the bundled direct endpoint |
 | `ai-test-connection` | admin | Probe an OpenAI-compatible provider's `/models` endpoint |
 | `ai-extraction` | staff/admin | Real provider call against the admin-configured credential, behind a prompt-injection guardrail and strict schema validation; called by the admin Products page |
 | `ai-translate` | any signed-in role | `POST {texts, target_lang}`: duplicates collapsed, the `translations` cache answers hits, only misses reach the provider → `{ok, results:[{source, translated, cached}], target_lang, counts}` |
@@ -150,7 +152,7 @@ Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffO
 - Admin pages authenticate with Supabase Auth and read/write through the anon client; the server-side RLS + trigger rules are the actual access control. The `/admin` route guard in the layout is a UX redirect, not the security boundary.
 - The admin recovery-code path (`apps/web/src/lib/adminSession.ts`) is compiled inert unless `NEXT_PUBLIC_DEV_BUILD=1`.
 - Signup cannot self-assign roles: `handle_new_user` forces `role = 'customer'`, and a trigger guards `profiles.role` changes (migration `202609210001`).
-- AI provider credentials are contained in `public.ai_provider_config` (single row, `id = 1`): RLS enabled with **no policies** and grants revoked from `anon` / `authenticated`, so only the service role can read it. They used to sit in the anonymously-readable `settings` table; a `settings_secret_guard` trigger now refuses secret-looking keys there (migration `202609240002_ai_secret_containment.sql`). Every AI function loads the credential through `_shared/ai-provider.ts`, whose `base_url` guard is the single SSRF check.
+- AI provider credentials are contained in `public.ai_provider_config` (single global row, `id = 1`) and `public.ai_provider_tasks` (per-task overrides): RLS enabled with **no policies** and grants revoked from `anon` / `authenticated`, so only the service role can read them. They used to sit in the anonymously-readable `settings` table; a `settings_secret_guard` trigger now refuses secret-looking keys there (migration `202609240002_ai_secret_containment.sql`). Per-task overrides live in `ai_provider_tasks` (migration `202610010001_ai_provider_tasks.sql`). Every AI function loads the credential through `_shared/ai-provider.ts` (`loadAiProviderForTask`), whose `base_url` guard is the single SSRF check.
 - Security headers and the admin `no-store` policy are enforced at the CDN via root `vercel.json`.
 
 ## CI
@@ -163,7 +165,7 @@ Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffO
 
 ## Known gaps & follow-ups
 
-- **Orphan Edge Functions**: `quotes-validate` and `operational-queue` are deployed with **no callers** in either app. Every other function has one: `ai-settings` / `ai-test-connection` from the admin AI tab, `ai-extraction` from the admin Products page, `cart-validate` from mobile checkout (`apps/mobile/src/lib/cartValidateRemote.ts`), `product-enrich` from `apps/mobile/src/db/index.ts` — and `ai-translate` only from the unwired client in the next bullet.
+- **Orphan Edge Functions**: `quotes-validate` and `operational-queue` are deployed with **no callers** in either app. Every other function has one: `ai-settings` / `ai-test-connection` from the admin AI tab, `ai-extraction` from the admin Products page, `ai-proxy` from the admin AI Copilot page, `ai-vision` from mobile AI Scan (`apps/mobile/src/lib/aiVision.ts`, server-first), `cart-validate` from mobile checkout (`apps/mobile/src/lib/cartValidateRemote.ts`), `product-enrich` from `apps/mobile/src/db/index.ts` — and `ai-translate` only from the unwired client in the next bullet.
 - **Completed but not yet consumed**: `apps/mobile/src/api/translate.ts` (the only `ai-translate` client — no screen imports it), `apps/mobile/src/config/marketplaceRegistry.ts`, `productEvents.getTrendingProducts()` (superseded by `src/api/trending.ts`), and the `moq_review_queue`, `translations_view` / `admin_product_events_view` views are all in place with nothing reading them.
 - **`admin_orders_view` exposes no items JSONB** — the view selects `NULL::jsonb AS items` — so the dashboard's recent-orders and derivation paths read `orders` (plus `admin_order_items_view`) directly.
 - **~33 MB of legacy PNG/JPG artwork** still sits unreferenced in `apps/web/public/images/` (`hero/hero1-3.png`, `how/`, `marketing/`, `categories/*.jpg`, `onboarding/slide3.png`) — kept until product sign-off, not deleted.

@@ -237,15 +237,15 @@ export default function OrdersScreen() {
                         </View>
                         {/* Qty controls */}
                         <View style={styles.qtyRow}>
-                          <TouchableOpacity style={styles.qtyBtn} onPress={() => updateQuantity(item.id, Math.max(1, item.quantity - 1))}>
+                          <TouchableOpacity style={styles.qtyBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => updateQuantity(item.id, Math.max(1, item.quantity - 1))}>
                             <Minus size={12} color={COLORS.gray500} />
                           </TouchableOpacity>
                           <Text style={styles.qtyVal}>{item.quantity}</Text>
-                          <TouchableOpacity style={styles.qtyBtn} onPress={() => updateQuantity(item.id, item.quantity + 1)}>
+                          <TouchableOpacity style={styles.qtyBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => updateQuantity(item.id, item.quantity + 1)}>
                             <Plus size={12} color={COLORS.gray500} />
                           </TouchableOpacity>
                           <View style={{ flex: 1 }} />
-                          <TouchableOpacity style={styles.qtyBtnDanger} onPress={() => removeItem(item.id)}>
+                          <TouchableOpacity style={styles.qtyBtnDanger} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} onPress={() => removeItem(item.id)}>
                             <Trash2 size={12} color={COLORS.error} />
                           </TouchableOpacity>
                         </View>
@@ -397,7 +397,7 @@ export default function OrdersScreen() {
                         </Text>
                         <View style={styles.orderBottom}>
                           <Text style={styles.orderDate}>
-                            {date} · {order.shipping_method === "air" ? "✈️ Air" : "🚢 Sea"} · {itemCount}{" "}
+                            {date} · {order.shipping_method === "air" ? `✈️ ${l("Air", "Hawada")}` : `🚢 ${l("Sea", "Badda")}`} · {itemCount}{" "}
                             {l("items", "alab")}
                           </Text>
                           <Text style={styles.orderTotal}>${order.total_usd.toFixed(2)}</Text>

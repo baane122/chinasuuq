@@ -5,10 +5,10 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Linking,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { ArrowLeft, MessageCircle, Store } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -26,9 +26,7 @@ const MARKET_NAMES: Record<string, string> = {
   "1688": "1688.com",
   taobao: "Taobao",
   yiwugo: "YiwuGo",
-  alibaba: "Alibaba",
   chinagoods: "ChinaGoods",
-  jd: "JD.com",
   chinasuuq: "ChinaSuuq Deals",
 };
 
@@ -36,9 +34,7 @@ const MARKET_COLORS: Record<string, string> = {
   "1688": "#FF5000",
   taobao: "#FF7400",
   yiwugo: "#1A8CFF",
-  alibaba: "#FF6A00",
   chinagoods: "#E60012",
-  jd: "#E1251B",
   chinasuuq: "#FF5A0A",
 };
 
@@ -123,15 +119,23 @@ export default function CartScreen() {
       if (supported) {
         await Linking.openURL(url);
       } else {
-        Alert.alert("WhatsApp not available", "Please install WhatsApp to use this feature.");
+        Alert.alert(
+          locale === "en" ? "WhatsApp not available" : "WhatsApp lama helin",
+          locale === "en"
+            ? "Please install WhatsApp to use this feature."
+            : "Fadlan rakib WhatsApp si aad u isticmaasho sifarkan."
+        );
       }
     } catch {
-      Alert.alert("Error", "Unable to open WhatsApp.");
+      Alert.alert(
+        locale === "en" ? "Error" : "Khalad",
+        locale === "en" ? "Unable to open WhatsApp." : "WhatsApp la furi waayay."
+      );
     }
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top"]}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -165,7 +169,10 @@ export default function CartScreen() {
               <View style={styles.multiStrip}>
                 <Store size={15} color={COLORS.primary} />
                 <Text style={styles.multiText}>
-                  {marketCount} marketplaces combined · one cart, one checkout
+                  {marketCount}{" "}
+                  {locale === "en"
+                    ? "marketplaces combined · one cart, one checkout"
+                    : "suuqyo la isku daray · hal baaski, hal checkout"}
                 </Text>
               </View>
             )}
@@ -182,7 +189,7 @@ export default function CartScreen() {
                     key={item.id}
                     image={item.product.images?.[0] || ""}
                     title={item.product.title_english}
-                    variant={Object.values(item.selected_options).join(", ") || "Default"}
+                    variant={Object.values(item.selected_options).join(", ") || (locale === "en" ? "Default" : "Caadi")}
                     quantity={item.quantity}
                     price={formatUSD(item.price_usd_estimated)}
                     warning={check.problems[0] ?? null}
@@ -226,8 +233,9 @@ export default function CartScreen() {
             {blockedLines > 0 && (
               <View style={styles.reviewStrip}>
                 <Text style={styles.reviewStripText}>
-                  {blockedLines} {blockedLines === 1 ? "line is" : "lines are"} below the
-                  supplier minimum — raise the quantities marked above
+                  {locale === "en"
+                    ? `${blockedLines} ${blockedLines === 1 ? "line is" : "lines are"} below the supplier minimum — raise the quantities marked above`
+                    : `${blockedLines} ${blockedLines === 1 ? "khad" : "khadad"} ayaa ka hooseeya tirada ugu yar — kordhi tirada la calaamadeeyay`}
                 </Text>
               </View>
             )}

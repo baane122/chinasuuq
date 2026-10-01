@@ -299,29 +299,6 @@ INSERT INTO marketplaces (id, name, display_name, marketplace_type, base_url, co
         }'
     ),
     (
-        'c1b2c3d4-e5f6-7890-abcd-ef1234567004',
-        'alibaba',
-        'Alibaba (阿里巴巴国际站)',
-        'alibaba',
-        'https://www.alibaba.com',
-        'CN',
-        'CNY',
-        TRUE,
-        '{
-            "api_available": true,
-            "bulk_pricing": true,
-            "moq_required": true,
-            "wholesale_only": true,
-            "product_categories": ["machinery", "electronics", "apparel", "textiles", "chemicals", "manufacturing"],
-            "payment_methods": ["alipay", "bank_transfer", "credit_card"],
-            "shipping_supported": true,
-            "buyer_protection": true,
-            "verified_suppliers": true,
-            "trade_assurance": true,
-            "international_shipping": true
-        }'
-    ),
-    (
         'c1b2c3d4-e5f6-7890-abcd-ef1234567005',
         'chinagoods',
         'ChinaGoods (义乌中国小商品城)',
@@ -340,28 +317,6 @@ INSERT INTO marketplaces (id, name, display_name, marketplace_type, base_url, co
             "buyer_protection": true,
             "yiwu_market_integration": true,
             "sample_available": true
-        }'
-    ),
-    (
-        'c1b2c3d4-e5f6-7890-abcd-ef1234567006',
-        'jd',
-        'JD.com (京东)',
-        'jd',
-        'https://www.jd.com',
-        'CN',
-        'CNY',
-        TRUE,
-        '{
-            "api_available": true,
-            "retail_pricing": true,
-            "moq_required": false,
-            "product_categories": ["electronics", "home", "fashion", "appliances", "beauty", "fresh"],
-            "payment_methods": ["jd_pay", "alipay", "wechat_pay"],
-            "shipping_supported": true,
-            "buyer_protection": true,
-            "genuine_products": true,
-            "fast_delivery": true,
-            "brand_auth": true
         }'
     )
 ON CONFLICT (name) DO NOTHING;
@@ -526,23 +481,6 @@ INSERT INTO marketplace_connectors (marketplace_id, name, connector_type, status
         TRUE
     ),
     (
-        'c1b2c3d4-e5f6-7890-abcd-ef1234567004', -- Alibaba
-        'Alibaba API Connector',
-        'api',
-        'pending_setup',
-        '{
-            "api_version": "v1",
-            "base_endpoint": "https://api.alibaba.com/openapi",
-            "features": ["product_search", "trade_assurance", "supplier_verification"],
-            "rate_limits": {
-                "per_minute": 120,
-                "per_hour": 7200,
-                "per_day": 172800
-            }
-        }',
-        TRUE
-    ),
-    (
         'c1b2c3d4-e5f6-7890-abcd-ef1234567005', -- ChinaGoods
         'ChinaGoods API Connector',
         'api',
@@ -555,23 +493,6 @@ INSERT INTO marketplace_connectors (marketplace_id, name, connector_type, status
                 "per_minute": 60,
                 "per_hour": 3600,
                 "per_day": 86400
-            }
-        }',
-        TRUE
-    ),
-    (
-        'c1b2c3d4-e5f6-7890-abcd-ef1234567006', -- JD
-        'JD.com API Connector',
-        'api',
-        'pending_setup',
-        '{
-            "api_version": "v2",
-            "base_endpoint": "https://api.jd.com/routerjson",
-            "features": ["product_search", "genuine_verification", "logistics_tracking"],
-            "rate_limits": {
-                "per_minute": 80,
-                "per_hour": 4800,
-                "per_day": 115200
             }
         }',
         TRUE

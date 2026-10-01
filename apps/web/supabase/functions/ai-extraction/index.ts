@@ -12,7 +12,7 @@
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { requireStaffOrAdmin, unauthorized } from "../_shared/auth.ts";
-import { loadAiProviderConfig } from "../_shared/ai-provider.ts";
+import { loadAiProviderForTask } from "../_shared/ai-provider.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const INJECTION_MARKERS = [
@@ -68,7 +68,7 @@ export async function handler(req: Request) {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
-    const provider = await loadAiProviderConfig(supabase);
+    const provider = await loadAiProviderForTask(supabase, "extraction");
     if (!provider) {
       return json({ ok: false, error: "ai_provider_not_configured" }, 503);
     }

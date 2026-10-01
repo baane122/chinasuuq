@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Get a Free Quote — ChinaSuuq",
   description:
-    "Paste a 1688, Taobao, YiwuGo, Alibaba, Chinagoods or JD product link and get a USD quote with inspection and tracked shipping to Somalia. Free, no payment until you approve.",
+    "Paste a 1688, Taobao, YiwuGo or Chinagoods product link and get a USD quote with inspection and tracked shipping to Somalia. Free, no payment until you approve.",
   alternates: { canonical: "/quote/" },
   openGraph: {
     title: "Get a Free Quote — ChinaSuuq",

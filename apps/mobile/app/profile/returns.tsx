@@ -76,7 +76,7 @@ export default function ReturnsScreen() {
           </View>
         ))}
 
-        <TouchableOpacity style={styles.ctaBtn} onPress={() => router.push("/support/index")}>
+        <TouchableOpacity style={styles.ctaBtn} onPress={() => router.push("/support")}>
           <Text style={styles.ctaText}>{locale === "en" ? "Start a Return" : "Bilow Dib-u-celin"}</Text>
         </TouchableOpacity>
       </ScrollView>

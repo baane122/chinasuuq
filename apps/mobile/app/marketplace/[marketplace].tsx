@@ -10,6 +10,7 @@ import {
   FlatList,
   Image,
   Animated,
+  BackHandler,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -23,6 +24,9 @@ import {
   ShoppingCart,
   MoreHorizontal,
   X,
+  ShieldAlert,
+  RefreshCw,
+  Home,
 } from "lucide-react-native";
 import { COLORS } from "@/lib/theme";
 import { whatsappOrderLink } from "@/lib/utils";
@@ -38,6 +42,14 @@ import {
   HIDE_MARKET_NAV_SCRIPT,
   autoLoginScript,
 } from "@/lib/webviewScripts";
+import { usdPriceScript } from "@/lib/webviewUsd";
+import {
+  PUNISH_SCRIPT,
+  HIDE_RISK_SCRIPT,
+  VISION_SNAPSHOT_SCRIPT,
+} from "@/lib/webviewScripts.risk";
+import { aiVisionScanListing } from "@/lib/aiVision";
+import { captureRef } from "react-native-view-shot";
 import { getCnyPerUsd } from "@/lib/exchange";
 import { getMarketplaceProducts } from "@/db";
 import type { Product } from "@/types";
@@ -49,9 +61,7 @@ const MARKETPLACES: Record<string, { name: string; home: string; loginWalled: bo
   "1688": { name: "1688.com", home: "https://m.1688.com", loginWalled: false },
   taobao: { name: "Taobao", home: "https://m.taobao.com", loginWalled: true },
   yiwugo: { name: "YiwuGo", home: "https://www.yiwugo.com", loginWalled: true },
-  alibaba: { name: "Alibaba.com", home: "https://m.alibaba.com", loginWalled: false },
   chinagoods: { name: "ChinaGoods", home: "https://www.chinagoods.com", loginWalled: false },
-  jd: { name: "JD.com", home: "https://m.jd.com", loginWalled: false },
   dollarstore: { name: "1$ Dollar Store", home: "https://www.huolangjun666.com/#/home", loginWalled: false },
 };
 
@@ -60,18 +70,14 @@ const PLATFORM_BRAND_COLOR: Record<string, string> = {
   "1688": "#FF5000",
   taobao: "#FF6A00",
   yiwugo: "#1A8CFF",
-  alibaba: "#FF6A00",
   chinagoods: "#E60012",
-  jd: "#E1251B",
   dollarstore: "#FF5A0A",
 };
 const PLATFORM_MARK: Record<string, string> = {
   "1688": "1688",
   taobao: "TB",
   yiwugo: "YWG",
-  alibaba: "A",
   chinagoods: "CG",
-  jd: "JD",
   dollarstore: "$1",
 };
 
@@ -110,6 +116,8 @@ export default function MarketplaceBrowser() {
   const [canGoForward, setCanGoForward] = useState(false);
   const [loading, setLoading] = useState(true);
   const [translateLang, setTranslateLang] = useState<null | string>(null); // null = original
+  const [usdOn, setUsdOn] = useState(true); // ChinaSuuq selling point: prices in USD
+  const [fxRate, setFxRate] = useState(7.25); // CNY per USD
   const [currentListing, setCurrentListing] = useState<CapturedListing | null>(null);
   const [captureBusy, setCaptureBusy] = useState(false);
   const [loginWall, setLoginWall] = useState(false);
@@ -122,7 +130,33 @@ export default function MarketplaceBrowser() {
   const [curatedLoading, setCuratedLoading] = useState(false);
   const [showCurated, setShowCurated] = useState(false);
   const [tipDismissed, setTipDismissed] = useState(true); // hidden until known
+  const [punish, setPunish] = useState<{ hard: boolean; slide: boolean } | null>(null);
+  const [aiScanning, setAiScanning] = useState(false);
+  // Single write-path for captured listings: keeps the ref-mirror (used by
+  // openCaptureForm's fast DOM path) in sync with the state.
+  const applyListing = useCallback((listing: CapturedListing | null) => {
+    currentListingRef.current = listing;
+    setCurrentListing(listing);
+  }, []);
+  const visionSnapshotRef = useRef<any>(null);
+  const visionResolveRef = useRef<((v: any) => void) | null>(null);
+  // Ref-mirror of currentListing so the DOM-capture wait in openCaptureForm
+  // sees the fresh value instead of a stale closure.
+  const currentListingRef = useRef<CapturedListing | null>(null);
   const webRef = useRef<any>(null);
+
+  // ---- UX polish: Android hardware back = WebView back; progress bar ----
+  const [progress, setProgress] = useState(0); // 0..1, 1 = done
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (canGoBack) {
+        webRef.current?.goBack();
+        return true; // consumed — stay inside the browser
+      }
+      return false; // let router pop back to markets list
+    });
+    return () => sub.remove();
+  }, [canGoBack]);
 
   // Branded skeleton shimmer: gentle infinite opacity pulse while loading
   const pulse = useRef(new Animated.Value(0.4)).current;
@@ -142,10 +176,18 @@ export default function MarketplaceBrowser() {
     (async () => {
       try {
         const s = await AsyncStorage.getItem(TL_KEY);
-        if (s) setTranslateLang(JSON.parse(s));
+        // Instant English: default to EN translation on first launch instead
+        // of raw Chinese. Users can still switch to SO or original.
+        if (s === null) {
+          setTranslateLang("en");
+          await AsyncStorage.setItem(TL_KEY, JSON.stringify("en"));
+        } else {
+          setTranslateLang(JSON.parse(s));
+        }
         const tip = await AsyncStorage.getItem(TIP_KEY);
         setTipDismissed(tip === "1");
-        await getCnyPerUsd();
+        const rate = await getCnyPerUsd();
+        setFxRate(rate);
       } catch {}
     })();
   }, []);
@@ -182,8 +224,14 @@ export default function MarketplaceBrowser() {
           if (accountCreds) parts.push(autoLoginScript(accountCreds.username, accountCreds.password));
           parts.push(LOGIN_WALL_SCRIPT);
           parts.push(BLANK_PAGE_SCRIPT);
+          parts.push(PUNISH_SCRIPT);
+          parts.push(HIDE_RISK_SCRIPT);
           parts.push(PRODUCT_CAPTURE_SCRIPT);
           parts.push(HIDE_MARKET_NAV_SCRIPT);
+          // USD prices: ChinaSuuq selling point — never show RMB
+          if (usdOn) {
+            parts.push("window.__CS_RATE=" + fxRate + ";" + usdPriceScript(fxRate));
+          }
           if (translateLang) {
             parts.push("window.__CS_TL=" + JSON.stringify(translateLang) + ";" + TRANSLATE_SCRIPT);
           }
@@ -193,7 +241,7 @@ export default function MarketplaceBrowser() {
       };
       setTimeout(post, delay);
     },
-    [translateLang, accountCookieScript, accountCreds]
+    [translateLang, usdOn, fxRate, accountCookieScript, accountCreds]
   );
 
   const onMessage = useCallback(
@@ -210,6 +258,12 @@ export default function MarketplaceBrowser() {
             setBlocked(true);
             if (curatedProducts.length > 0) setShowCurated(true);
           }
+        } else if (type === "PUNISH") {
+          // 1688/Taobao risk wall — friendly recovery overlay instead of dead page
+          setPunish({ hard: !!payload?.hard, slide: !!payload?.slide });
+        } else if (type === "VISION_SCAN") {
+          // handled in runAiScan via pending snapshot ref
+          visionSnapshotRef.current = payload || null;
         } else if (type === "CAPTURE") {
           setCaptureBusy(false);
           setBlocked(false);
@@ -219,7 +273,7 @@ export default function MarketplaceBrowser() {
           const idMatch = (p.url || "").match(/id[/=]([0-9]+)/);
           const numMatch = (p.url || "").match(/[0-9]{5,}/);
           const srcId = idMatch?.[1] || numMatch?.[0] || String(Date.now());
-          setCurrentListing({
+          applyListing({
             title: p.title || "Detected product",
             price: Number(p.price) || 0,
             image: p.image || "",
@@ -237,9 +291,102 @@ export default function MarketplaceBrowser() {
     [marketplace, url, meta.loginWalled, loginWall, curatedProducts.length]
   );
 
+  // ---- AI Vision scan: screenshot + DOM hints → structured listing ----------
+  // PERF: snapshot and screenshot run in PARALLEL; upload downscaled.
+  const runAiScan = useCallback(async () => {
+    if (aiScanning) return;
+    setAiScanning(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      // 1+2. Grab DOM hints AND screenshot in PARALLEL (was sequential)
+      const snapshotPromise: Promise<any> = new Promise((resolve) => {
+        visionResolveRef.current = resolve;
+        visionSnapshotRef.current = null;
+        try {
+          webRef.current?.injectJavaScript(VISION_SNAPSHOT_SCRIPT);
+        } catch {
+          resolve(null);
+        }
+        // hints normally arrive in <500ms; hard stop at 1200ms
+        setTimeout(() => {
+          if (visionResolveRef.current) {
+            visionResolveRef.current(null);
+            visionResolveRef.current = null;
+          }
+        }, 1200);
+      });
+      const shotPromise = captureRef(webRef.current, {
+        format: "jpg",
+        quality: 0.35, // downscaled upload: 2-4x faster on mobile data
+        result: "base64",
+      }).catch(() => null);
+
+      const [snapshot, shot] = await Promise.all([snapshotPromise, shotPromise]);
+      const shotB64 = typeof shot === "string" ? shot : null;
+
+      // 3. FAST PATH: if DOM hints already have title + price, skip the
+      //    screenshot upload entirely — pure-text vision call (2-3s total).
+      //    Screenshot only attached when hints are incomplete.
+      const snapshotOk = snapshot && snapshot.title && Number(snapshot.price) > 0;
+      const vision = await aiVisionScanListing({
+        screenshotBase64: snapshotOk ? null : shotB64,
+        snapshot: snapshot
+          ? {
+              title: snapshot.title,
+              price: snapshot.price,
+              priceMax: snapshot.priceMax,
+              moqText: snapshot.moqText,
+              images: snapshot.images,
+              url: snapshot.url || url,
+            }
+          : { url },
+      });
+
+      if (vision) {
+        const idMatch = (vision.title + url).match(/([0-9]{5,})/);
+        // DOM-scraped MOQ text is more trustworthy than anything the vision
+        // model read off a compressed screenshot — prefer it.
+        const domMoq = snapshot?.moqText || "";
+        applyListing({
+          title: vision.title,
+          price: vision.price_cny,
+          image: (snapshot?.images && snapshot.images[0]) || "",
+          url: snapshot?.url || url,
+          brand: vision.category || "",
+          platform: marketplace || "1688",
+          sourceId: idMatch?.[1] || "ai-" + Date.now(),
+          moqText: domMoq || vision.moq_text || (vision.moq ? `${vision.moq}件起批` : ""),
+          // AI-read variants (Color/Size/…) + category — SmartProductForm
+          // renders these as tappable chips with a free-text fallback.
+          aiVariants: vision.variants ?? [],
+          aiCategory: vision.category ?? null,
+        });
+        setCaptureFormVisible(true);
+      } else {
+        Alert.alert(
+          tt("AI Scan", "AI Scan"),
+          tt(
+            "Couldn't read this page automatically. Open the product, scroll it into view, and try again — or add details manually.",
+            "Lama akhriyin bogga si toos ah. Fur alaabta, muuji shaashadda, oo isku day mar kale."
+          )
+        );
+      }
+    } finally {
+      setAiScanning(false);
+    }
+  }, [aiScanning, marketplace, url, tt]);
+
+  // ---- Punish-page recovery -------------------------------------------------
+  const dismissPunish = useCallback(() => {
+    setPunish(null);
+  }, []);
+
   const goBack = useCallback(() => webRef.current?.goBack(), []);
   const goForward = useCallback(() => webRef.current?.goForward(), []);
-  const reload = useCallback(() => webRef.current?.reload(), []);
+  const reload = useCallback(() => {
+    setPunish(null);
+    webRef.current?.reload();
+  }, []);
   const openExternal = useCallback(() => {
     Linking.openURL(url).catch(() =>
       Alert.alert(tt("Error", "Khalad"), tt("Could not open this link.", "Lama furin kara bogga."))
@@ -333,19 +480,30 @@ export default function MarketplaceBrowser() {
   }, []);
 
   // Open the review sheet. Without a captured listing, run the product-capture
-  // script first and open once a price arrives (or after a short fallback
-  // timeout) so the customer confirms real details, never a blank form.
-  const openCaptureForm = useCallback(() => {
+  // script first; if DOM capture yields nothing useful, fall back to AI Vision
+  // automatically — the customer should never see a blank form.
+  const openCaptureForm = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (currentListing && currentListing.price > 0) {
       setCaptureFormVisible(true);
       return;
     }
+    // Try silent DOM capture first
     tapCapture();
-    setTimeout(() => {
-      setCaptureFormVisible(true);
-    }, 1400);
-  }, [currentListing, tapCapture]);
+    // Poll the ref-mirror — the CAPTURE message updates it synchronously via
+    // the message handler, so we return the moment the DOM script succeeds
+    // (fast path) instead of always waiting the full 1.4s.
+    for (let i = 0; i < 7; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      const cur = currentListingRef.current;
+      if (cur && cur.price > 0) {
+        setCaptureFormVisible(true);
+        return;
+      }
+    }
+    // DOM capture failed → AI Vision fallback (no customer friction)
+    await runAiScan();
+  }, [currentListing, tapCapture, runAiScan]);
 
   // ---- Context-aware bottom bar state ----
   const pageState: PageState =
@@ -382,10 +540,10 @@ export default function MarketplaceBrowser() {
   return (
     <ErrorBoundary>
       <SafeAreaView style={styles.container} edges={["top"]}>
-        {/* Clean header — back, marketplace identity, 2 actions */}
+        {/* Clean header — back (WebView-history aware), marketplace identity, actions */}
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => (canGoBack ? webRef.current?.goBack() : router.back())}
             style={styles.headerBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
@@ -409,7 +567,18 @@ export default function MarketplaceBrowser() {
             </View>
           </View>
 
-          {/* 2 essential buttons */}
+          {/* 2 essential buttons: jump to market home + cart */}
+          <TouchableOpacity
+            onPress={() => {
+              if (url !== meta.home) {
+                setUrl(meta.home);
+              }
+            }}
+            style={styles.headerBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Home size={18} color={COLORS.gray600} strokeWidth={2} />
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => router.push("/cart")}
             style={styles.headerBtn}
@@ -431,7 +600,15 @@ export default function MarketplaceBrowser() {
           </TouchableOpacity>
         </View>
 
-        {/* Compact language control */}
+        {/* Slim loading progress bar */}
+        {loading && (
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${Math.max(progress * 100, 12)}%` }]} />
+          </View>
+        )}
+
+        {/* Compact language control — hidden entirely when punish overlay active */}
+        {!punish && (
         <View style={styles.langBar}>
           <TouchableOpacity
             onPress={showLanguageMenu}
@@ -455,10 +632,33 @@ export default function MarketplaceBrowser() {
               <Text style={styles.langResetText}>{t("browser.showOriginal")}</Text>
             </TouchableOpacity>
           )}
+          {/* USD/CNY toggle — ChinaSuuq shows dollars by default */}
+          <TouchableOpacity
+            onPress={() => {
+              Haptics.selectionAsync();
+              const next = !usdOn;
+              setUsdOn(next);
+              try {
+                if (next) {
+                  webRef.current?.injectJavaScript(
+                    "window.__CS_RATE=" + fxRate + ";" + usdPriceScript(fxRate)
+                  );
+                } else {
+                  webRef.current?.injectJavaScript("window.__csUsdRestore && window.__csUsdRestore(); true;");
+                }
+              } catch {}
+            }}
+            style={[styles.usdPill, usdOn && styles.usdPillActive]}
+            activeOpacity={0.8}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[styles.usdPillText, usdOn && styles.usdPillTextActive]}>$</Text>
+          </TouchableOpacity>
         </View>
+        )}
 
         {/* Marketplace page gets the rest of the screen */}
-        <View style={styles.webWrap}>
+        <View style={styles.webWrap} collapsable={false}>
           <WebView
             ref={webRef}
             source={{ uri: url }}
@@ -469,6 +669,7 @@ export default function MarketplaceBrowser() {
               setCanGoBack(nav.canGoBack);
               setCanGoForward(nav.canGoForward);
             }}
+            onProgress={(e: any) => setProgress(e.nativeEvent.progress)}
             onShouldStartLoadWithRequest={(req) => {
               const u = req.url || "";
               const scheme = u.split(":")[0]?.toLowerCase();
@@ -494,25 +695,24 @@ export default function MarketplaceBrowser() {
             }}
             onLoadStart={() => {
               setLoading(true);
-              setCurrentListing(null);
+              applyListing(null);
               setCnylist([]);
               setLoginWall(false);
               setBlocked(false);
               setCaptureBusy(false);
+              setPunish(null);
             }}
             onLoadEnd={() => {
               setLoading(false);
               if (webRef.current) {
                 // Fast: kick off scripts immediately so capture/translate start ASAP.
                 runPerPageScripts(webRef.current, 10);
-                // Follow-up: catch SPA content that mounts a moment later.
-                setTimeout(() => {
-                  if (webRef.current && translateLang) {
-                    webRef.current.injectJavaScript(
-                      "window.__CS_TL=" + JSON.stringify(translateLang) + ";" + TRANSLATE_SCRIPT
-                    );
-                  }
-                }, 700);
+                // Follow-ups: re-run everything as SPA content streams in.
+                [600, 1800, 3500].forEach((ms) => {
+                  setTimeout(() => {
+                    if (webRef.current) runPerPageScripts(webRef.current, 0);
+                  }, ms);
+                });
               }
             }}
             onError={() => {
@@ -522,6 +722,13 @@ export default function MarketplaceBrowser() {
             javaScriptEnabled
             domStorageEnabled
             cacheEnabled
+            // Session hygiene: keep 3rd-party cookies (login sessions persist
+            // across visits) and present a stable device profile to risk engines.
+            sharedCookiesEnabled
+            thirdPartyCookiesEnabled
+            userAgent={
+              "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+            }
             setBuiltInZoomControls={false}
             setSupportMultipleWindows={false}
             javaScriptCanOpenWindowsAutomatically={false}
@@ -648,6 +855,40 @@ export default function MarketplaceBrowser() {
             </View>
           )}
 
+          {/* Punish / security-check recovery overlay */}
+          {punish && !showCurated && (
+            <View style={styles.punishOverlay}>
+              <View style={styles.punishCard}>
+                <View style={styles.punishIconWrap}>
+                  <ShieldAlert size={30} color={COLORS.primary} />
+                </View>
+                <Text style={styles.punishTitle}>
+                  {tt("Quick security check", "Hubin degdeg ah")}
+                </Text>
+                <Text style={styles.punishBody}>
+                  {punish.slide
+                    ? tt(
+                        "The marketplace wants to verify you. Solve the slider/check below — it takes 5 seconds and unlocks browsing.",
+                        "Suqadda waxay rabtaa inay xaqiijiso. Dhammeeji lugta hoose — 5 ilbiriqsi ayay noqonaysaa."
+                      )
+                    : tt(
+                        "The marketplace flagged this visit. We'll retry with your saved session — or go back and pick another product.",
+                        "Suqaddu way calaamadeysay. Waxaan isku daynaynaa session-kaaga — ama dib ugu noqo."
+                      )}
+                </Text>
+                <TouchableOpacity style={styles.punishPrimary} onPress={dismissPunish} activeOpacity={0.85}>
+                  <RefreshCw size={15} color={COLORS.white} />
+                  <Text style={styles.punishPrimaryText}>
+                    {tt("I solved it — continue", "Waan dhammaystiray — sii wad")}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.punishSecondary} onPress={goBack} activeOpacity={0.7}>
+                  <Text style={styles.punishSecondaryText}>{tt("Go back", "Dib ugu noqo")}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           {/* Login wall banner (Taobao / YiwuGo) */}
           {loginWall && !showCurated && (
             <View style={styles.loginBanner}>
@@ -680,9 +921,11 @@ export default function MarketplaceBrowser() {
 
         {/* Clean bottom bar — always two buttons, no distraction */}
         <View style={[styles.bottomBar, { paddingBottom: 12 + insets.bottom }]}>
-          <TouchableOpacity style={styles.btnPrimary} onPress={openCaptureForm} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.btnPrimary} onPress={() => { openCaptureForm().catch(() => {}); }} activeOpacity={0.85}>
             <ShoppingCart size={18} color={COLORS.white} />
-            <Text style={styles.btnPrimaryText}>{tt("Add to Cart", "Ku Dar Gaariga")}</Text>
+            <Text style={styles.btnPrimaryText}>
+              {aiScanning ? tt("Reading product…", "Alaab la akhriyo…") : tt("Add to Cart", "Ku Dar Gaariga")}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.btnWhats} onPress={requestCheckout} activeOpacity={0.8}>
             <MessageCircle size={18} color={COLORS.white} />
@@ -1141,6 +1384,94 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: COLORS.white,
+  },
+
+  // ---- Punish / security-check recovery overlay ----
+  punishOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(17,17,17,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    zIndex: 50,
+  },
+  punishCard: {
+    width: "100%",
+    maxWidth: 340,
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    padding: 22,
+    alignItems: "center",
+  },
+  punishIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.primary + "14",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  punishTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: COLORS.black,
+    marginBottom: 6,
+  },
+  punishBody: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  punishPrimary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    width: "100%",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  punishPrimaryText: { fontSize: 14, fontWeight: "700", color: COLORS.white },
+  punishSecondary: { paddingVertical: 6, paddingHorizontal: 12 },
+  punishSecondaryText: { fontSize: 13, color: COLORS.textSecondary },
+
+  // ---- USD pill ----
+  usdPill: {
+    marginLeft: 6,
+    minWidth: 30,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 7,
+  },
+  usdPillActive: { backgroundColor: COLORS.primary },
+  usdPillText: { fontSize: 12, fontWeight: "800", color: COLORS.primary },
+  usdPillTextActive: { color: COLORS.white },
+
+  // ---- Slim loading progress bar ----
+  progressTrack: {
+    height: 2.5,
+    width: "100%",
+    backgroundColor: COLORS.border,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: COLORS.primary,
+    borderRadius: 2,
   },
 });
 

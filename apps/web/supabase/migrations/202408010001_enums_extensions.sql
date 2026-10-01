@@ -67,7 +67,6 @@ CREATE TYPE marketplace_type AS ENUM (
     'taobao',
     'yiwugo',
     'pinduoduo',
-    'alibaba',
     'made_in_china'
 );
 

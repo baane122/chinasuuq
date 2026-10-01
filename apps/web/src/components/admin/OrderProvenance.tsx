@@ -16,10 +16,8 @@ import { cn, formatUSD } from "@/lib/utils";
 
 const KNOWN_LOGOS = new Set([
   "1688",
-  "alibaba",
   "chinagoods",
   "dollarstore",
-  "jd",
   "taobao",
   "yiwugo",
 ]);

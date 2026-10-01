@@ -23,7 +23,7 @@
 
 import { corsHeaders } from "../_shared/cors.ts";
 import { requireRole, unauthorized } from "../_shared/auth.ts";
-import { loadAiProviderConfig } from "../_shared/ai-provider.ts";
+import { loadAiProviderForTask } from "../_shared/ai-provider.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 // Customers need this feature while they browse, so it gates on authentication
@@ -163,7 +163,7 @@ function sanitizeModelOutput(parsed: Record<string, unknown>, inputText: string)
 }
 
 const SYSTEM_PROMPT = [
-  "You read Chinese wholesale listing pages (1688, Taobao, YiwuGo, JD, Alibaba, ChinaGoods) for the ChinaSuuq sourcing platform.",
+  "You read Chinese wholesale listing pages (1688, Taobao, YiwuGo, ChinaGoods) for the ChinaSuuq sourcing platform.",
   "Report the MINIMUM ORDER QUANTITY in single pieces — the fewest units one ordinary buyer may order.",
   "MOQ appears as: 件起批 / 起批 / 起订 / 起订量 / 最小起订量 / 最小购买量 / 一手 / MOQ / ≥N件 / N Pieces.",
   "For a price ladder such as \"2-19件 ¥12 / 20-99件 ¥10 / ≥100件 ¥8\", the MOQ is the LOWEST tier's lower bound (2), not the cheapest price's tier.",
@@ -226,7 +226,7 @@ export async function handler(req: Request) {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
-    const provider = await loadAiProviderConfig(supabase);
+    const provider = await loadAiProviderForTask(supabase, "extraction");
     if (!provider) return json({ error: "ai_provider_not_configured" }, 503);
     const { baseUrl, apiKey, model } = provider;
 

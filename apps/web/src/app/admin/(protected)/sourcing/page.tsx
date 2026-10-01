@@ -91,9 +91,7 @@ const MARKETPLACES = [
   { value: "1688", label: "1688" },
   { value: "taobao", label: "Taobao" },
   { value: "yiwugo", label: "Yiwugo" },
-  { value: "alibaba", label: "Alibaba" },
   { value: "chinagoods", label: "Chinagoods" },
-  { value: "jd", label: "JD" },
 ];
 
 /* QT-YYYYMMDD-XXXX — 4 random chars via crypto.getRandomValues. */

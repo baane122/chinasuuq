@@ -26,8 +26,8 @@ import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
 
-const marketplaceFilters = ["All", "1688", "Taobao", "Yiwugo", "Alibaba", "ChinaGoods", "JD", "ChinaSuuq"] as const;
-const marketplaces = ["1688", "taobao", "yiwugo", "alibaba", "chinagoods", "jd", "chinasuuq"] as const;
+const marketplaceFilters = ["All", "1688", "Taobao", "Yiwugo", "ChinaGoods", "ChinaSuuq"] as const;
+const marketplaces = ["1688", "taobao", "yiwugo", "chinagoods", "chinasuuq"] as const;
 const stockStatusOptions = ["in_stock", "low_stock", "out_of_stock"] as const;
 const statusOptions = ["active", "draft", "archived"] as const;
 
@@ -61,9 +61,7 @@ const marketplaceColors: Record<string, string> = {
   "1688": "bg-brand-50 text-brand-700 border-brand-200",
   taobao: "bg-brand-100 text-brand-700 border-brand-200",
   yiwugo: "bg-brand-100 text-brand-600 border-brand-300",
-  alibaba: "bg-brand-100 text-brand-600 border-brand-300",
   chinagoods: "bg-brand-50 text-brand-700 border-brand-200",
-  jd: "bg-brand-100 text-brand-700 border-brand-200",
   chinasuuq: "bg-brand-50 text-brand-600 border-brand-200",
 };
 
@@ -397,9 +395,7 @@ function ProductsPageContent() {
         domain.includes("1688") ? "1688" :
         domain.includes("taobao") ? "taobao" :
         domain.includes("yiwugo") ? "yiwugo" :
-        domain.includes("alibaba") ? "alibaba" :
-        domain.includes("chinagoods") ? "chinagoods" :
-        domain.includes("jd.") ? "jd" : null;
+        domain.includes("chinagoods") ? "chinagoods" : null;
       setFormData((prev) => ({
         ...prev,
         title_english: (d.title_english as string) || prev.title_english,

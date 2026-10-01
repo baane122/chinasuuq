@@ -25,6 +25,8 @@ import { getProducts } from "@/db";
 import { ProductCard } from "@/components/home/ProductCard";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { Image } from "expo-image";
+import { aiRankProducts } from "@/lib/ai";
+import { Sparkles } from "lucide-react-native";
 import type { Product } from "@/types";
 
 const EMPTY_SEARCH_IMG = require("../../assets/screens/empty_search.png");
@@ -133,6 +135,48 @@ export default function SearchScreen() {
     setSort(key);
     setShowSort(false);
   };
+
+  /* ── AI Smart Search ─────────────────────────────────────────── */
+  const [aiState, setAiState] = useState<"idle" | "loading" | "done" | "failed">("idle");
+  const [aiPicks, setAiPicks] = useState<Record<string, string>>({});
+  const [aiOrder, setAiOrder] = useState<string[]>([]);
+
+  const runAiSearch = async () => {
+    if (aiState === "loading" || query.trim().length < 3) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setAiState("loading");
+    const compact = filteredProducts.slice(0, 40).map((p) => ({
+      id: p.id,
+      title: p.title_english || p.title_original,
+      category: p.category,
+      price_usd: p.price_usd_estimated,
+    }));
+    const ranked = await aiRankProducts(query.trim(), compact);
+    if (ranked) {
+      const reasons: Record<string, string> = {};
+      ranked.forEach((r) => { reasons[r.id] = r.reason; });
+      setAiPicks(reasons);
+      setAiOrder(ranked.map((r) => r.id));
+      setAiState("done");
+    } else {
+      setAiState("failed");
+    }
+  };
+
+  const clearAi = () => {
+    setAiState("idle");
+    setAiPicks({});
+    setAiOrder([]);
+  };
+
+  // AI-ordered + regular products, AI picks first when active
+  const displayProducts = useMemo(() => {
+    if (aiState !== "done") return filteredProducts;
+    const rank = new Map(aiOrder.map((id, i) => [id, i]));
+    return [...filteredProducts].sort(
+      (a, b) => (rank.has(a.id) ? rank.get(a.id)! : 999) - (rank.has(b.id) ? rank.get(b.id)! : 999)
+    );
+  }, [filteredProducts, aiState, aiOrder]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -274,6 +318,28 @@ export default function SearchScreen() {
               <SlidersHorizontal size={14} color={COLORS.textSecondary} />
               <Text style={styles.resultText}>
                 {filteredProducts.length} {filteredProducts.length === 1 ? "product" : "products"}
+                {query.trim().length >= 3 && aiState !== "loading" && (
+                  <TouchableOpacity
+                    onPress={aiState === "done" ? clearAi : runAiSearch}
+                    style={{
+                      marginLeft: 8,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 4,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 999,
+                      backgroundColor: aiState === "done" ? COLORS.primary : "transparent",
+                      borderWidth: 1,
+                      borderColor: COLORS.primary,
+                    }}
+                  >
+                    <Sparkles size={12} color={aiState === "done" ? COLORS.white : COLORS.primary} />
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: aiState === "done" ? COLORS.white : COLORS.primary }}>
+                      {aiState === "done" ? "AI on" : "AI pick"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </Text>
             </View>
 

@@ -101,3 +101,45 @@ export async function loadAiProviderConfig(client: {
 
   return { baseUrl, apiKey, model, isConfigured };
 }
+
+/**
+ * Per-task provider resolution: read the task's row from ai_provider_tasks,
+ * fall back to the global ai_provider_config when the task is unconfigured.
+ *
+ * Task → fallback mapping keeps behavior identical for existing deployments:
+ *   translation/extraction → global config (what ai-translate/ai-extraction
+ *                            already used via loadAiProviderConfig)
+ *   vision                 → global config
+ *   copilot                → global config
+ * `client` must be a service-role client (both tables deny anon/authenticated).
+ */
+export type AiTask = "copilot" | "translation" | "vision" | "extraction";
+
+export async function loadAiProviderForTask(
+  client: {
+    from: (t: string) => {
+      select: (c: string) => { eq: (c: string, v: unknown) => { maybeSingle: () => Promise<{ data: unknown }> } };
+    };
+  },
+  task: AiTask
+): Promise<AiProviderConfig | null> {
+  // 1. Task-specific override (a missing table is tolerated: pre-migration
+  //    deployments behave exactly as before).
+  const { data } = await client
+    .from("ai_provider_tasks")
+    .select("base_url, api_key, model, is_configured")
+    .eq("task", task)
+    .maybeSingle();
+
+  const row = (data ?? {}) as Record<string, unknown>;
+  const baseUrl = String(row.base_url || "").replace(/\/+$/, "");
+  const apiKey = String(row.api_key || "");
+  const model = String(row.model || "");
+
+  if (row.is_configured && baseUrl && apiKey && model && !validateProviderBaseUrl(baseUrl)) {
+    return { baseUrl, apiKey, model, isConfigured: true };
+  }
+
+  // 2. Fall back to the global provider.
+  return loadAiProviderConfig(client);
+}

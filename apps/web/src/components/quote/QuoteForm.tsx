@@ -4,6 +4,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useI18n } from "@/lib/i18n";
 import { supabase } from "@/lib/supabase";
+import AiQuoteAssistant from "@/components/ai/AiQuoteAssistant";
 import { waLink } from "@/lib/whatsapp";
 import { MARKETPLACE_CATALOG } from "@/lib/marketplaces";
 import {
@@ -31,16 +32,14 @@ const SOMALI_CITIES = [
 ];
 
 /** Marketplace enum values accepted by `sourcing_requests.marketplace`. */
-const ENUM_MARKETPLACES = ["1688", "taobao", "yiwugo", "alibaba", "chinagoods", "jd"];
+const ENUM_MARKETPLACES = ["1688", "taobao", "yiwugo", "chinagoods"];
 
 export function detectMarketplace(url: string): string | null {
   const u = url.toLowerCase();
   if (/1688\.com/.test(u)) return "1688";
   if (/taobao\.com|tmall\.com/.test(u)) return "taobao";
   if (/yiwugo\.com/.test(u)) return "yiwugo";
-  if (/alibaba\.com/.test(u)) return "alibaba";
   if (/chinagoods\.com/.test(u)) return "chinagoods";
-  if (/jd\.com/.test(u)) return "jd";
   if (/huolangjun666\.com/.test(u)) return "dollarstore";
   return null;
 }
@@ -67,6 +66,8 @@ export default function QuoteForm({ defaultUrl = "", defaultMarketplace, onSubmi
   );
   const [description, setDescription] = useState("");
   const [quantity, setQuantity] = useState("1");
+  // AI assistant extracted list — appended into the description on accept
+  const [aiItems, setAiItems] = useState<{ name: string; quantity: number }[] | null>(null);
   const [city, setCity] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -264,6 +265,19 @@ export default function QuoteForm({ defaultUrl = "", defaultMarketplace, onSubmi
             />
           </div>
         </div>
+
+        {/* AI Quote Assistant */}
+        {!state && !aiItems && (
+          <AiQuoteAssistant
+            onExtracted={(items) => {
+              setAiItems(items);
+              const list = items.map((it) => `• ${it.name} × ${it.quantity}`).join("\n");
+              setDescription((d) => (d.trim() ? `${d}\n\n${list}` : list));
+              const totalQty = items.reduce((s, it) => s + (Number(it.quantity) || 1), 0);
+              if (quantity === "1" && totalQty > 1) setQuantity(String(totalQty));
+            }}
+          />
+        )}
 
         {/* Description */}
         <div>

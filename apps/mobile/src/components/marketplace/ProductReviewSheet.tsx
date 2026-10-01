@@ -197,7 +197,7 @@ export default function ProductReviewSheet({
 
   if (!product || !rules) return null;
 
-  const fmtCNY = (n: number) => "¥" + n.toFixed(2);
+  const fmtCNY = (n: number) => "$" + (n / (rate || 7.25)).toFixed(2);
   const fmtUSD = (n: number) => "$" + (n / (rate || 7.25)).toFixed(2);
 
   const unitPriceCny = tier?.priceCny ?? basePriceCny;
@@ -528,8 +528,7 @@ export default function ProductReviewSheet({
             <View style={styles.costTotalRow}>
               <Text style={styles.costTotalLabel}>{ts("reviewSheet.amountPayableNow", "Amount payable now")}</Text>
               <View style={styles.costTotalValues}>
-                <Text style={styles.costTotalCny}>{fmtCNY(amountPayableNow)}</Text>
-                <Text style={styles.costTotalUsd}>≈ {fmtUSD(amountPayableNow)}</Text>
+                <Text style={styles.costTotalCny}>{fmtUSD(amountPayableNow)}</Text>
               </View>
             </View>
 
@@ -559,7 +558,7 @@ export default function ProductReviewSheet({
             <Text style={styles.primaryBtnText}>
               {ts("product.addToCart", "Add to Cart")} · {qty} {ts("moq.pieces", "pieces")}
             </Text>
-            <Text style={styles.primaryBtnSub}>{fmtCNY(amountPayableNow)} · {fmtUSD(amountPayableNow)}</Text>
+            <Text style={styles.primaryBtnSub}>{fmtUSD(amountPayableNow)} all-in estimate</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.secondaryBtn} onPress={handleAskSmallerQty} activeOpacity={0.7}>

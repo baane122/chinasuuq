@@ -34,9 +34,7 @@ const PLATFORMS = [
   { name: "1688", img: "/images/marketplaces/1688.webp" },
   { name: "Taobao", img: "/images/marketplaces/taobao.webp" },
   { name: "YiwuGo", img: "/images/marketplaces/yiwugo.webp" },
-  { name: "Alibaba", img: "/images/marketplaces/alibaba.webp" },
   { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.webp" },
-  { name: "JD", img: "/images/marketplaces/jd.webp" },
 ];
 
 // Step mini-icons shown in the side rail (lucide — fallback for visual rhythm)

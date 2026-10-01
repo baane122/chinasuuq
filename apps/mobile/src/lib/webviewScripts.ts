@@ -72,9 +72,10 @@ export const TRANSLATE_SCRIPT = `
   ]);
   var MIN_LEN = 2;
   var zhRe = /[\\u4e00-\\u9fff]/;
-  var MAX_REQUESTS = 40;     // bumped from 25 to cover longer product pages
-  var GROUP_SIZE = 30;       // up from 20; fewer round-trips
-  var INTERVAL_MS = 1200;    // tighter loop (was 3000)
+  var MAX_REQUESTS = 60;     // raised: long product pages + SPA streams
+  var GROUP_SIZE = 60;       // half the round-trips per page
+  var INTERVAL_MS = 600;     // was 700 — catch SPA content sooner
+  var NODE_CAP = 240;        // was 120 per pass — drain a big page in one pass
 
   function shouldSkip(el) {
     var p = el.parentElement;
@@ -119,7 +120,7 @@ export const TRANSLATE_SCRIPT = `
         return NodeFilter.FILTER_ACCEPT;
       }
     });
-    var node; var cap = 120;
+    var node; var cap = NODE_CAP;
     var list = [];
     while ((node = walker.nextNode()) && list.length < cap) list.push(node);
     list.sort(function (a, b) { return (a.__csScore || 0) - (b.__csScore || 0); });
@@ -200,6 +201,16 @@ export const TRANSLATE_SCRIPT = `
       if (!nodes.length) return;
       state.requests++;
       translateAndApply(nodes);
+      // Drain the rest of the page in back-to-back waves so a 240-node page
+      // finishes in 60*4=4 passes instead of waiting on the 600ms interval.
+      setTimeout(function drain() {
+        if (state.requests >= MAX_REQUESTS) return;
+        var more = collect();
+        if (!more.length) return;
+        state.requests++;
+        translateAndApply(more);
+        setTimeout(drain, 60);
+      }, 60);
     }, 60);
   }
 
@@ -217,11 +228,14 @@ export const TRANSLATE_SCRIPT = `
     state.requests++;
     translateAndApply(nodes);
   }
-  // Three quick passes (immediately + 100ms + 400ms) so SPA content
-  // that mounts over the first half-second gets caught fast.
+  // Fast burst: immediately + 80ms + 250ms + 600ms so SPA content
+  // that mounts over the first half-second gets caught fast, and
+  // 2 parallel lanes drain the queue twice as fast.
   kick();
-  setTimeout(kick, 100);
-  setTimeout(kick, 400);
+  setTimeout(kick, 80);
+  setTimeout(kick, 250);
+  setTimeout(kick, 600);
+  setTimeout(kick, 1000);
 
   // Periodic catch-all (stops once we hit the per-page cap)
   if (!window.__csInterval) {
@@ -303,20 +317,20 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
     out.image = og ? og.content : "";
     if (!out.image) {
       // Try the largest image on the page that looks like a product photo.
-      // 1) Known marketplace selectors (1688/Taobao/JD/YiwuGo/ChinaGoods/Alibaba)
+      // 1) Known marketplace selectors (1688/Taobao/YiwuGo/ChinaGoods)
       var imgSelectors = [
         // 1688
         "#J_ImgBooth", ".tb-booth img", "img[class*='mainpic' i]",
         // Taobao detail
         ".detail-main img", ".PicGallery--mainImage--3CiGq5P img",
-        // JD product page
-        "#spec-img", ".product-img img", ".main-img img",
-        // Alibaba.com
-        ".detail-gallery-img img", ".gallery-img img",
+        "img[src*='taobaocdn'][class*='main']",
         // YiwuGo
-        ".product-gallery img", ".goods-pic img",
+        ".product-gallery img", ".goods-pic img", ".swiper-slide img",
         // ChinaGoods
         ".product-image img", ".goods-img img", ".item-img img",
+        // 1$ Dollar Store (huolangjun666 SPA)
+        ".goods-img img", ".van-image img", ".van-swipe img",
+        "img[class*='goods'] img", ".commodity-img img",
         // Generic patterns
         "article img", ".product img", "[class*='product'] img",
         "[class*='goods'] img", "[class*='detail'] img"
@@ -325,9 +339,9 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
         var el = document.querySelector(imgSelectors[si]);
         if (el && el.src && el.src.indexOf("data:") !== 0) { out.image = el.src; break; }
       }
-      // 2) CDN-specific src patterns (covers any marketplace using Alibaba CDN, JD CDN, etc.)
+      // 2) CDN-specific src patterns (covers any marketplace using Alibaba CDN, etc.)
       if (!out.image) {
-        var cdnImg = document.querySelector("img[src*='alicdn'], img[src*='taobaocdn'], img[src*='jd.com'], img[src*='chinagoods'], img[src*='yiwugo'], img[src*='cbu01.alicdn'], img[src*='img.alicdn']");
+        var cdnImg = document.querySelector("img[src*='alicdn'], img[src*='taobaocdn'], img[src*='chinagoods'], img[src*='yiwugo'], img[src*='cbu01.alicdn'], img[src*='img.alicdn'], img[src*='huolangjun666']");
         if (cdnImg && cdnImg.src) out.image = cdnImg.src;
       }
       // 3) Last resort: find the largest visible image on the page
@@ -486,56 +500,131 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
       "[class*='bottom_nav' i]",
       "[class*='bottom-tab' i]",
       "[class*='bottom_tab' i]",
+      "[class*='bottombar' i]",
+      "[class*='bottom-bar' i]",
       "[class*='tabbar' i]",
       "[class*='tab-bar' i]",
+      "[class*='tab-bar-container' i]",
+      "[class*='navbar-bottom' i]",
+      "[class*='footer-nav' i]",
       "[class*='fixed-bottom' i]",
-      "nav[class*='bottom' i]",
+      "[class*='fixed_bottom' i]",
       "[class*='float-btn' i]",
       "[class*='floatBtn' i]",
       "[class*='floating-btn' i]",
+      "[class*='float-bar' i]",
+      "[class*='floatbar' i]",
+      "[class*='suspend' i]",
+      "[class*='smart-btn' i]",
+      "[class*='cart-float' i]",
+      "[class*='quick-nav' i]",
+      "[class*='toolbar-bottom' i]",
+      "[class*='action-bar' i]",
+      "[class*='actionbar' i]",
+      "[class*='detail-bottom' i]",
+      "[class*='detail-bar' i]",
+      "[class*='buy-bar' i]",
+      "[class*='sku-bar' i]",
+      "[class*='goods-bar' i]",
+      "[class*='operate-bar' i]",
+      "[class*='btn-bar' i]",
       "[class*='dock' i]",
       "[class*='side-bar' i]",
-      "[class*='sidebar' i]"
+      "[class*='sidebar' i]",
+      "[id*='bottom-nav' i]",
+      "[id*='bottomBar' i]",
+      "[id*='tabbar' i]",
+      "[id*='float' i]",
+      "[id*='suspend' i]",
+      "[id*='footerBar' i]"
     ];
-    var dockText = /^(我的|进货|进货单|购物车|推|开团)$|进货单|开团/;
+    // Marketplace action words — ANY fixed bottom element containing these is
+    // marketplace chrome the customer must never see (their cart/chat/buy).
+    var dockText = /(我的|进货|进货单|购物车|加入进货单|代发|开团|推|客服|联系卖家|收藏|分享|立即下单|立即购买|店铺|首页|分类|消息|下载|打开App|APP下载|客户端)/;
+    // Never hide ChinaSuuq's own bottom bar (rendered in native layer, not DOM,
+    // so this guard is for safety on any page that mimics our labels).
+    function isCsOwn(el) {
+      while (el) {
+        if (el.getAttribute && el.getAttribute("data-chinasuuq") === "1") return true;
+        el = el.parentElement;
+      }
+      return false;
+    }
     function hideKnownBars() {
-      // 1) Class-pattern bottom bars
+      // 1) Class/id-pattern bottom bars — kill regardless of size
       var nodes = document.querySelectorAll(selectors.join(","));
       for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i];
         if (!el || el.getAttribute("data-cs-market-nav") === "1") continue;
+        if (isCsOwn(el)) continue;
         var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-        if (!rect || rect.height > 120 || rect.width < window.innerWidth * 0.55) continue;
+        // Fixed bars are typically 40-160px tall; still catch shorter strips
+        if (rect && (rect.height > 220 || rect.width < window.innerWidth * 0.4)) continue;
         el.setAttribute("data-cs-market-nav", "1");
         el.style.setProperty("display", "none", "important");
+        el.style.setProperty("visibility", "hidden", "important");
+        el.style.setProperty("pointer-events", "none", "important");
       }
-      // 2) Floating bottom-right docks labeled with marketplace words
-      //    (e.g. 1688's 我的 / 推 / 进货单 cluster, Taobao's 购物车 etc.)
-      var anchors = document.querySelectorAll("a, div, li, span");
+      // 2) Text-labeled fixed elements in the bottom 40% of the screen
+      var anchors = document.querySelectorAll("a, div, li, span, button");
       for (var j = 0; j < anchors.length; j++) {
         var el2 = anchors[j];
         if (!el2 || el2.getAttribute("data-cs-market-nav") === "1") continue;
+        if (isCsOwn(el2)) continue;
         var txt = (el2.innerText || "").trim();
-        if (!txt || txt.length > 40) continue;
+        if (!txt || txt.length > 60) continue;
         var r = el2.getBoundingClientRect ? el2.getBoundingClientRect() : null;
-        if (!r || r.height < 34 || r.height > 150) continue;
-        if (r.top < window.innerHeight * 0.66) continue; // bottom region only
-        var hit = dockText.test(txt);
-        if (!hit) continue;
-        // Only kill leaf-ish nodes; skip huge wrappers
-        if (r.width > window.innerWidth * 0.8 && el2.children.length > 6) continue;
+        if (!r || r.height < 24 || r.height > 180) continue;
+        if (r.top < window.innerHeight * 0.60) continue; // bottom region only
+        if (!dockText.test(txt)) continue;
+        if (r.width > window.innerWidth * 0.9 && el2.children.length > 10) continue;
         el2.setAttribute("data-cs-market-nav", "1");
         el2.style.setProperty("display", "none", "important");
+        el2.style.setProperty("visibility", "hidden", "important");
+        el2.style.setProperty("pointer-events", "none", "important");
+        // Collapse empty parent shells so no dead space remains
         var p = el2.parentElement;
-        if (p && p.children.length <= 8 && !p.getAttribute("data-cs-market-nav")) {
-          p.setAttribute("data-cs-market-nav", "1");
-          p.style.setProperty("display", "none", "important");
+        var depth = 0;
+        while (p && depth < 3) {
+          var pTxt = (p.innerText || "").trim();
+          if (pTxt.length <= 60 && p.getBoundingClientRect && p.getBoundingClientRect().top >= window.innerHeight * 0.55 && p.scrollHeight <= 200) {
+            p.setAttribute("data-cs-market-nav", "1");
+            p.style.setProperty("display", "none", "important");
+          } else break;
+          p = p.parentElement;
+          depth++;
+        }
+      }
+      // 3) position:fixed/sticky elements anchored to the bottom edge —
+      //    catch-all for bars with unpredictable class names.
+      var all = document.querySelectorAll("div, section, footer");
+      for (var k = 0; k < all.length; k++) {
+        var el3 = all[k];
+        if (!el3 || el3.getAttribute("data-cs-market-nav") === "1") continue;
+        if (isCsOwn(el3)) continue;
+        var cs = getComputedStyle(el3);
+        if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+        var r3 = el3.getBoundingClientRect();
+        if (r3.height < 30 || r3.height > 200) continue;
+        // Sits flush with (or overlapping) the bottom edge of the viewport
+        if (r3.bottom < window.innerHeight - 8) continue;
+        var t3 = (el3.innerText || "").trim();
+        // If it has marketplace action words or is a wide bar → hide
+        if (dockText.test(t3) || (r3.width >= window.innerWidth * 0.6 && el3.children.length >= 2)) {
+          el3.setAttribute("data-cs-market-nav", "1");
+          el3.style.setProperty("display", "none", "important");
+          el3.style.setProperty("visibility", "hidden", "important");
+          el3.style.setProperty("pointer-events", "none", "important");
         }
       }
     }
     hideKnownBars();
     if (!window.__csMarketNavObserver) {
-      window.__csMarketNavObserver = new MutationObserver(hideKnownBars);
+      var moTimer = null;
+      window.__csMarketNavObserver = new MutationObserver(function () {
+        if (moTimer) return;
+        moTimer = setTimeout(function () { moTimer = null; hideKnownBars(); }, 250);
+      });
       window.__csMarketNavObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
     return true;

@@ -30,6 +30,7 @@ import {
   Search,
   ChevronRight,
   Circle,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToastProvider } from "@/components/admin/Toast";
@@ -57,6 +58,7 @@ const NAV_ITEMS_BASE: Omit<NavItem, "badge">[] = [
   { href: "/admin/warehouse", label: "Warehouse", icon: Boxes },
   { href: "/admin/staff", label: "Staff & Roles", icon: UserCog },
   { href: "/admin/settings", label: "Settings", icon: Settings },
+  { href: "/admin/ai", label: "AI Copilot", icon: Sparkles },
 ];
 
 /* ─── Sidebar sections (grouped by href mapping into NAV_ITEMS_BASE) ── */
@@ -65,7 +67,7 @@ const NAV_SECTIONS: { title: string; hrefs: string[] }[] = [
   { title: "Commerce", hrefs: ["/admin/orders", "/admin/customers", "/admin/payments"] },
   { title: "Operations", hrefs: ["/admin/sourcing", "/admin/shipments", "/admin/warehouse"] },
   { title: "Catalog", hrefs: ["/admin/products", "/admin/marketplaces", "/admin/rates"] },
-  { title: "Office", hrefs: ["/admin/quotes", "/admin/staff", "/admin/settings"] },
+  { title: "Office", hrefs: ["/admin/quotes", "/admin/staff", "/admin/settings", "/admin/ai"] },
 ];
 
 /* ─── Search results dropdown ───────────────────────────────────── */
