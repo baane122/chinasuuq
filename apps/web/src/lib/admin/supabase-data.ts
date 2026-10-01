@@ -516,7 +516,8 @@ export async function recordPayment(p: any) {
       method: p.method || "mobile_money",
       status: p.status || "pending",
       reference: p.reference || null,
-      shipping_method: p.shipping_method || null,
+      provider_ref: p.provider_ref || null,
+      evidence_url: p.evidence_url || null,
     };
     const res = await supabase.from("payments").insert(row).select().single();
     return { ok: !res.error, payment: res.data, error: res.error?.message };
