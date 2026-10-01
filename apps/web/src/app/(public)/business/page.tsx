@@ -1,18 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { motion } from "framer-motion";
+import { waLink } from "@/lib/whatsapp";
+import QuoteRequestModal from "@/components/quote/QuoteRequestModal";
 import Image from "next/image";
 import {
-  ArrowRight, BadgePercent, Boxes, CheckCircle2, ClipboardCheck,
+  ArrowRight, BadgePercent, FileText, Boxes, CheckCircle2, ClipboardCheck,
   MessageCircle, Package, Truck, UserCheck,
 } from "lucide-react";
 
-const WA_NUMBER = "8615277074143";
-const waLink = (text: string) =>
-  `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(text)}`;
 
 const BENEFITS = [
   "Dedicated sourcing agent for your business",
@@ -33,7 +33,9 @@ const STEPS = [
 ];
 
 export default function BusinessPage() {
+  const [quoteOpen, setQuoteOpen] = useState(false);
   return (
+    <>
     <main className="min-h-screen bg-warm-50">
       <Header />
 
@@ -63,7 +65,15 @@ export default function BusinessPage() {
               shipments from every major Chinese marketplace.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
-              <a href={waLink("Hello ChinaSuuq, I have a business and want wholesale pricing")} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:bg-brand-600 active:scale-[0.97]">
+              <button
+                type="button"
+                onClick={() => setQuoteOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:bg-brand-600 active:scale-[0.97]"
+              >
+                <FileText className="h-4 w-4" />
+                Request a B2B quote
+              </button>
+              <a href={waLink("Hello ChinaSuuq, I have a business and want wholesale pricing")} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-dark-900/10 bg-white px-6 py-3.5 text-sm font-semibold text-dark-900/70 transition-all hover:border-[#25D366]/40 hover:text-[#1fb857] active:scale-[0.97]">
                 <MessageCircle className="h-4 w-4" />
                 Talk to our business team
               </a>
@@ -194,5 +204,7 @@ export default function BusinessPage() {
       <Footer />
       <WhatsAppFAB />
     </main>
+  <QuoteRequestModal open={quoteOpen} onClose={() => setQuoteOpen(false)} />
+    </>
   );
 }

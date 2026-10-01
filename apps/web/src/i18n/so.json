@@ -10,7 +10,8 @@
     "help": "Caawimaad",
     "trackOrder": "Raadi Dalabka",
     "signIn": "Gal",
-    "downloadApp": "Soo Dejiso App-ka"
+    "downloadApp": "Soo Dejiso App-ka",
+    "getQuote": "Codso Cabaaresho"
   },
   "hero": {
     "title": "Malaayiin Alaabood oo Shiinaha ah, Laguugu Keeno Soomaaliya",
@@ -222,5 +223,33 @@
     "event10Desc": "Laanta ka qaado ama keenid dalbo.",
     "event11": "Waa la keenay",
     "event11Desc": "Dalabkaagu wuxuu gaaray meesha uu u socday."
+  },
+  "quote": {
+    "title": "Hel Xaasis Cabaaresho Bilaash ah",
+    "subtitle": "Ku dhebi linkiga albabta mid ka mid ah suuqyada Shiinaha — ama wax keliya oo aad u baahan tahay noo sheeg. Wakiilkeena iibsiga wuxuu kula soo jawaabayaa WhatsApp goor dhow 24 saacadood gudahood.",
+    "urlLabel": "Linkiga albabta (ikhtiyaari)",
+    "marketplace": "Suuqa",
+    "notSure": "Weli ma garanayo",
+    "auto": "Si toos ah loo ogaaday",
+    "detected": "Linkiga laga ogaaday:",
+    "quantity": "Tiro",
+    "descLabel": "Maxaad raadinaysaa?",
+    "descPlaceholder": "Tusaale: Dharahan xilliga xagaaga, cabbirro M–XL, qiyaastii 50 gabay. La wadaag midabyada, cabbirrada, ama sharaxaad sawir…",
+    "city": "Magaalada gaaritaanka",
+    "name": "Magacaaga",
+    "phone": "Numberka WhatsApp",
+    "contactLine": "Xiriir",
+    "free": "Cabaareshooyin 100% bilaash ah",
+    "noPayment": "Lacag ma jiro ilaa aad ansixiso",
+    "submit": "Codso Cabaaresho",
+    "successTitle": "Codsigaaga waa la helay!",
+    "successBody": "Wakiilkeena iibsiga ayaa horey u shaqeynaya. Waxaan kula soo xiriiri doonaa WhatsApp qiimayaal iyo ikhtiyaarro — badanaa 24 saacadood gudahood.",
+    "successWhatsApp": "Hadda wada sheekee WhatsApp",
+    "successAnother": "Codso codsig kale",
+    "waSummary": "Salaan ChinaSuuq, dhawaan codsiga cabaaresho ayaan soo gudbiyay",
+    "errDescription": "Fadlan sharax waxa aad raadinayso (ugu yaraan 10 xaraf).",
+    "errContact": "Fadlan ku dar magacaaga iyo numberka WhatsApp si aynu kula soo jawaabno.",
+    "soNote": "Waxaan kala hadalnaa af-Soomaali oo English.",
+    "subtitleShort": "Ku dhebi linkiga suuqa Shiinaha — annaga ayaa soo iibsaneyno, qiimo USD kuma siinayna, oo Soomaaliya kena doonaa."
   }
 }

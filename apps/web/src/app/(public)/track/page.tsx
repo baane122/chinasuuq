@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { waLink } from "@/lib/whatsapp";
 import { motion, AnimatePresence } from "framer-motion";
 import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
@@ -12,7 +13,6 @@ import {
   Truck, CalendarClock, Sparkles,
 } from "lucide-react";
 
-const WA_NUMBER = "8615277074143";
 
 /* ─── Types ──────────────────────────────────────────────────────── */
 interface TrackedOrder {
@@ -402,7 +402,7 @@ export default function TrackPage() {
                   Questions about this shipment? Our team replies fast.
                 </p>
                 <a
-                  href={`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(`Tracking question for order ${order.order_number}`)}`}
+                  href={waLink(`Tracking question for order ${order.order_number}`)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[#25D366] px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-[#25D366]/25 transition-all hover:bg-[#1fb857] active:scale-[0.97]"

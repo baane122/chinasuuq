@@ -3,8 +3,9 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { useI18n } from "@/lib/i18n";
-import { Menu, X, Globe, Download } from "lucide-react";
+import { Menu, X, Globe, Download, FileText } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const navLinks = [
@@ -12,11 +13,13 @@ const navLinks = [
   { key: "nav.markets", href: "/marketplaces" },
   { key: "nav.howItWorks", href: "/how-it-works" },
   { key: "nav.shipping", href: "/shipping" },
+  { key: "nav.trackOrder", href: "/track" },
   { key: "nav.about", href: "/about" },
 ];
 
 export function Header() {
   const { t, locale, setLocale } = useI18n();
+  const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -34,6 +37,9 @@ export function Header() {
     }
     return () => { document.body.style.overflow = ""; };
   }, [mobileOpen]);
+
+  const isActive = (href: string) =>
+    href === "/" ? pathname === "/" : pathname.startsWith(href);
 
   return (
     <header
@@ -63,10 +69,13 @@ export function Header() {
               <Link
                 key={link.href}
                 href={link.href}
+                aria-current={isActive(link.href) ? "page" : undefined}
                 className={`px-3.5 py-2 text-sm font-medium rounded-lg transition-colors ${
-                  scrolled
-                    ? "text-dark-900/70 hover:text-dark-900 hover:bg-dark-900/5"
-                    : "text-dark-900/70 hover:text-dark-900"
+                  isActive(link.href)
+                    ? "text-brand-600 bg-brand-500/[0.08]"
+                    : scrolled
+                      ? "text-dark-900/70 hover:text-dark-900 hover:bg-dark-900/5"
+                      : "text-dark-900/70 hover:text-dark-900"
                 }`}
               >
                 {t(link.key)}
@@ -80,19 +89,30 @@ export function Header() {
             <button
               onClick={() => setLocale(locale === "en" ? "so" : "en")}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full border border-dark-900/10 hover:border-dark-900/20 transition-colors"
+              aria-label="Switch language"
             >
               <Globe className="w-3.5 h-3.5" />
               {locale === "en" ? "EN" : "SO"}
             </button>
 
-            {/* Download App */}
+            {/* Get a Quote — the web's primary conversion action */}
             <Link
-              href="#download"
+              href="/quote"
+              className="flex items-center gap-2 rounded-xl border border-brand-500/30 bg-brand-500/[0.06] px-4 py-2 text-sm font-semibold text-brand-600 transition-all hover:border-brand-500/50 hover:bg-brand-500/10 active:scale-[0.98]"
+            >
+              <FileText className="w-4 h-4" />
+              {t("nav.getQuote")}
+            </Link>
+
+            {/* Download App — direct APK on every page */}
+            <a
+              href="/app/chinasuuq.apk"
+              download
               className="flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-sm hover:shadow-md"
             >
               <Download className="w-4 h-4" />
               {t("nav.downloadApp")}
-            </Link>
+            </a>
           </div>
 
           {/* Mobile Controls */}
@@ -100,6 +120,7 @@ export function Header() {
             <button
               onClick={() => setLocale(locale === "en" ? "so" : "en")}
               className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold rounded-full border border-dark-900/10"
+              aria-label="Switch language"
             >
               <Globe className="w-3.5 h-3.5" />
               {locale === "en" ? "EN" : "SO"}
@@ -108,6 +129,7 @@ export function Header() {
               onClick={() => setMobileOpen(!mobileOpen)}
               className="p-2 rounded-lg hover:bg-dark-900/5 transition-colors"
               aria-label="Toggle menu"
+              aria-expanded={mobileOpen}
             >
               {mobileOpen ? (
                 <X className="w-5 h-5 text-dark-900" />
@@ -135,20 +157,34 @@ export function Header() {
                   key={link.href}
                   href={link.href}
                   onClick={() => setMobileOpen(false)}
-                  className="block px-4 py-3 text-sm font-medium rounded-xl text-dark-900/80 hover:text-dark-900 hover:bg-dark-900/5 transition-colors"
+                  aria-current={isActive(link.href) ? "page" : undefined}
+                  className={`block px-4 py-3 text-sm font-medium rounded-xl transition-colors ${
+                    isActive(link.href)
+                      ? "text-brand-600 bg-brand-500/[0.08]"
+                      : "text-dark-900/80 hover:text-dark-900 hover:bg-dark-900/5"
+                  }`}
                 >
                   {t(link.key)}
                 </Link>
               ))}
-              <div className="pt-3 border-t border-dark-900/5">
+              <div className="grid grid-cols-2 gap-2 pt-3 border-t border-dark-900/5">
                 <Link
-                  href="#download"
+                  href="/quote"
+                  onClick={() => setMobileOpen(false)}
+                  className="flex items-center justify-center gap-2 w-full border border-brand-500/30 bg-brand-500/[0.06] text-brand-600 text-sm font-semibold px-4 py-3 rounded-xl"
+                >
+                  <FileText className="w-4 h-4" />
+                  {t("nav.getQuote")}
+                </Link>
+                <a
+                  href="/app/chinasuuq.apk"
+                  download
                   onClick={() => setMobileOpen(false)}
                   className="flex items-center justify-center gap-2 w-full bg-brand-500 text-white text-sm font-semibold px-4 py-3 rounded-xl"
                 >
                   <Download className="w-4 h-4" />
                   {t("nav.downloadApp")}
-                </Link>
+                </a>
               </div>
             </nav>
           </motion.div>

@@ -3,6 +3,7 @@
 import { useI18n } from "@/lib/i18n";
 import { motion, useInView } from "framer-motion";
 import { useRef, useState, useEffect } from "react";
+import Link from "next/link";
 import {
   Globe,
   Wallet,
@@ -12,66 +13,66 @@ import {
   BadgePercent,
   ArrowRight,
   CheckCircle2,
-  Package,
-  Search,
-  Camera,
 } from "lucide-react";
 
 const features = [
   {
     icon: Globe,
     key: "Direct Access",
-    desc_en: "50M+ products from 1688, Taobao, YiwuGo",
-    desc_so: "50M+ alaab ka timid 1688, Taobao, YiwuGo",
-    color: "from-blue-500/20 to-blue-600/10",
-    iconColor: "text-blue-500",
+    desc_en: "Direct access to 1688, Taobao, YiwuGo & more",
+    desc_so: "Hel toos ah 1688, Taobao, YiwuGo iyo kuwo kale",
     bgColor: "bg-blue-500/10",
+    iconColor: "text-blue-400",
   },
   {
     icon: Wallet,
     key: "Local Payments",
     desc_en: "EVC Plus, Zaad, Sahal & bank transfer",
     desc_so: "EVC Plus, Zaad, Sahal & transfer bank",
-    color: "from-emerald-500/20 to-emerald-600/10",
-    iconColor: "text-emerald-500",
     bgColor: "bg-emerald-500/10",
+    iconColor: "text-emerald-400",
   },
   {
     icon: ShieldCheck,
     key: "Quality Check",
     desc_en: "Inspection at our China warehouse",
     desc_so: "Hubinta bakhaarka Shiinaha",
-    color: "from-brand-500/20 to-brand-600/10",
-    iconColor: "text-brand-500",
     bgColor: "bg-brand-500/10",
+    iconColor: "text-brand-500",
   },
   {
     icon: Plane,
     key: "Air & Sea Cargo",
-    desc_en: "7-day air or 30-day sea freight",
-    desc_so: "7-mal hawada ama 30-mal badda",
-    color: "from-violet-500/20 to-violet-600/10",
-    iconColor: "text-violet-500",
+    desc_en: "Air in 7–14 days or sea in 25–35",
+    desc_so: "Hawada 7–14 mal ama badda 25–35",
     bgColor: "bg-violet-500/10",
+    iconColor: "text-violet-400",
   },
   {
     icon: Truck,
     key: "Door Delivery",
     desc_en: "Home & office delivery across Somalia",
     desc_so: "Gaarsiinta guriga & xafiiska Soomaaliya",
-    color: "from-amber-500/20 to-amber-600/10",
-    iconColor: "text-amber-500",
     bgColor: "bg-amber-500/10",
+    iconColor: "text-amber-400",
   },
   {
     icon: BadgePercent,
     key: "Best Prices",
     desc_en: "Factory-direct with transparent fees",
     desc_so: "Warshad toos ah oo leh kharashar cad",
-    color: "from-rose-500/20 to-rose-600/10",
-    iconColor: "text-rose-500",
     bgColor: "bg-rose-500/10",
+    iconColor: "text-rose-400",
   },
+];
+
+/* Product facts, not social-proof claims: 7 storefronts, 100% warehouse
+   inspection, 24/7 WhatsApp support and the published freight windows. */
+const stats = [
+  { value: 7, suffix: "+", label_en: "Marketplaces", label_so: "Suuqyo" },
+  { value: 100, suffix: "%", label_en: "Inspection", label_so: "Hubin" },
+  { value: 24, suffix: "/7", label_en: "WhatsApp support", label_so: "Taageero WhatsApp" },
+  { value: 35, suffix: "", label_en: "Days max — sea", label_so: "Maalmood ugu badan" },
 ];
 
 function AnimatedCounter({ end, duration = 2 }: { end: number; duration?: number }) {
@@ -99,6 +100,7 @@ function AnimatedCounter({ end, duration = 2 }: { end: number; duration?: number
 }
 
 export default function TrustBar() {
+  const { locale } = useI18n();
   const sectionRef = useRef(null);
   const isInView = useInView(sectionRef, { once: true, margin: "-100px" });
 
@@ -120,13 +122,17 @@ export default function TrustBar() {
         >
           <span className="inline-flex items-center gap-2 rounded-full bg-brand-500/15 border border-brand-500/20 px-4 py-1.5 text-xs font-semibold text-brand-400 uppercase tracking-wider mb-4">
             <CheckCircle2 className="w-3.5 h-3.5" />
-            Trusted by 10,000+ Somali buyers
+            {locale === "en" ? "Your sourcing agent in China" : "Wakiilka iibsiga Shiinaha"}
           </span>
           <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-3">
-            Why Somali Shoppers Choose ChinaSuuq
+            {locale === "en"
+              ? "Why Somali Shoppers Choose ChinaSuuq"
+              : "Maxay Soomaaligu u doorbidaan ChinaSuuq"}
           </h2>
-          <p className="text-sm text-white/40 max-w-lg mx-auto">
-            End-to-end sourcing, inspection, and delivery — all in one platform
+          <p className="text-sm text-white/55 max-w-lg mx-auto">
+            {locale === "en"
+              ? "End-to-end sourcing, inspection, and delivery — all in one platform"
+              : "Iibsiga, hubinta iyo gaarsiinta — dhammaan hal goos"}
           </p>
         </motion.div>
 
@@ -152,8 +158,8 @@ export default function TrustBar() {
               </h3>
 
               {/* Description */}
-              <p className="text-xs text-white/40 leading-relaxed">
-                {feat.desc_en}
+              <p className="text-xs text-white/55 leading-relaxed">
+                {locale === "en" ? feat.desc_en : feat.desc_so}
               </p>
             </motion.div>
           ))}
@@ -166,18 +172,15 @@ export default function TrustBar() {
           transition={{ delay: 0.6, duration: 0.5 }}
           className="mt-14 grid grid-cols-2 sm:grid-cols-4 gap-4"
         >
-          {[
-            { value: 10000, suffix: "+", label: "Happy Customers" },
-            { value: 50, suffix: "M+", label: "Products Available" },
-            { value: 99, suffix: "%", label: "Delivery Rate" },
-            { value: 4, suffix: ".8★", label: "Average Rating" },
-          ].map((stat, i) => (
+          {stats.map((stat, i) => (
             <div key={i} className="text-center p-4 rounded-xl bg-white/[0.03] border border-white/5">
               <div className="text-2xl sm:text-3xl font-bold text-brand-400">
                 <AnimatedCounter end={stat.value} />
                 {stat.suffix}
               </div>
-              <div className="text-xs text-white/40 mt-1">{stat.label}</div>
+              <div className="text-xs text-white/50 mt-1">
+                {locale === "en" ? stat.label_en : stat.label_so}
+              </div>
             </div>
           ))}
         </motion.div>
@@ -189,13 +192,13 @@ export default function TrustBar() {
           transition={{ delay: 0.8, duration: 0.5 }}
           className="mt-12 text-center"
         >
-          <a
-            href="#download"
+          <Link
+            href="/quote"
             className="inline-flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-8 py-4 rounded-xl transition-all duration-200 shadow-lg shadow-brand-500/25 hover:shadow-xl hover:shadow-brand-500/30"
           >
-            Start Sourcing Today
+            {locale === "en" ? "Get a Free Quote" : "Codso Cabaaresho Bilaash ah"}
             <ArrowRight className="w-4 h-4" />
-          </a>
+          </Link>
         </motion.div>
       </div>
     </section>

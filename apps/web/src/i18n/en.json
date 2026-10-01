@@ -10,7 +10,8 @@
     "help": "Help",
     "trackOrder": "Track Order",
     "signIn": "Sign In",
-    "downloadApp": "Download App"
+    "downloadApp": "Download App",
+    "getQuote": "Get a Quote"
   },
   "hero": {
     "title": "Millions of Products from China, Delivered to Somalia",
@@ -222,5 +223,33 @@
     "event10Desc": "Collect at the branch or request delivery.",
     "event11": "Delivered",
     "event11Desc": "Your order reached its destination."
+  },
+  "quote": {
+    "title": "Get a Free Quote",
+    "subtitle": "Paste a product link from any Chinese marketplace — or just tell us what you need. Our sourcing agent replies with a USD quote on WhatsApp, usually within 24 hours.",
+    "urlLabel": "Product link (optional)",
+    "marketplace": "Marketplace",
+    "notSure": "Not sure yet",
+    "auto": "Auto-detected",
+    "detected": "Detected from link:",
+    "quantity": "Quantity",
+    "descLabel": "What are you looking for?",
+    "descPlaceholder": "e.g. Women's summer dresses, sizes M–XL, about 50 pieces. Share colors, sizes, or a photo description…",
+    "city": "Delivery city",
+    "name": "Your name",
+    "phone": "WhatsApp number",
+    "contactLine": "Contact",
+    "free": "100% free quotes",
+    "noPayment": "No payment until you approve",
+    "submit": "Request Quote",
+    "successTitle": "Request received!",
+    "successBody": "Our sourcing agent is on it. We'll message you on WhatsApp with prices and options — usually within 24 hours.",
+    "successWhatsApp": "Chat now on WhatsApp",
+    "successAnother": "Submit another request",
+    "waSummary": "Hello ChinaSuuq, I just submitted a quote request",
+    "errDescription": "Please describe what you're looking for (at least 10 characters).",
+    "errContact": "Please add your name and WhatsApp number so we can reply.",
+    "soNote": "Waxaan kala hadalnaa af-Soomaali oo English.",
+    "subtitleShort": "Paste any China marketplace link — we source it, quote in USD, and ship to Somalia."
   }
 }

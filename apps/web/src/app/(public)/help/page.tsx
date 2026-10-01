@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { WHATSAPP_LINK } from "@/lib/whatsapp";
 import { motion, AnimatePresence } from "framer-motion";
 import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
@@ -8,7 +9,6 @@ import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { useI18n } from "@/lib/i18n";
 import { ChevronDown, MessageCircle, Phone, Mail, LifeBuoy } from "lucide-react";
 
-const WA_NUMBER = "8615277074143";
 
 const FAQS = [
   { q: "How do I order products from China?", a: "Simply search for products or paste a link from 1688, Taobao, or Yiwugo. Select your variants and quantity, then checkout through the app or WhatsApp. ChinaSuuq handles purchasing, inspection, and delivery." },
@@ -22,8 +22,8 @@ const FAQS = [
 ];
 
 const CONTACTS = [
-  { icon: MessageCircle, title: "WhatsApp", desc: "Chat with us instantly", color: "#25D366", href: `https://wa.me/${WA_NUMBER}` },
-  { icon: Phone, title: "Phone", desc: "+86 152 7707 4143", color: "#FF5A0A", href: `tel:+${WA_NUMBER}` },
+  { icon: MessageCircle, title: "WhatsApp", desc: "Chat with us instantly", color: "#25D366", href: WHATSAPP_LINK },
+  { icon: Phone, title: "Phone", desc: "+86 152 7707 4143", color: "#FF5A0A", href: "tel:+8615277074143" },
   { icon: Mail, title: "Email", desc: "support@chinasuuq.com", color: "#2970FF", href: "mailto:support@chinasuuq.com" },
 ];
 

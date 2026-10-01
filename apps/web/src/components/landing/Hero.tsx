@@ -19,7 +19,9 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { waLink } from "@/lib/whatsapp";
 
 const trustItems = [
   { icon: ShieldCheck, key: "trust.secure", en: "Secure payments", so: "Bixinta ammaan ah" },
@@ -35,28 +37,36 @@ const steps = [
 ];
 
 const platformChips = [
-  { name: "1688", img: "/images/marketplaces/1688.webp" },
-  { name: "Taobao", img: "/images/marketplaces/taobao.webp" },
-  { name: "YiwuGo", img: "/images/marketplaces/yiwugo.webp" },
-  { name: "Alibaba", img: "/images/marketplaces/alibaba.webp" },
-  { name: "ChinaGoods", img: "/images/marketplaces/chinagoods.webp" },
-  { name: "JD", img: "/images/marketplaces/jd.webp" },
-  { name: "1$ Dollar Store", img: "/images/marketplaces/dollarstore.webp" },
+  { name: "1688", id: "1688", img: "/images/marketplaces/1688.webp" },
+  { name: "Taobao", id: "taobao", img: "/images/marketplaces/taobao.webp" },
+  { name: "YiwuGo", id: "yiwugo", img: "/images/marketplaces/yiwugo.webp" },
+  { name: "Alibaba", id: "alibaba", img: "/images/marketplaces/alibaba.webp" },
+  { name: "ChinaGoods", id: "chinagoods", img: "/images/marketplaces/chinagoods.webp" },
+  { name: "JD", id: "jd", img: "/images/marketplaces/jd.webp" },
+  { name: "1$ Dollar Store", id: "dollarstore", img: "/images/marketplaces/dollarstore.webp" },
 ];
 
+/* Every number here is a product fact, not a social-proof claim:
+   7 storefronts shipped from marketplaces.ts, air 7–14 / sea 25–35 days
+   and 100% warehouse inspection are all verifiable constants. */
 const stats = [
-  { value: "50M+", label_en: "Products", label_so: "Alaab" },
-  { value: "6", label_en: "Platforms", label_so: "Suuqyo" },
-  { value: "7-30", label_en: "Days delivery", label_so: "Maalmood" },
+  { value: "7+", label_en: "Platforms", label_so: "Suuqyo" },
+  { value: "7–35", label_en: "Days delivery", label_so: "Maalmood" },
+  { value: "100%", label_en: "Inspection", label_so: "Hubin" },
   { value: "24/7", label_en: "Support", label_so: "Taageero" },
 ];
 
 function CountUp({ target, duration = 2 }: { target: string; duration?: number }) {
   const [display, setDisplay] = useState("0");
-  const numericPart = target.replace(/[^0-9]/g, "");
-  const suffix = target.replace(/[0-9]/g, "");
+
+  // Only animate clean numeric targets ("50", "100%", "7+"). Ranges like
+  // "7–35" or "24/7" used to be mangled into "735" / "247" mid-animation.
+  const match = target.match(/^(\d+)(%|\+)?$/);
+  const numericPart = match ? match[1] : null;
+  const suffix = match ? match[2] ?? "" : "";
 
   useEffect(() => {
+    if (numericPart === null) { setDisplay(target); return; }
     const end = parseInt(numericPart);
     if (isNaN(end)) { setDisplay(target); return; }
     let start = 0;
@@ -81,7 +91,7 @@ export default function Hero() {
   const [hoveredStep, setHoveredStep] = useState<number | null>(null);
 
   return (
-    <section className="relative min-h-[100vh] flex items-center overflow-hidden bg-warm-50">
+    <section className="relative min-h-[100svh] flex items-center overflow-hidden bg-warm-50">
       {/* ── Layered Background ── */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {/* Warm gradient base */}
@@ -222,7 +232,7 @@ export default function Hero() {
                 <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
               </a>
               <a
-                href="https://wa.me/8615277074143"
+                href={waLink()}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 bg-[#25D366] hover:bg-[#1fb857] text-white font-semibold px-7 py-3.5 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-md shadow-[#25D366]/20"
@@ -338,18 +348,24 @@ export default function Hero() {
                   <motion.div
                     key={p.name}
                     whileHover={{ scale: 1.05 }}
-                    className="flex items-center gap-1 pl-1 pr-3 py-1 rounded-full bg-warm-100/80 hover:bg-warm-200/80 shrink-0 transition-colors cursor-default"
+                    className="shrink-0"
                   >
-                    <img
-                      src={p.img}
-                      alt={p.name}
-                      width={24}
-                      height={24}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-6 h-6 rounded-md object-cover"
-                    />
-                    <span className="text-[11px] font-semibold text-dark-900">{p.name}</span>
+                    <Link
+                      href={`/marketplaces/${p.id}`}
+                      className="flex items-center gap-1 pl-1 pr-3 py-1 rounded-full bg-warm-100/80 hover:bg-warm-200/80 transition-colors"
+                      title={`${p.name} — order via ChinaSuuq`}
+                    >
+                      <img
+                        src={p.img}
+                        alt={p.name}
+                        width={24}
+                        height={24}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-6 h-6 rounded-md object-cover"
+                      />
+                      <span className="text-[11px] font-semibold text-dark-900">{p.name}</span>
+                    </Link>
                   </motion.div>
                 ))}
               </motion.div>
@@ -366,10 +382,12 @@ export default function Hero() {
                       <ShoppingBag className="w-5 h-5 text-white" />
                     </div>
                     <div>
-                      <div className="text-sm font-bold text-dark-900">50M+ Products</div>
+                      <div className="text-sm font-bold text-dark-900">
+                        {locale === "en" ? "All major marketplaces" : "Suuqyada ugu waaweyn"}
+                      </div>
                       <div className="flex items-center gap-1 text-[11px] text-dark-900/50">
                         <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
-                        {locale === "en" ? "Across 6 top platforms" : "6 suuq oo koowaad"}
+                        {locale === "en" ? "1688 · Taobao · JD +4 more" : "1688 · Taobao · JD +4"}
                       </div>
                     </div>
                   </div>

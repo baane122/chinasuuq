@@ -23,48 +23,32 @@ import { useToast } from "@/components/admin/Toast";
 
 /* ── Status workflow constants ────────────────────────────────── */
 
-const STATUSES: string[] = [
-  "all",
+/* The live orders.status enum has EXACTLY these 11 values (verified against
+   Supabase). Values like awaiting_payment/paid/in_warehouse/inspection_passed/
+   customs_hold do NOT exist — any transition to them is rejected by the DB. */
+const ORDER_STATUSES = [
   "pending",
   "confirmed",
-  "awaiting_payment",
-  "paid",
   "purchasing",
   "purchased",
-  "in_warehouse",
-  "inspection_passed",
   "consolidated",
   "shipped",
   "in_transit",
-  "customs_hold",
   "arrived_somalia",
   "out_for_delivery",
   "delivered",
   "cancelled",
-];
+] as const;
 
-const STATUS_FLOW = [
-  "pending",
-  "confirmed",
-  "awaiting_payment",
-  "paid",
-  "purchasing",
-  "purchased",
-  "in_warehouse",
-  "inspection_passed",
-  "consolidated",
-  "shipped",
-  "in_transit",
-  "customs_hold",
-  "arrived_somalia",
-  "out_for_delivery",
-  "delivered",
-];
+const STATUSES: string[] = ["all", ...ORDER_STATUSES];
+
+/* Delivery lifecycle only — "cancelled" is terminal and set via bulk actions. */
+const STATUS_FLOW: string[] = ORDER_STATUSES.filter((s) => s !== "cancelled");
 
 const STATUS_GROUPS: Record<string, { label: string; statuses: string[] }> = {
-  ordering: { label: "Ordering", statuses: ["pending", "confirmed", "awaiting_payment", "paid"] },
-  processing: { label: "Processing", statuses: ["purchasing", "purchased", "in_warehouse", "inspection_passed", "consolidated"] },
-  shipping: { label: "Shipping", statuses: ["shipped", "in_transit", "customs_hold", "arrived_somalia", "out_for_delivery", "delivered"] },
+  ordering: { label: "Ordering", statuses: ["pending", "confirmed"] },
+  processing: { label: "Processing", statuses: ["purchasing", "purchased", "consolidated"] },
+  shipping: { label: "Shipping", statuses: ["shipped", "in_transit", "arrived_somalia", "out_for_delivery", "delivered"] },
   terminal: { label: "Terminal", statuses: ["delivered", "cancelled"] },
 };
 
@@ -82,6 +66,22 @@ function getProgressPercent(status: string): number {
   return Math.round(((idx + 1) / STATUS_FLOW.length) * 100);
 }
 
+/* ── Live-column field readers ──────────────────────────────────
+   The orders table stores reference / *_usd / destination_city / delivery_address
+   (verified); the admin_orders_view this page reads through may expose the same
+   values under legacy names (order_number, total, city…). Read contract-first
+   with a view fallback so rows render under either shape. Fields that exist in
+   NEITHER shape (recipient_name, phone, shipping_cost) fall back to a real
+   sibling column instead of a dead one. */
+const orderRef = (o: any) =>
+  o?.reference || o?.order_number || (o?.id ? String(o.id).slice(0, 8) : "—");
+const orderTotal = (o: any) => Number(o?.total_usd ?? o?.total ?? 0) || 0;
+const orderSubtotal = (o: any) => Number(o?.subtotal_usd ?? o?.subtotal ?? 0) || 0;
+const orderServiceFee = (o: any) => Number(o?.service_fee_usd ?? o?.service_fee ?? 0) || 0;
+const orderBalanceDue = (o: any) => Number(o?.balance_due_usd ?? o?.balance_due ?? 0) || 0;
+const orderCity = (o: any) => o?.destination_city || o?.city || "—";
+const orderPhone = (o: any) => o?.customer_phone || o?.phone || "";
+
 /* ── Component ────────────────────────────────────────────────── */
 
 /**
@@ -94,11 +94,11 @@ function getProgressPercent(status: string): number {
 const FILTER_DEFAULTS = { status: "all", q: "", app: "", from: "", to: "" };
 
 const ORDER_COLUMNS: { key: string; label: string }[] = [
-  { key: "order_number", label: "Order" },
+  { key: "reference", label: "Order" },
   { key: "customer_name", label: "Customer" },
   { key: "apps", label: "Bought in" },
   { key: "shipping_method", label: "Mode" },
-  { key: "total", label: "Total" },
+  { key: "total_usd", label: "Total" },
   { key: "status", label: "Status" },
   { key: "payment_status", label: "Payment" },
   { key: "created_at", label: "Created" },
@@ -216,10 +216,10 @@ function OrdersPageContent() {
 
   const kpis = useMemo(() => {
     const total = orders.length;
-    const pending = orders.filter((o) => ["pending", "awaiting_payment"].includes(o.status)).length;
+    const pending = orders.filter((o) => o.status === "pending").length;
     const active = orders.filter((o) => !["delivered", "cancelled"].includes(o.status)).length;
     const delivered = orders.filter((o) => o.status === "delivered").length;
-    const revenue = orders.reduce((s, o) => s + (o.total || 0), 0);
+    const revenue = orders.reduce((s, o) => s + orderTotal(o), 0);
     return { total, pending, active, delivered, revenue };
   }, [orders]);
 
@@ -241,7 +241,8 @@ function OrdersPageContent() {
    * matching on a name, which is how two customers called Abdi got mixed.
    */
   const openCustomer = (order: any) => {
-    const id = order?.profile_id || order?.customer_id;
+    // user_id is the live FK on orders; admin_orders_view aliases it profile_id.
+    const id = order?.profile_id || order?.user_id;
     if (id) setCustomer360({ id, name: order.customer_name || undefined });
     else toastError("This order has no linked customer profile, so there is no account history to open.");
   };
@@ -314,7 +315,7 @@ function OrdersPageContent() {
     const w = window.open("", "_blank");
     if (!w) return;
     w.document.write(`
-      <html><head><title>Invoice ${order.order_number || order.id?.slice(0, 8)}</title>
+      <html><head><title>Invoice ${orderRef(order)}</title>
       <style>
         body { font-family: system-ui, sans-serif; padding: 40px; color: #111; }
         .header { display: flex; justify-content: space-between; border-bottom: 2px solid #FF5A0A; padding-bottom: 16px; margin-bottom: 24px; }
@@ -333,7 +334,7 @@ function OrdersPageContent() {
         </div>
         <div style="text-align: right;">
           <div style="font-size: 20px; font-weight: bold;">INVOICE</div>
-          <div style="font-size: 13px; color: #666;">${order.order_number || order.reference || order.id?.slice(0, 8)}</div>
+          <div style="font-size: 13px; color: #666;">${orderRef(order)}</div>
           <div style="font-size: 13px; color: #666;">${order.created_at ? new Date(order.created_at).toLocaleDateString() : ""}</div>
         </div>
       </div>
@@ -341,8 +342,8 @@ function OrdersPageContent() {
         <div>
           <h3 style="font-size: 12px; text-transform: uppercase; color: #999; margin-bottom: 8px;">Bill To</h3>
           <div style="font-size: 14px;">${order.customer_name || "Guest"}</div>
-          <div style="font-size: 13px; color: #666;">${order.phone || order.recipient_name || ""}</div>
-          <div style="font-size: 13px; color: #666;">${order.city || ""}</div>
+          <div style="font-size: 13px; color: #666;">${orderPhone(order)}</div>
+          <div style="font-size: 13px; color: #666;">${orderCity(order)}</div>
         </div>
         <div>
           <h3 style="font-size: 12px; text-transform: uppercase; color: #999; margin-bottom: 8px;">Order Details</h3>
@@ -353,15 +354,15 @@ function OrdersPageContent() {
       </div>
       <table>
         <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
-        <tr><td>${order.target_marketplace || "—"}</td><td>1</td><td>${formatUSD(order.total || 0)}</td><td>${formatUSD(order.total || 0)}</td></tr>
+        <tr><td>${order.target_marketplace || "—"}</td><td>1</td><td>${formatUSD(orderTotal(order))}</td><td>${formatUSD(orderTotal(order))}</td></tr>
       </table>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
         <div></div>
         <div>
-          <div style="font-size: 13px;">Subtotal: ${formatUSD(order.subtotal || 0)}</div>
-          <div style="font-size: 13px;">Shipping: ${formatUSD(order.shipping_cost || 0)}</div>
-          <div style="font-size: 13px;">Service Fee: ${formatUSD(order.service_fee || 0)}</div>
-          <div class="total">Total: ${formatUSD(order.total || 0)}</div>
+          <div style="font-size: 13px;">Subtotal: ${formatUSD(orderSubtotal(order))}</div>
+          <div style="font-size: 13px;">Service Fee: ${formatUSD(orderServiceFee(order))}</div>
+          <div style="font-size: 13px;">Balance Due: ${formatUSD(orderBalanceDue(order))}</div>
+          <div class="total">Total: ${formatUSD(orderTotal(order))}</div>
         </div>
       </div>
       <div class="footer">
@@ -378,7 +379,7 @@ function OrdersPageContent() {
 
   const columns: Column<any>[] = [
     {
-      key: "order_number",
+      key: "reference",
       label: "Order",
       sortable: true,
       fixed: true,
@@ -394,7 +395,7 @@ function OrdersPageContent() {
               <Square className="h-4 w-4 text-dark-300 hover:text-dark-500" />
             )}
           </button>
-          <span className="font-semibold text-dark-900">{r.order_number || r.reference || r.id?.slice(0, 8)}</span>
+          <span className="font-semibold text-dark-900">{orderRef(r)}</span>
         </div>
       ),
     },
@@ -416,7 +417,7 @@ function OrdersPageContent() {
           >
             {r.customer_name || "Guest"}
           </button>
-          <p className="text-xs text-dark-900/45">{r.phone || r.city || "—"}</p>
+          <p className="text-xs text-dark-900/45">{orderPhone(r) || orderCity(r)}</p>
         </div>
       ),
     },
@@ -469,10 +470,10 @@ function OrdersPageContent() {
       render: (r) => <StatusBadge status={r.shipping_method} />,
     },
     {
-      key: "total",
+      key: "total_usd",
       label: "Total",
       sortable: true,
-      render: (r) => <span className="font-semibold text-dark-900">{formatUSD(r.total || 0)}</span>,
+      render: (r) => <span className="font-semibold text-dark-900">{formatUSD(orderTotal(r))}</span>,
     },
     {
       key: "status",
@@ -712,7 +713,7 @@ function OrdersPageContent() {
               <div className="flex items-center justify-between border-b border-dark-900/5 px-6 py-4">
                 <div>
                   <h2 className="text-lg font-bold text-dark-900">
-                    {selected.order_number || selected.id.slice(0, 8)}
+                    {orderRef(selected)}
                   </h2>
                   <p className="text-xs text-dark-900/40">
                     {selected.created_at ? formatDateTime(selected.created_at) : ""}
@@ -842,9 +843,9 @@ function OrdersPageContent() {
                   <div className="space-y-3">
                     {[
                       { icon: User, label: "Customer", value: selected.customer_name || "Guest" },
-                      { icon: Phone, label: "Phone", value: selected.phone || selected.recipient_name || "—" },
-                      { icon: MapPin, label: "City", value: selected.city || "—" },
-                      { icon: CreditCard, label: "Total", value: formatUSD(selected.total || 0) },
+                      { icon: Phone, label: "Phone", value: orderPhone(selected) || "—" },
+                      { icon: MapPin, label: "City", value: orderCity(selected) },
+                      { icon: CreditCard, label: "Total", value: formatUSD(orderTotal(selected)) },
                       { icon: Truck, label: "Shipping", value: (selected.shipping_method || "—").toUpperCase() },
                       { icon: CalendarDays, label: "Created", value: selected.created_at ? formatDateTime(selected.created_at) : "—" },
                     ].map((item) => (
@@ -868,12 +869,12 @@ function OrdersPageContent() {
                 <div className="space-y-3 rounded-2xl bg-white border border-dark-100/50 p-4">
                   <p className="text-xs font-semibold text-dark-900/50 uppercase tracking-wider">Payment Breakdown</p>
                   <div className="space-y-2 text-sm">
-                    <div className="flex justify-between"><span className="text-dark-500">Subtotal</span><span className="font-medium">{formatUSD(selected.subtotal || 0)}</span></div>
-                    <div className="flex justify-between"><span className="text-dark-500">Shipping</span><span className="font-medium">{formatUSD(selected.shipping_cost || 0)}</span></div>
-                    <div className="flex justify-between"><span className="text-dark-500">Service Fee</span><span className="font-medium">{formatUSD(selected.service_fee || 0)}</span></div>
+                    <div className="flex justify-between"><span className="text-dark-500">Subtotal</span><span className="font-medium">{formatUSD(orderSubtotal(selected))}</span></div>
+                    <div className="flex justify-between"><span className="text-dark-500">Service Fee</span><span className="font-medium">{formatUSD(orderServiceFee(selected))}</span></div>
+                    <div className="flex justify-between"><span className="text-dark-500">Balance Due</span><span className="font-medium">{formatUSD(orderBalanceDue(selected))}</span></div>
                     <div className="border-t border-dark-100 pt-2 flex justify-between font-bold text-dark-900">
                       <span>Total</span>
-                      <span className="text-brand-600">{formatUSD(selected.total || 0)}</span>
+                      <span className="text-brand-600">{formatUSD(orderTotal(selected))}</span>
                     </div>
                   </div>
                 </div>
@@ -887,9 +888,9 @@ function OrdersPageContent() {
                     <Printer className="h-4 w-4" />
                     Print Invoice
                   </button>
-                  {selected.phone && (
+                  {orderPhone(selected) && (
                     <a
-                      href={`https://wa.me/${selected.phone.replace(/[^0-9]/g, "")}`}
+                      href={`https://wa.me/${orderPhone(selected).replace(/[^0-9]/g, "")}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 transition-colors"

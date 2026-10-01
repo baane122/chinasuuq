@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { WHATSAPP_LINK } from "@/lib/whatsapp";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -360,7 +361,7 @@ export default function AdminLoginPage() {
           <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-between">
             <p className="text-center text-xs text-dark-900/40">
               Need help?{" "}
-              <a href="https://wa.me/8615277074143" target="_blank" rel="noopener noreferrer" className="font-medium text-brand-500 hover:text-brand-600">
+              <a href={WHATSAPP_LINK} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-500 hover:text-brand-600">
                 Contact support
               </a>
             </p>

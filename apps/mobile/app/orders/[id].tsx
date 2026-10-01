@@ -35,57 +35,60 @@ import type { LocalOrder } from "@/db/index";
 import { Timeline, TimelineEvent } from "@/components/orders/Timeline";
 import { StatusBadge } from "@/components/orders/StatusBadge";
 
-/** Build timeline events from the order's status field */
+/** The fulfillment ladder in the same order as the live order_status enum.
+ *  A stage counts as done only when the order's real status has reached it. */
+const STAGE_ORDER = [
+  "pending",
+  "confirmed",
+  "purchasing",
+  "purchased",
+  "in_transit_china",
+  "warehouse",
+  "inspection",
+  "consolidated",
+  "shipped",
+  "in_transit",
+  "arrived_somalia",
+  "customs",
+  "ready_for_pickup",
+  "out_for_delivery",
+  "delivered",
+];
+
+/** Build timeline events from the order's status field. Completed steps derive
+ *  ONLY from the real status; every future step stays pending. (The old version
+ *  hardcoded "Purchase Confirmed" and "Purchased" as done, so a brand-new
+ *  pending order claimed to be already purchased.) */
 function buildTimeline(order: LocalOrder): TimelineEvent[] {
   const status = order.status.toLowerCase();
+  const statusIdx = STAGE_ORDER.indexOf(status);
+  const reached = (min: string) =>
+    statusIdx >= 0 && statusIdx >= STAGE_ORDER.indexOf(min);
+
   const stages: { status: string; location: string; done: boolean }[] = [
+    // The order row itself is the receipt for this event — always real.
     { status: "Purchase Confirmed", location: "Online", done: true },
-    { status: "Purchased", location: "1688 Platform", done: true },
+    { status: "Purchased", location: "1688 Platform", done: reached("purchased") },
+    { status: "Arrived at Warehouse", location: "Guangzhou Warehouse", done: reached("in_transit_china") },
+    { status: "Quality Inspection", location: "Guangzhou Warehouse", done: reached("warehouse") },
+    { status: "Consolidated", location: "Guangzhou, China", done: reached("consolidated") },
+    { status: "Shipped", location: "Guangzhou, China", done: reached("shipped") },
+    { status: "In Transit", location: "Hong Kong", done: reached("in_transit") },
+    { status: "Arrived at Destination", location: "Mogadishu Airport", done: reached("arrived_somalia") },
+    { status: "Customs Clearance", location: "Mogadishu Port", done: reached("customs") },
+    { status: "Ready for Pickup", location: "Mogadishu Warehouse", done: reached("ready_for_pickup") },
+    { status: "Out for Delivery", location: "Your Address", done: reached("out_for_delivery") },
+    { status: "Delivered", location: "Your Address", done: reached("delivered") },
   ];
 
-  if (status === "purchasing" || status === "purchased" || status === "in_transit_china" || status === "warehouse" || status === "inspection" || status === "consolidated" || status === "shipped" || status === "in_transit" || status === "arrived_somalia" || status === "customs" || status === "ready_for_pickup" || status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "Arrived at Warehouse", location: "Guangzhou Warehouse", done: true });
-  }
-
-  if (status === "warehouse" || status === "inspection" || status === "consolidated" || status === "shipped" || status === "in_transit" || status === "arrived_somalia" || status === "customs" || status === "ready_for_pickup" || status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "Quality Inspection", location: "Guangzhou Warehouse", done: true });
-  }
-
-  if (status === "consolidated" || status === "shipped" || status === "in_transit" || status === "arrived_somalia" || status === "customs" || status === "ready_for_pickup" || status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "Shipped", location: "Guangzhou, China", done: true });
-  }
-
-  if (status === "in_transit" || status === "arrived_somalia" || status === "customs" || status === "ready_for_pickup" || status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "In Transit", location: "Hong Kong", done: true });
-  }
-
-  if (status === "arrived_somalia" || status === "customs" || status === "ready_for_pickup" || status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "Arrived at Destination", location: "Mogadishu Airport", done: true });
-  }
-
-  if (status === "customs" || status === "ready_for_pickup" || status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "Customs Clearance", location: "Mogadishu Port", done: true });
-  }
-
-  if (status === "ready_for_pickup" || status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "Ready for Pickup", location: "Mogadishu Warehouse", done: true });
-  }
-
-  if (status === "out_for_delivery" || status === "delivered") {
-    stages.push({ status: "Out for Delivery", location: "Your Address", done: true });
-  }
-
-  if (status === "delivered") {
-    stages.push({ status: "Delivered", location: "Your Address", done: true });
-  }
-
-  // Mark the current stage as done=false (the last true stage is past)
+  // Completed steps carry the order's last-update time; the first step that
+  // has not happened yet (and everything after it) stays pending.
   let foundActive = false;
   return stages.map((s) => {
-    if (!foundActive && s.done) return { ...s, timestamp: order.updated_at || order.created_at, done: true };
+    if (s.done && !foundActive) return { ...s, timestamp: order.updated_at || order.created_at, done: true };
     if (!foundActive) {
       foundActive = true;
-      return { ...s, timestamp: order.updated_at || "Pending", done: false };
+      return { ...s, timestamp: "Pending", done: false };
     }
     return { ...s, timestamp: "Pending", done: false };
   });

@@ -236,6 +236,10 @@ export default function HomeTab() {
     .slice()
     .sort((a, b) => b.sales_count - a.sales_count);
 
+  // "showAll" means: the category filter emptied the slice but the catalog
+  // itself has products — so fall back to showing the whole catalog. The old
+  // render consumed this flag inverted: it showed "No products yet" when
+  // products existed and a blank grid when the catalog was truly empty.
   const showAll = catalogBySales.length <= 0 && products.length > 0;
 
   // Nothing to show and nothing honest to say → the section disappears rather
@@ -441,15 +445,9 @@ export default function HomeTab() {
                 We couldn't load products right now. Pull to refresh.
               </Text>
             </View>
-          ) : catalogBySales.length === 0 && showAll ? (
-            <View style={styles.sectionFallback}>
-              <Text style={styles.fallbackEmoji}>🛍️</Text>
-              <Text style={styles.fallbackTitle}>No products yet</Text>
-              <Text style={styles.fallbackSubtitle}>
-                New products will appear here once the catalog is loaded.
-              </Text>
-            </View>
-          ) : catalogBySales.length === 0 ? (
+          ) : showAll ? (
+            // Category filter matched nothing — show the whole catalog rather
+            // than a dead end.
             <View style={styles.productGrid}>
               {products.map((product) => (
                 <ProductCard
@@ -458,6 +456,32 @@ export default function HomeTab() {
                   onPress={() => router.push(`/product/${product.id}`)}
                 />
               ))}
+            </View>
+          ) : catalogBySales.length === 0 ? (
+            // The live catalog is genuinely empty — say so with a friendly
+            // empty state and a retry, never a blank grid.
+            <View style={styles.sectionFallback}>
+              <Text style={styles.fallbackEmoji}>🛍️</Text>
+              <Text style={styles.fallbackTitle}>
+                {locale === "en" ? "No products yet" : "Weli alaab lama helin"}
+              </Text>
+              <Text style={styles.fallbackSubtitle}>
+                {locale === "en"
+                  ? "New products will appear here once the catalog is loaded."
+                  : "Alaabta cusub ayaa halkan ka muuqan doonta marka katalooggu shubo."}
+              </Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                activeOpacity={0.8}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  loadProducts(true);
+                }}
+              >
+                <Text style={styles.retryButtonText}>
+                  {locale === "en" ? "Try again" : "Isku day mar kale"}
+                </Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.productGrid}>
@@ -712,6 +736,18 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textAlign: "center",
     paddingHorizontal: SPACING.lg,
+  },
+  retryButton: {
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: SPACING.xl,
+    paddingVertical: SPACING.sm + 2,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontFamily: FONTS.semibold,
+    color: COLORS.white,
   },
   bottomSpacer: {
     height: 100,

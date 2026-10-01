@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate } from "@/lib/utils";
 import { Package, CheckCircle2, AlertCircle, Plus, Pencil, Trash2, Loader2 } from "lucide-react";
-import type { WarehousePackage } from "@/types";
 import {
   PageHeader,
   PageGrid,
@@ -21,7 +20,25 @@ import FormInput from "@/components/admin/FormInput";
 
 const statusTabs = ["All", "Received", "Inspected", "Consolidated"] as const;
 
-const statusOptions: WarehousePackage["status"][] = [
+/* Row shape matching the LIVE warehouse_packages schema (no dimensions/notes/
+   location/customer_id columns — those don't exist in Supabase). Kept local
+   because the shared WarehousePackage type in @/types still carries the dead
+   `dimensions` object. */
+interface WarehousePackageRow {
+  id: string;
+  barcode: string;
+  order_id?: string | null;
+  weight_kg: number | null;
+  length_cm?: number | null;
+  width_cm?: number | null;
+  height_cm?: number | null;
+  status: "received" | "inspected" | "consolidated" | "shipped";
+  photos?: string[] | null;
+  inspection_notes?: string | null;
+  received_at?: string | null;
+}
+
+const statusOptions: WarehousePackageRow["status"][] = [
   "received",
   "inspected",
   "consolidated",
@@ -40,6 +57,9 @@ interface PackageFormState {
   barcode: string;
   order_id: string;
   weight_kg: string;
+  length_cm: string;
+  width_cm: string;
+  height_cm: string;
   inspection_notes: string;
 }
 
@@ -47,11 +67,21 @@ const emptyForm: PackageFormState = {
   barcode: "",
   order_id: "",
   weight_kg: "",
+  length_cm: "",
+  width_cm: "",
+  height_cm: "",
   inspection_notes: "",
 };
 
+/** Nullable number from a form input: "" / invalid → null (column is nullable). */
+function numOrNull(v: string): number | null {
+  if (v.trim() === "") return null;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default function WarehousePage() {
-  const [packages, setPackages] = useState<WarehousePackage[]>([]);
+  const [packages, setPackages] = useState<WarehousePackageRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -74,7 +104,7 @@ export default function WarehousePage() {
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
 
   // Delete dialog
-  const [deleteTarget, setDeleteTarget] = useState<WarehousePackage | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WarehousePackageRow | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const fetchPackages = async () => {
@@ -87,7 +117,7 @@ export default function WarehousePage() {
         .order("received_at", { ascending: false });
 
       if (fetchError) throw fetchError;
-      setPackages((data as WarehousePackage[]) || []);
+      setPackages((data as WarehousePackageRow[]) || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load warehouse data");
     } finally {
@@ -135,9 +165,10 @@ export default function WarehousePage() {
         barcode: receiveForm.barcode.trim(),
         order_id: receiveForm.order_id.trim() || null,
         weight_kg: parseFloat(receiveForm.weight_kg) || 0,
+        length_cm: numOrNull(receiveForm.length_cm),
+        width_cm: numOrNull(receiveForm.width_cm),
+        height_cm: numOrNull(receiveForm.height_cm),
         inspection_notes: receiveForm.inspection_notes.trim() || null,
-        // Default dimensions object for the schema
-        dimensions: { length: 0, width: 0, height: 0 },
         photos: [],
         status: "received" as const,
         received_at: new Date().toISOString(),
@@ -160,7 +191,7 @@ export default function WarehousePage() {
     }
   };
 
-  const handleStatusChange = async (pkg: WarehousePackage, status: WarehousePackage["status"]) => {
+  const handleStatusChange = async (pkg: WarehousePackageRow, status: WarehousePackageRow["status"]) => {
     if (status === pkg.status) return;
     setStatusUpdatingId(pkg.id);
     try {
@@ -182,12 +213,15 @@ export default function WarehousePage() {
     }
   };
 
-  const openEdit = (pkg: WarehousePackage) => {
+  const openEdit = (pkg: WarehousePackageRow) => {
     setEditingId(pkg.id);
     setEditForm({
       barcode: pkg.barcode,
       order_id: pkg.order_id ?? "",
       weight_kg: String(pkg.weight_kg ?? ""),
+      length_cm: pkg.length_cm == null ? "" : String(pkg.length_cm),
+      width_cm: pkg.width_cm == null ? "" : String(pkg.width_cm),
+      height_cm: pkg.height_cm == null ? "" : String(pkg.height_cm),
       inspection_notes: pkg.inspection_notes ?? "",
     });
     setEditOpen(true);
@@ -205,6 +239,9 @@ export default function WarehousePage() {
         barcode: editForm.barcode.trim(),
         order_id: editForm.order_id.trim() || null,
         weight_kg: parseFloat(editForm.weight_kg) || 0,
+        length_cm: numOrNull(editForm.length_cm),
+        width_cm: numOrNull(editForm.width_cm),
+        height_cm: numOrNull(editForm.height_cm),
         inspection_notes: editForm.inspection_notes.trim() || null,
       };
 
@@ -352,7 +389,7 @@ export default function WarehousePage() {
                           <select
                             value={pkg.status}
                             onChange={(e) =>
-                              handleStatusChange(pkg, e.target.value as WarehousePackage["status"])
+                              handleStatusChange(pkg, e.target.value as WarehousePackageRow["status"])
                             }
                             className={cn(
                               "cursor-pointer rounded-full border-0 py-0.5 pl-2 pr-7 text-xs font-medium capitalize outline-none focus:ring-2 focus:ring-brand-500/30 transition-colors",
@@ -372,12 +409,18 @@ export default function WarehousePage() {
                       </td>
                       <td>
                         <span className="text-dark-500">
-                          {pkg.dimensions.length}×{pkg.dimensions.width}×{pkg.dimensions.height} cm
+                          {[
+                            pkg.length_cm,
+                            pkg.width_cm,
+                            pkg.height_cm,
+                          ].some((v) => v != null)
+                            ? `${pkg.length_cm ?? "—"}×${pkg.width_cm ?? "—"}×${pkg.height_cm ?? "—"} cm`
+                            : "—"}
                         </span>
                       </td>
                       <td>
                         <span className="text-dark-500">
-                          {pkg.photos.length} photo{pkg.photos.length !== 1 ? "s" : ""}
+                          {(pkg.photos?.length ?? 0)} photo{(pkg.photos?.length ?? 0) !== 1 ? "s" : ""}
                         </span>
                       </td>
                       <td>
@@ -472,6 +515,38 @@ export default function WarehousePage() {
             placeholder="0.00"
             required
           />
+          <div className="grid grid-cols-3 gap-3">
+            <FormInput
+              label="Length (cm)"
+              name="length_cm"
+              type="number"
+              min={0}
+              step={0.1}
+              value={receiveForm.length_cm}
+              onChange={(v) => setReceiveForm((f) => ({ ...f, length_cm: v }))}
+              placeholder="—"
+            />
+            <FormInput
+              label="Width (cm)"
+              name="width_cm"
+              type="number"
+              min={0}
+              step={0.1}
+              value={receiveForm.width_cm}
+              onChange={(v) => setReceiveForm((f) => ({ ...f, width_cm: v }))}
+              placeholder="—"
+            />
+            <FormInput
+              label="Height (cm)"
+              name="height_cm"
+              type="number"
+              min={0}
+              step={0.1}
+              value={receiveForm.height_cm}
+              onChange={(v) => setReceiveForm((f) => ({ ...f, height_cm: v }))}
+              placeholder="—"
+            />
+          </div>
           <FormInput
             label="Inspection Notes"
             name="inspection_notes"
@@ -529,6 +604,38 @@ export default function WarehousePage() {
             placeholder="0.00"
             required
           />
+          <div className="grid grid-cols-3 gap-3">
+            <FormInput
+              label="Length (cm)"
+              name="length_cm"
+              type="number"
+              min={0}
+              step={0.1}
+              value={editForm.length_cm}
+              onChange={(v) => setEditForm((f) => ({ ...f, length_cm: v }))}
+              placeholder="—"
+            />
+            <FormInput
+              label="Width (cm)"
+              name="width_cm"
+              type="number"
+              min={0}
+              step={0.1}
+              value={editForm.width_cm}
+              onChange={(v) => setEditForm((f) => ({ ...f, width_cm: v }))}
+              placeholder="—"
+            />
+            <FormInput
+              label="Height (cm)"
+              name="height_cm"
+              type="number"
+              min={0}
+              step={0.1}
+              value={editForm.height_cm}
+              onChange={(v) => setEditForm((f) => ({ ...f, height_cm: v }))}
+              placeholder="—"
+            />
+          </div>
           <FormInput
             label="Inspection Notes"
             name="inspection_notes"

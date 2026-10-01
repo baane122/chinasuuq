@@ -206,9 +206,10 @@ export default function ShipmentsPage() {
       };
 
       if (editingId) {
+        // Live table has no `updated_at` column — only real columns are written.
         const { error: updateError } = await supabase
           .from("shipments")
-          .update({ ...payload, updated_at: new Date().toISOString() })
+          .update(payload)
           .eq("id", editingId);
         if (updateError) throw updateError;
         success("Shipment updated");
@@ -236,7 +237,7 @@ export default function ShipmentsPage() {
     try {
       const { error: updateError } = await supabase
         .from("shipments")
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .update({ status: newStatus })
         .eq("id", id);
       if (updateError) throw updateError;
       setShipments((prev) => prev.map((s) => s.id === id ? { ...s, status: newStatus } : s));

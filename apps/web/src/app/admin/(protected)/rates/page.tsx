@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { formatDateTime } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import { Globe, Loader2, Plus, Edit3, Trash2, ArrowLeftRight, Clock, Info } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
@@ -18,22 +18,38 @@ import {
   EMPTY_IMAGES,
 } from "@/components/admin/ui";
 
+// Live `exchange_rates` schema: from_currency, to_currency, rate, reason,
+// is_active, effective_from, effective_until, created_at. `rate` is numeric
+// and may arrive as null or a numeric string, so it is normalized before use.
 interface ExchangeRate {
   id: string;
-  currency_from: string;
-  currency_to: string;
-  rate: number;
-  effective_at: string;
-  approved_by: string;
-  reason: string;
+  from_currency: string;
+  to_currency: string;
+  rate: number | string | null;
+  reason: string | null;
+  is_active: boolean;
+  effective_from: string;
+  effective_until: string | null;
   created_at: string;
 }
 
 const defaultForm = {
-  currency_from: "CNY",
-  currency_to: "USD",
+  from_currency: "CNY",
+  to_currency: "USD",
   rate: 7.0,
   reason: "",
+};
+
+// Normalizes a raw `rate` value to a finite number, or null when absent/invalid.
+const rateValue = (raw: number | string | null | undefined): number | null => {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+};
+
+const formatRate = (raw: number | string | null | undefined) => {
+  const n = rateValue(raw);
+  return n === null ? "—" : String(n);
 };
 
 export default function RatesPage() {
@@ -79,9 +95,8 @@ export default function RatesPage() {
     const q = search.toLowerCase();
     return rates.filter(
       (r) =>
-        r.currency_from.toLowerCase().includes(q) ||
-        r.currency_to.toLowerCase().includes(q) ||
-        (r.approved_by && r.approved_by.toLowerCase().includes(q)) ||
+        r.from_currency.toLowerCase().includes(q) ||
+        r.to_currency.toLowerCase().includes(q) ||
         (r.reason && r.reason.toLowerCase().includes(q))
     );
   }, [rates, search]);
@@ -95,16 +110,17 @@ export default function RatesPage() {
   const openEdit = (rate: ExchangeRate) => {
     setEditId(rate.id);
     setForm({
-      currency_from: rate.currency_from,
-      currency_to: rate.currency_to,
-      rate: rate.rate,
+      from_currency: rate.from_currency,
+      to_currency: rate.to_currency,
+      rate: rateValue(rate.rate) ?? 0,
       reason: rate.reason || "",
     });
     setPanelOpen(true);
   };
 
   const handleSave = async () => {
-    if (!form.currency_from || !form.currency_to || !form.rate) {
+    const rateNum = rateValue(form.rate);
+    if (!form.from_currency.trim() || !form.to_currency.trim() || rateNum === null || rateNum <= 0) {
       toast.error("Please fill in all required fields");
       return;
     }
@@ -112,12 +128,13 @@ export default function RatesPage() {
     setSaving(true);
     try {
       const payload = {
-        currency_from: form.currency_from.toUpperCase(),
-        currency_to: form.currency_to.toUpperCase(),
-        rate: form.rate,
-        effective_at: new Date().toISOString(),
-        approved_by: "admin",
-        reason: form.reason,
+        from_currency: form.from_currency.trim().toUpperCase(),
+        to_currency: form.to_currency.trim().toUpperCase(),
+        rate: rateNum,
+        reason: form.reason.trim() || null,
+        is_active: true,
+        effective_from: new Date().toISOString(),
+        effective_until: null,
       };
 
       if (editId) {
@@ -168,11 +185,11 @@ export default function RatesPage() {
 
   // Derived stats (client-side only, from the loaded rows)
   const currentCnyUsd = useMemo(
-    () => rates.find((r) => r.currency_from === "CNY" && r.currency_to === "USD")?.rate,
+    () => rateValue(rates.find((r) => r.from_currency === "CNY" && r.to_currency === "USD")?.rate),
     [rates]
   );
   const pairCount = useMemo(
-    () => new Set(rates.map((r) => `${r.currency_from}→${r.currency_to}`)).size,
+    () => new Set(rates.map((r) => `${r.from_currency}→${r.to_currency}`)).size,
     [rates]
   );
   const lastUpdated = useMemo(
@@ -196,7 +213,7 @@ export default function RatesPage() {
       <PageGrid>
         <StatCard
           label="Current CNY → USD"
-          value={currentCnyUsd !== undefined ? currentCnyUsd : "—"}
+          value={currentCnyUsd !== null ? currentCnyUsd : "—"}
           icon={ArrowLeftRight}
           tone="brand"
           delay={0}
@@ -211,7 +228,7 @@ export default function RatesPage() {
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder="Search by currency or approver…"
+          placeholder="Search by currency or reason…"
           className="max-w-md"
         />
       </div>
@@ -241,7 +258,7 @@ export default function RatesPage() {
                   <th>To</th>
                   <th>Rate</th>
                   <th>Effective</th>
-                  <th>Approved By</th>
+                  <th>Status</th>
                   <th>Reason</th>
                   <th className="text-right">Actions</th>
                 </tr>
@@ -250,19 +267,26 @@ export default function RatesPage() {
                 {filteredRates.map((rate) => (
                   <tr key={rate.id}>
                     <td>
-                      <span className="text-sm font-semibold text-dark-900">{rate.currency_from}</span>
+                      <span className="text-sm font-semibold text-dark-900">{rate.from_currency}</span>
                     </td>
                     <td>
-                      <span className="text-sm font-semibold text-dark-900">{rate.currency_to}</span>
+                      <span className="text-sm font-semibold text-dark-900">{rate.to_currency}</span>
                     </td>
                     <td>
-                      <span className="text-sm font-bold text-brand-500">{rate.rate}</span>
+                      <span className="text-sm font-bold text-brand-500">{formatRate(rate.rate)}</span>
                     </td>
                     <td>
-                      <span className="text-sm text-dark-900/50">{formatDateTime(rate.effective_at)}</span>
+                      <span className="text-sm text-dark-900/50">{formatDateTime(rate.effective_from)}</span>
                     </td>
                     <td>
-                      <span className="text-sm text-dark-700">{rate.approved_by || "-"}</span>
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+                          rate.is_active ? "bg-green-50 text-green-700" : "bg-dark-100 text-dark-500"
+                        )}
+                      >
+                        {rate.is_active ? "Active" : "Inactive"}
+                      </span>
                     </td>
                     <td>
                       <span className="inline-block max-w-[200px] truncate text-sm text-dark-900/55">
@@ -337,17 +361,17 @@ export default function RatesPage() {
           <div className="grid grid-cols-2 gap-4">
             <FormInput
               label="Currency From"
-              name="currency_from"
-              value={form.currency_from}
-              onChange={(v) => setForm((f) => ({ ...f, currency_from: v }))}
+              name="from_currency"
+              value={form.from_currency}
+              onChange={(v) => setForm((f) => ({ ...f, from_currency: v }))}
               placeholder="e.g. CNY"
               required
             />
             <FormInput
               label="Currency To"
-              name="currency_to"
-              value={form.currency_to}
-              onChange={(v) => setForm((f) => ({ ...f, currency_to: v }))}
+              name="to_currency"
+              value={form.to_currency}
+              onChange={(v) => setForm((f) => ({ ...f, to_currency: v }))}
               placeholder="e.g. USD"
               required
             />

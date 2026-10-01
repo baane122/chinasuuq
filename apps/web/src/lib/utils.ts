@@ -54,7 +54,8 @@ export function slugify(text: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export const WHATSAPP_NUMBER = "8615277074143";
+import { WHATSAPP_NUMBER } from "@/lib/whatsapp";
+export { WHATSAPP_NUMBER };
 export const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}`;
 
 export function whatsappOrderLink(product?: string): string {

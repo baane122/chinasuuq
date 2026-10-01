@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatUSD, formatDate, formatDateTime } from "@/lib/utils";
 import {
@@ -12,7 +12,6 @@ import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
 import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
-import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
 
@@ -107,10 +106,11 @@ export default function PaymentsPage() {
 
   const filteredPayments = useMemo(() => {
     return payments.filter((payment) => {
+      // `reference` is nullable in the live table — guard with optional chaining.
       const matchesSearch =
         search === "" ||
-        payment.reference.toLowerCase().includes(search.toLowerCase()) ||
-        payment.order_id.toLowerCase().includes(search.toLowerCase()) ||
+        payment.reference?.toLowerCase().includes(search.toLowerCase()) ||
+        payment.order_id?.toLowerCase().includes(search.toLowerCase()) ||
         payment.method.toLowerCase().includes(search.toLowerCase());
       const matchesTab =
         activeTab === "All" || payment.status === activeTab.toLowerCase();
@@ -181,7 +181,7 @@ export default function PaymentsPage() {
       amount: String(payment.amount),
       currency: payment.currency,
       method: payment.method,
-      reference: payment.reference,
+      reference: payment.reference ?? "",
       status: payment.status,
     });
     setModalOpen(true);
@@ -291,7 +291,7 @@ export default function PaymentsPage() {
   const handleExport = () => {
     const headers = ["Reference", "Order ID", "Amount", "Currency", "Method", "Status", "Verified At", "Date"];
     const rows = filteredPayments.map((p) => [
-      p.reference, p.order_id, String(p.amount), p.currency,
+      p.reference ?? "", p.order_id, String(p.amount), p.currency,
       methodLabels[p.method] || p.method, p.status,
       p.verified_at ? formatDateTime(p.verified_at) : "",
       p.created_at ? formatDate(p.created_at) : "",
@@ -452,7 +452,7 @@ export default function PaymentsPage() {
                       </td>
                     )}
                     <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-dark-900 font-mono">{payment.reference}</span>
+                      <span className="text-sm font-medium text-dark-900 font-mono">{payment.reference || "—"}</span>
                     </td>
                     <td className="px-6 py-3.5">
                       <span className="text-sm text-brand-500 font-mono text-xs">{payment.order_id.slice(0, 8)}...</span>
@@ -615,7 +615,7 @@ export default function PaymentsPage() {
         title="Delete Payment"
         message={
           deleteTarget
-            ? `Are you sure you want to delete payment ${deleteTarget.reference} for ${formatUSD(deleteTarget.amount)}? This action cannot be undone.`
+            ? `Are you sure you want to delete payment ${deleteTarget.reference || "—"} for ${formatUSD(deleteTarget.amount)}? This action cannot be undone.`
             : ""
         }
         onCancel={() => { setDeleteOpen(false); setDeleteTarget(null); }}

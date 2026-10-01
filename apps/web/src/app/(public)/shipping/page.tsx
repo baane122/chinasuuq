@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
@@ -22,23 +23,24 @@ import {
   Truck,
   Weight,
 } from "lucide-react";
+import { waLink } from "@/lib/whatsapp";
 
 const FREIGHT = [
   { key: "air", icon: Plane, color: "from-brand-500 to-brand-600" },
   { key: "sea", icon: Ship, color: "from-sky-500 to-blue-600" },
 ] as const;
 
-const CHECKPOINTS = ["step1", "step2", "step3", "step4", "step5", "step6", "step7"] as const;
-const EVENT_KEYS = Array.from({ length: 11 }, (_, i) => `event${i + 1}`);
-
 export default function ShippingPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const router = useRouter();
   const [trackingId, setTrackingId] = useState("");
-  const [showTracking, setShowTracking] = useState(false);
 
+  // Real tracking: hand the reference to the live /track page (Supabase
+  // lookup) instead of the fake inline panel that used to live here.
   const handleTrack = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (trackingId.trim()) setShowTracking(true);
+    const ref = trackingId.trim();
+    if (ref) router.push(`/track?ref=${encodeURIComponent(ref)}`);
   };
 
   return (
@@ -122,18 +124,29 @@ export default function ShippingPage() {
               </form>
             </div>
             <div className="rounded-3xl border border-dark-900/5 bg-white p-6 shadow-sm sm:p-8">
-              <div className="mb-6 flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-brand-600">{t("shipping.trackTitle")}</p><h2 className="mt-1 text-2xl font-bold text-dark-900">China → Hargeisa</h2></div><Package className="h-6 w-6 text-brand-500" /></div>
-              <div className="grid grid-cols-2 gap-4 border-b border-dark-900/5 pb-6 sm:grid-cols-4"><div><p className="text-xs text-dark-900/45">{t("track.origin")}</p><p className="mt-1 text-sm font-semibold">{t("track.originVal")}</p></div><div><p className="text-xs text-dark-900/45">{t("track.destination")}</p><p className="mt-1 text-sm font-semibold">{t("track.destVal")}</p></div><div><p className="text-xs text-dark-900/45">{t("track.mode")}</p><p className="mt-1 text-sm font-semibold">{t("track.modeVal")}</p></div><div><p className="text-xs text-dark-900/45">{t("track.packages")}</p><p className="mt-1 text-sm font-semibold">{t("track.packagesVal")}</p></div></div>
-              <div className="mt-6 flex items-center gap-3 rounded-2xl bg-warm-50 p-4"><MapPin className="h-5 w-5 text-brand-500" /><div><p className="text-sm font-semibold text-dark-900">{t("track.eta")}: {t("track.etaVal")}</p><p className="mt-1 text-xs text-dark-900/45">{t("track.etaSub")}</p></div></div>
-              <div className="mt-6 space-y-4"><div className="mb-3 flex items-center justify-between"><h3 className="text-lg font-bold text-dark-900">{t("track.timelineTitle")}</h3><span className="rounded-full bg-brand-500/10 px-3 py-1 text-xs font-semibold text-brand-600">{showTracking ? trackingId : t("track.statusInTransit")}</span></div>
-                {EVENT_KEYS.map((key, i) => <div key={key} className="flex gap-3.5"><div className="flex flex-col items-center"><div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${i < 6 ? "bg-brand-500 text-white" : "bg-warm-100 text-dark-900/45"}`}>{i < 6 ? <CheckCircle2 className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}</div>{i < EVENT_KEYS.length - 1 && <div className={`mt-1 h-7 w-px ${i < 5 ? "bg-brand-300" : "bg-dark-900/10"}`} />}</div><div className="pb-1"><p className={`text-sm font-semibold ${i < 6 ? "text-dark-900" : "text-dark-900/50"}`}>{t(`track.${key}`)}</p><p className="mt-0.5 text-xs text-dark-900/45">{i < 6 ? t("track.completed") : t("track.upcoming")} · {t(`track.${key}Desc`)}</p></div></div>)}
-              </div>
+              <div className="mb-6 flex items-center justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-brand-600">{t("shipping.trackTitle")}</p><h2 className="mt-1 text-2xl font-bold text-dark-900">{t("track.title")}</h2></div><Package className="h-6 w-6 text-brand-500" /></div>
+              <p className="text-sm leading-relaxed text-dark-900/60">{t("track.subtitle")}</p>
+              <ul className="mt-5 space-y-3">
+                {[
+                  { icon: CheckCircle2, en: "13 checkpoints from purchase to doorstep", so: "13 bartan oo laga bilaabo iibsiga ilaa albaabka" },
+                  { icon: MapPin, en: "Live status: Guangzhou → Hargeisa / Mogadishu", so: "Xaaladaha nool: Guangzhou → Hargeisa / Muqdisho" },
+                  { icon: Clock3, en: "Air 7–14 days · Sea 25–35 days", so: "Hawada 7–14 maalmood · Badda 25–35" },
+                ].map(({ icon: Icon, en, so }, i) => (
+                  <li key={i} className="flex items-start gap-3 rounded-2xl bg-warm-50 p-3.5">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand-500/10"><Icon className="h-4 w-4 text-brand-500" /></span>
+                    <span className="text-sm font-medium text-dark-900/75">{locale === "so" ? so : en}</span>
+                  </li>
+                ))}
+              </ul>
+              <a href="/track" className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-brand-500 px-4 text-sm font-semibold text-white transition hover:bg-brand-600">
+                {t("track.button")} <ArrowRight className="h-4 w-4" />
+              </a>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="px-4 pb-12 sm:px-6 lg:px-8"><div className="mx-auto flex max-w-[1100px] flex-col items-center justify-between gap-4 rounded-3xl bg-brand-500 px-6 py-6 text-center text-white sm:flex-row sm:text-left"><div><p className="text-lg font-bold">{t("shipping.trackTitle")}</p><p className="mt-1 text-sm text-white/75">{t("shipping.trackDesc")}</p></div><a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20ask%20about%20shipping" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-brand-600"><MessageCircle className="h-4 w-4" />{t("shipping.whatsapp")}</a></div></section>
+      <section className="px-4 pb-12 sm:px-6 lg:px-8"><div className="mx-auto flex max-w-[1100px] flex-col items-center justify-between gap-4 rounded-3xl bg-brand-500 px-6 py-6 text-center text-white sm:flex-row sm:text-left"><div><p className="text-lg font-bold">{t("shipping.trackTitle")}</p><p className="mt-1 text-sm text-white/75">{t("shipping.trackDesc")}</p></div><a href={waLink("Hello ChinaSuuq, I want to ask about shipping")} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-brand-600"><MessageCircle className="h-4 w-4" />{t("shipping.whatsapp")}</a></div></section>
       <Footer /><WhatsAppFAB />
     </main>
   );

@@ -5,8 +5,10 @@ import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { useI18n } from "@/lib/i18n";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import Image from "next/image";
 import {
+  FileText,
   ArrowRight,
   Smartphone,
   Globe,
@@ -267,18 +269,28 @@ export default function HowItWorksPage() {
                 </h2>
                 <p className="text-sm sm:text-base text-white/60 max-w-xl">
                   {locale === "en"
-                    ? "Download the app and start browsing 6 Chinese marketplaces today. We handle the buying, inspection, and delivery to Hargeisa."
-                    : "Degso abka oo bilow inaad ka eegto 6 suuq oo Shiinaha ah. Annaga ayaa qabanaa iibinta, hubinta, iyo keenista."}
+                    ? "Download the app and start browsing 7 Chinese marketplaces today. We handle the buying, inspection, and delivery to Hargeisa."
+                    : "Degso abka oo bilow inaad ka eegto 7 suuq oo Shiinaha ah. Annaga ayaa qabanaa iibinta, hubinta, iyo keenista."}
                 </p>
               </div>
-              <a
-                href="#download"
-                className="flex items-center gap-2 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-semibold px-7 py-4 shadow-lg shadow-brand-500/30 hover:shadow-xl hover:shadow-brand-500/40 transition-all active:scale-[0.98] shrink-0"
-              >
-                <Smartphone className="w-4 h-4" />
-                {t("howItWorks.cta")}
-                <ArrowRight className="w-4 h-4" />
-              </a>
+              <div className="flex flex-col gap-2 shrink-0 sm:flex-row">
+                <Link
+                  href="/quote"
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-semibold px-7 py-4 shadow-lg shadow-brand-500/30 hover:shadow-xl hover:shadow-brand-500/40 transition-all active:scale-[0.98]"
+                >
+                  <FileText className="w-4 h-4" />
+                  {t("nav.getQuote")}
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+                <a
+                  href="/app/chinasuuq.apk"
+                  download
+                  className="flex items-center justify-center gap-2 rounded-2xl border border-white/25 text-white font-semibold px-6 py-4 transition-all hover:bg-white/10 active:scale-[0.98]"
+                >
+                  <Smartphone className="w-4 h-4" />
+                  {t("nav.downloadApp")}
+                </a>
+              </div>
             </div>
           </div>
         </div>

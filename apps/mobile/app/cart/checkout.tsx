@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   View,
   Text,
@@ -56,6 +56,10 @@ export default function CheckoutScreen() {
   const user = useAuthStore((s) => s.user);
 
   const [step, setStep] = useState(0);
+  // Place Order in-flight state: a double-tap on the final button must never
+  // submit the order twice (the customer would be charged twice).
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [showCityDropdown, setShowCityDropdown] = useState(false);
 
   // Step 1 — Contact
@@ -135,7 +139,7 @@ export default function CheckoutScreen() {
     }
   };
 
-  const handlePlaceOrder = async () => {
+  const placeOrder = async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     // One resolution per line: it is the number the customer was shown, the
     // number the offline gate below tests, and the number the order keeps.
@@ -231,6 +235,21 @@ export default function CheckoutScreen() {
     }
     useCartStore.getState().clearCart();
     router.replace(`/orders/success?id=${result.id}`);
+  };
+
+  /** Guarded entry point for Place Order. The ref makes the guard synchronous
+   *  — two taps inside one frame cannot both pass it — and the try/finally
+   *  releases it on every path (validation alert, failure, success). */
+  const handlePlaceOrder = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await placeOrder();
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   };
 
   const renderStep1 = () => (
@@ -453,8 +472,21 @@ export default function CheckoutScreen() {
               <Text style={styles.backBtnText}>Back</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[styles.nextBtn, step === 0 && { flex: 1 }]} onPress={handleNext} activeOpacity={0.8}>
-            <Text style={styles.nextBtnText}>{step === 3 ? t("checkout.placeOrder") : t("checkout.continue")}</Text>
+          <TouchableOpacity
+            style={[styles.nextBtn, step === 0 && { flex: 1 }, submitting && styles.nextBtnDisabled]}
+            onPress={handleNext}
+            activeOpacity={0.8}
+            disabled={submitting}
+          >
+            <Text style={styles.nextBtnText}>
+              {step === 3
+                ? submitting
+                  ? locale === "en"
+                    ? "Placing…"
+                    : "La gudbinayo…"
+                  : t("checkout.placeOrder")
+                : t("checkout.continue")}
+            </Text>
           </TouchableOpacity>
         </View>
         {step < 3 && (
@@ -571,6 +603,7 @@ const styles = StyleSheet.create({
   backBtn: { height: 50, borderRadius: RADIUS.lg, borderWidth: 1.5, borderColor: COLORS.border, justifyContent: "center", alignItems: "center", paddingHorizontal: SPACING.xl },
   backBtnText: { fontSize: 16, fontFamily: FONTS.semibold, color: COLORS.black },
   nextBtn: { height: 50, borderRadius: RADIUS.lg, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", flex: 1 },
+  nextBtnDisabled: { opacity: 0.6 },
   nextBtnText: { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.white },
   whatsappLink: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: SPACING.md, gap: SPACING.xs },
   whatsappLinkText: { fontSize: 13, color: COLORS.whatsapp, fontFamily: FONTS.semibold },

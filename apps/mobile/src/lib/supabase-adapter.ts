@@ -108,48 +108,57 @@ export function unadaptOrderItem(it: any): LocalOrderItem {
   };
 }
 
+// Row shape of production's `sourcing_requests`, verified against the live
+// schema: id, user_id, marketplace (nullable enum: 1688 | taobao | yiwugo |
+// alibaba | chinagoods | jd), product_url, product_description, quantity,
+// destination_city, status, created_at, updated_at. `id`, `created_at` and
+// `updated_at` are server-generated and must never be sent from the client —
+// the earlier adapter wrote nine columns that do not exist, so every mobile
+// sourcing sync was rejected by PostgREST.
 export interface SourcingRow {
-  id: string;
-  profile_id: string | null;
-  title: string;
-  description: string | null;
-  reference_urls: string[] | null;
-  target_marketplace: string;
-  marketplace: string;
-  product_url: string;
+  user_id: string | null;
+  marketplace: "1688" | "taobao" | "yiwugo" | "alibaba" | "chinagoods" | "jd" | null;
+  product_url: string | null;
   product_description: string;
-  quantity_needed: number;
-  destination_city: string;
-  price_cny: number | null;
-  price_usd: number | null;
-  images: string[] | null;
-  status: string;
-  customer_id: string | null;
-  created_at: string;
+  quantity: number;
+  destination_city: string | null;
+  status: "pending" | "assigned" | "quoted" | "approved" | "purchased" | "cancelled";
 }
+
+/** The marketplace labels the live `sourcing_requests.marketplace` enum accepts. */
+const LIVE_SOURCING_MARKETPLACES = new Set([
+  "1688",
+  "taobao",
+  "yiwugo",
+  "alibaba",
+  "chinagoods",
+  "jd",
+]);
 
 export function adaptSourcing(
   c: SourcingCapture,
   profileId: string | null
 ): SourcingRow {
+  // The Dollar Store is an in-app storefront with no enum label in the live
+  // schema: `marketplace` stays NULL and the provenance travels in the
+  // description, which is what sourcing staff actually read. Any other value
+  // outside the enum is likewise dropped rather than risking a 22P02 reject.
+  const isDollarStore = c.marketplace === "dollarstore";
+  const marketplace = !isDollarStore && LIVE_SOURCING_MARKETPLACES.has(c.marketplace)
+    ? (c.marketplace as SourcingRow["marketplace"])
+    : null;
+  const description = isDollarStore
+    ? `[Dollar Store] ${c.product_description || ""}`.trim()
+    : c.product_description || "";
+
   return {
-    id: c.id,
-    profile_id: profileId,
-    title: c.product_description?.slice(0, 80) || "Sourcing request",
-    description: c.product_description || null,
-    reference_urls: c.product_url ? [c.product_url] : null,
-    target_marketplace: c.marketplace || "1688",
-    marketplace: c.marketplace || "1688",
-    product_url: c.product_url || "",
-    product_description: c.product_description || "",
-    quantity_needed: c.quantity || 1,
-    destination_city: c.destination_city || "",
-    price_cny: c.price_cny ?? null,
-    price_usd: c.price_usd ?? null,
-    images: c.images || null,
-    status: c.status || "pending",
-    customer_id: profileId,
-    created_at: c.created_at,
+    user_id: profileId,
+    marketplace,
+    product_url: c.product_url || null,
+    product_description: description,
+    quantity: c.quantity || 1,
+    destination_city: c.destination_city || null,
+    status: "pending",
   };
 }
 

@@ -29,12 +29,21 @@ import { Timeline, TimelineEvent } from "@/components/orders/Timeline";
 
 const TRACKING_IMG = require("../../assets/screens/tracking.png");
 
-/** Build a full tracking timeline from an order's status */
+/** Payment statuses the rest of the app treats as money actually received
+ *  (checkout writes "pending"; staff flip it server-side — see OrderInsights).
+ *  Anything else, including "failed"/"refunded"/unknown, is NOT confirmed. */
+const PAID_PAYMENT_STATUSES = new Set(["paid", "confirmed"]);
+
+/** Build a full tracking timeline from an order's status. A step is completed
+ *  only when the real order/payment_status says so — nothing is assumed. */
 function buildTrackingTimeline(order: LocalOrder): TimelineEvent[] {
   const status = order.status.toLowerCase();
+  const paymentConfirmed = PAID_PAYMENT_STATUSES.has(
+    (order.payment_status || "").toLowerCase()
+  );
   const stages: { status: string; location: string; done: boolean }[] = [
     { status: "Order Placed", location: "Online", done: true },
-    { status: "Payment Confirmed", location: "Online", done: true },
+    { status: "Payment Confirmed", location: "Online", done: paymentConfirmed },
   ];
 
   const addStage = (s: string, loc: string, minStatus: string) => {

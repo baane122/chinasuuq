@@ -135,7 +135,64 @@ export async function getOrders(): Promise<LocalOrder[]> {
   return [];
 }
 
+/** Real `orders` columns for single-order reads — same list getOrdersByUser
+ *  selects (PostgREST rejects the whole query for one unknown column name). */
+const ORDER_COLUMNS =
+  "id, reference, status, payment_status, shipping_method, currency, subtotal_usd, service_fee_usd, total_usd, delivery_address, destination_city, notes, created_at, updated_at";
+
+/**
+ * Fetch one order by server uuid OR human reference (CS-…).
+ *
+ * Supabase first: the local cache only knows what this device wrote, so an
+ * order placed on another device — or a row the admin has since moved — must
+ * be read from production. Falls back to the local cache when the backend is
+ * unreachable or the row is not visible, so offline tracking keeps working.
+ */
 export async function getOrderById(id: string): Promise<LocalOrder | null> {
+  try {
+    if (await isBackendOnline()) {
+      let query = supabase.from("orders").select(ORDER_COLUMNS).limit(1);
+      query = UUID_RE.test(id) ? query.eq("id", id) : query.eq("reference", id);
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        const row = data[0] as any;
+        // Same two-query pattern as getOrdersByUser: an embed only resolves if
+        // PostgREST detects the FK; a direct select always works.
+        const itemsRes = await supabase
+          .from("order_items")
+          .select(
+            "id, order_id, product_id, product_name, quantity, unit_price, unit_price_cny, exchange_rate, moq_at_purchase, variant, variant_name, marketplace_key, source_url, image_url"
+          )
+          .eq("order_id", row.id);
+        const order = unadaptOrder(
+          row,
+          !itemsRes.error && itemsRes.data ? (itemsRes.data as any[]) : []
+        );
+        // Cache it so offline reads and the orders list see the same row.
+        const local = await getOrders();
+        const idx = local.findIndex(
+          (o) => o.id === order.id || o.reference === order.reference
+        );
+        if (idx >= 0) {
+          const cur = local[idx];
+          // Production stores no recipient/phone/payment-method columns, so
+          // the remote row cannot improve on what the device already holds.
+          local[idx] = {
+            ...order,
+            recipient_name: order.recipient_name || cur.recipient_name,
+            phone: order.phone || cur.phone,
+            payment_method: order.payment_method || cur.payment_method,
+            synced: true,
+          };
+        } else {
+          local.unshift(order);
+        }
+        await saveLocalOrders(local);
+        return local[idx >= 0 ? idx : 0];
+      }
+    }
+  } catch {}
+  // Cache fallback: offline, guest, or row not visible under this policy.
   const all = await getOrders();
   return all.find((o) => o.id === id || o.reference === id) || null;
 }

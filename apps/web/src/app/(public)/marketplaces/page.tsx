@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { waLink } from "@/lib/whatsapp";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -11,11 +12,8 @@ import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { supabase } from "@/lib/supabase";
-import { mergeMarketplaces, type LiveMarketplace } from "@/lib/marketplaces";
+import { mergeMarketplaces, MARKETPLACE_IDS, type LiveMarketplace } from "@/lib/marketplaces";
 
-const WA_NUMBER = "8615277074143";
-const waLink = (text: string) =>
-  `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(text)}`;
 
 const STEPS = [
   { icon: Globe2, title: "Pick a marketplace", text: "Browse 1688, Taobao, YiwuGo and more below — each has its strengths." },
@@ -151,13 +149,27 @@ export default function MarketplacesPage() {
                   </div>
                 )}
                 <div className="mt-5 flex items-center gap-2">
-                  <Link
-                    href={`/marketplaces/${m.id}`}
-                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-dark-900 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-dark-800 active:scale-[0.97]"
-                  >
-                    Explore
-                    <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                  </Link>
+                  {MARKETPLACE_IDS.includes(m.id) ? (
+                    <Link
+                      href={`/marketplaces/${m.id}`}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-dark-900 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-dark-800 active:scale-[0.97]"
+                    >
+                      Explore
+                      <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                    </Link>
+                  ) : (
+                    // Admin-added rows have no prerendered detail page in this
+                    // static export — deep-link the source site instead of a 404.
+                    <a
+                      href={m.homeUrl || "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-dark-900 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-dark-800 active:scale-[0.97]"
+                    >
+                      Visit site
+                      <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                    </a>
+                  )}
                   <a
                     href={waLink(`Hello ChinaSuuq, I want to order from ${m.name}`)}
                     target="_blank"

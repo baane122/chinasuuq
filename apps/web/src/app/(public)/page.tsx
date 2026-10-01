@@ -8,25 +8,13 @@ import Hero from "@/components/landing/Hero";
 import SearchBar from "@/components/landing/SearchBar";
 import Footer from "@/components/landing/Footer";
 
-// Below-the-fold heavy sections are code-split so the initial JS bundle
-// (framer-motion, lucide icons) is much smaller on first load. Each loads
-// on demand and renders a branded skeleton fallback to avoid blank flashes.
-const TrustBar = dynamic(() => import("@/components/landing/TrustBar"), {
-  ssr: false,
-  loading: () => <SectionSkeleton lines={1} />,
-});
-const HowItWorks = dynamic(
-  () => import("@/components/landing/HowItWorks"),
-  { ssr: false, loading: () => <SectionSkeleton lines={3} /> }
-);
-const AppDownload = dynamic(
-  () => import("@/components/landing/AppDownload"),
-  { ssr: false, loading: () => <SectionSkeleton lines={2} /> }
-);
-const WhatsAppFAB = dynamic(
-  () => import("@/components/landing/WhatsAppFAB"),
-  { ssr: false }
-);
+// Below-the-fold sections are code-split (smaller initial JS chunk) but
+// still server-rendered: with ssr:false their copy never reached the
+// prerendered HTML, so crawlers and no-JS visitors saw nothing there.
+const TrustBar = dynamic(() => import("@/components/landing/TrustBar"));
+const HowItWorks = dynamic(() => import("@/components/landing/HowItWorks"));
+const AppDownload = dynamic(() => import("@/components/landing/AppDownload"));
+const WhatsAppFAB = dynamic(() => import("@/components/landing/WhatsAppFAB"));
 
 /** Lightweight skeleton that matches the warm background so lazy sections
  *  never cause a jarring white flash while they hydrate. */

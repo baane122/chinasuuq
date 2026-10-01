@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity,
@@ -28,8 +29,9 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { PageHeader, StatCard, PageGrid, SectionCard } from "@/components/admin/ui";
+import { PageHeader, StatCard, PageGrid, SectionCard, FilterChips } from "@/components/admin/ui";
 import { StatusBadge } from "@/components/admin/StatusBadge";
+import { useToast } from "@/components/admin/Toast";
 import { supabase } from "@/lib/supabase";
 import { formatUSD } from "@/lib/utils";
 import { ORDERS_CSV_COLUMNS, downloadCsv, stamp, toCsv } from "@/lib/admin/csv";
@@ -69,6 +71,8 @@ interface DailyRevenue {
   date: string;
   label: string;
   amount: number;
+  /** Order count behind that day's revenue — exported with the CSV. */
+  orders: number;
 }
 
 interface OrderStatusCount {
@@ -118,6 +122,61 @@ interface MarketplaceRevenue {
   color: string;
   icon: string;
 }
+
+/* ─── Date range ────────────────────────────────────────────────── */
+type RangeKey = "24h" | "7d" | "30d" | "90d" | "all";
+
+/**
+ * One window drives every range-filtered chart on the page (revenue daily,
+ * status donut, marketplace breakdown). `days: null` is "All".
+ *
+ * There is no unfiltered server mode: the admin_* rollup RPCs clamp their
+ * window with least(coalesce(p_days, …), 365) and read NULL as their default,
+ * so "All" is served as the RPC's full 365-day window (see rpcDays below).
+ * A truly unbounded query would need a migration, which this page cannot ship.
+ */
+const DATE_RANGES: {
+  key: RangeKey;
+  label: string;
+  days: number | null;
+  heading: string;
+  caption: string;
+}[] = [
+  { key: "24h", label: "24h", days: 1, heading: "Last 24 Hours", caption: "the last 24 hours" },
+  { key: "7d", label: "7d", days: 7, heading: "Last 7 Days", caption: "the last 7 days" },
+  { key: "30d", label: "30d", days: 30, heading: "Last 30 Days", caption: "the last 30 days" },
+  { key: "90d", label: "90d", days: 90, heading: "Last 90 Days", caption: "the last 90 days" },
+  {
+    key: "all",
+    label: "All",
+    days: null,
+    heading: "All Time",
+    // Honest: the server caps the rollup window at 365 days.
+    caption: "all time (rollup window caps at 365 days)",
+  },
+];
+
+function rangeOf(key: RangeKey) {
+  return DATE_RANGES.find((r) => r.key === key) ?? DATE_RANGES[1];
+}
+
+/** Wire value for the rollup RPCs — see the DATE_RANGES comment for "All". */
+const rpcDays = (days: number | null) => days ?? 365;
+
+/* ─── Per-widget CSV columns ────────────────────────────────────── */
+/** Daily revenue chart rows, as fetched from admin_revenue_daily. */
+const REVENUE_CSV_COLUMNS: { header: string; value: (row: DailyRevenue) => unknown }[] = [
+  { header: "Date", value: (r) => r.date },
+  { header: "Day", value: (r) => r.label },
+  { header: "Orders", value: (r) => r.orders },
+  { header: "Revenue USD", value: (r) => r.amount },
+];
+
+const STATUS_CSV_COLUMNS: { header: string; value: (row: OrderStatusCount & { share: number }) => unknown }[] = [
+  { header: "Status", value: (r) => r.status },
+  { header: "Orders", value: (r) => r.count },
+  { header: "Share %", value: (r) => r.share },
+];
 
 /* ─── Presentation maps for server-side buckets ─────────────────── */
 /**
@@ -280,33 +339,48 @@ function MiniSparkline({
 /* ─── Revenue bar chart (pure CSS/SVG) ──────────────────────────── */
 function RevenueBarChart({ data }: { data: DailyRevenue[] }) {
   const max = Math.max(...data.map((d) => d.amount), 1);
+  // Past ~2 weeks a 10px label per day stops fitting, so only every nth day
+  // keeps its label. Spans longer than the card scroll horizontally instead of
+  // squeezing 365 bars into 700px.
+  const labelEvery = data.length > 14 ? Math.ceil(data.length / 14) : 1;
   return (
     <div className="w-full">
-      <div className="flex items-end gap-1.5 h-40 px-1">
-        {data.map((d, i) => {
-          const pct = (d.amount / max) * 100;
-          return (
-            <div
-              key={d.date}
-              className="flex-1 flex flex-col items-center gap-1 group"
-            >
-              <div className="relative w-full flex justify-center">
-                <span className="absolute -top-6 text-[10px] font-semibold text-dark-900/70 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                  {formatUSD(d.amount)}
+      <div className="scrollbar-slim w-full overflow-x-auto">
+        <div
+          className="flex items-end gap-1.5 h-40 px-1"
+          style={data.length > 45 ? { minWidth: data.length * 16 } : undefined}
+        >
+          {data.map((d, i) => {
+            const pct = (d.amount / max) * 100;
+            return (
+              <Link
+                key={d.date}
+                href="/admin/orders"
+                title={`${d.date} — ${formatUSD(d.amount)} · open in Orders`}
+                aria-label={`Orders for ${d.date}: ${formatUSD(d.amount)}`}
+                className="flex-1 flex flex-col items-center gap-1 group"
+              >
+                <div className="relative w-full flex justify-center">
+                  <span className="absolute -top-6 text-[10px] font-semibold text-dark-900/70 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                    {formatUSD(d.amount)}
+                  </span>
+                </div>
+                <motion.div
+                  initial={{ height: 0 }}
+                  animate={{ height: `${Math.max(pct, 4)}%` }}
+                  transition={{ delay: 0.1 + i * 0.05, duration: 0.5, ease: "easeOut" }}
+                  className="w-full rounded-t-lg bg-gradient-to-t from-brand-600 to-brand-400 hover:from-brand-500 hover:to-brand-300 transition-colors cursor-pointer relative"
+                />
+                <span
+                  className="text-[10px] font-medium text-dark-900/50 mt-1 whitespace-nowrap"
+                  style={{ visibility: i % labelEvery === 0 ? "visible" : "hidden" }}
+                >
+                  {d.label}
                 </span>
-              </div>
-              <motion.div
-                initial={{ height: 0 }}
-                animate={{ height: `${Math.max(pct, 4)}%` }}
-                transition={{ delay: 0.1 + i * 0.05, duration: 0.5, ease: "easeOut" }}
-                className="w-full rounded-t-lg bg-gradient-to-t from-brand-600 to-brand-400 hover:from-brand-500 hover:to-brand-300 transition-colors cursor-pointer relative"
-              />
-              <span className="text-[10px] font-medium text-dark-900/50 mt-1">
-                {d.label}
-              </span>
-            </div>
-          );
-        })}
+              </Link>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -325,7 +399,14 @@ function OrderStatusDonut({ data }: { data: OrderStatusCount[] }) {
 
   return (
     <div className="flex items-center gap-6">
-      <div className="relative">
+      {/* The whole donut is one jump: every slice is an order, so any slice
+          leads to the same place — the Orders queue. */}
+      <Link
+        href="/admin/orders"
+        aria-label="View all orders"
+        title="View all orders"
+        className="relative block shrink-0 cursor-pointer transition-opacity hover:opacity-85"
+      >
         <svg width={size} height={size} className="transform -rotate-90">
           {data.map((d) => {
             const pct = d.count / total;
@@ -353,10 +434,15 @@ function OrderStatusDonut({ data }: { data: OrderStatusCount[] }) {
           <span className="text-2xl font-bold text-dark-900">{total}</span>
           <span className="text-[10px] text-dark-900/40 font-medium">TOTAL</span>
         </div>
-      </div>
+      </Link>
       <div className="flex flex-col gap-2 min-w-0">
         {data.map((d) => (
-          <div key={d.status} className="flex items-center gap-2 min-w-0">
+          <Link
+            key={d.status}
+            href="/admin/orders"
+            title={`View ${d.status.replace(/_/g, " ")} orders`}
+            className="group flex items-center gap-2 min-w-0 rounded-lg px-1 -mx-1 py-0.5 hover:bg-dark-50 transition-colors"
+          >
             <span
               className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: d.color }}
@@ -367,7 +453,8 @@ function OrderStatusDonut({ data }: { data: OrderStatusCount[] }) {
             <span className="text-xs font-bold text-dark-900 ml-auto shrink-0">
               {d.count}
             </span>
-          </div>
+            <ChevronRight className="h-3 w-3 shrink-0 text-dark-900/20 transition-colors group-hover:text-brand-500" />
+          </Link>
         ))}
       </div>
     </div>
@@ -382,7 +469,12 @@ function MarketplaceBreakdown({ data }: { data: MarketplaceRevenue[] }) {
       {data.map((d) => {
         const pct = (d.revenue / max) * 100;
         return (
-          <div key={d.marketplace} className="space-y-1.5">
+          <Link
+            key={d.marketplace}
+            href="/admin/orders"
+            title={`View ${d.marketplace} orders`}
+            className="block space-y-1.5 rounded-xl -mx-1.5 px-1.5 py-1 transition-colors hover:bg-dark-50/60"
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-base">{d.icon}</span>
@@ -407,7 +499,7 @@ function MarketplaceBreakdown({ data }: { data: MarketplaceRevenue[] }) {
                 style={{ backgroundColor: d.color }}
               />
             </div>
-          </div>
+          </Link>
         );
       })}
     </div>
@@ -499,6 +591,46 @@ export default function AdminDashboard() {
    * more than one silent re-attempt. */
   const autoRetriesRef = useRef(0);
 
+  /* ─── Date range (drives every range-filtered chart) ─────────── */
+  const [rangeKey, setRangeKey] = useState<RangeKey>("7d");
+  const activeRange = rangeOf(rangeKey);
+  const rangeDays = activeRange.days;
+
+  const toast = useToast();
+
+  /* Per-widget CSV exports — client-side, the rows are already in state. */
+  const exportRevenueCsv = () => {
+    if (dailyRevenue.length === 0) return;
+    downloadCsv(
+      `chinasuuq-revenue-daily-${rangeKey}-${stamp()}`,
+      toCsv(REVENUE_CSV_COLUMNS, dailyRevenue)
+    );
+    toast.success(`Exported ${dailyRevenue.length} days of revenue`);
+  };
+
+  const exportStatusCsv = () => {
+    if (orderStatusCounts.length === 0) return;
+    const total = orderStatusCounts.reduce((s, d) => s + d.count, 0);
+    const rows = orderStatusCounts.map((d) => ({
+      ...d,
+      share: total > 0 ? Math.round((d.count / total) * 100) : 0,
+    }));
+    downloadCsv(
+      `chinasuuq-orders-by-status-${rangeKey}-${stamp()}`,
+      toCsv(STATUS_CSV_COLUMNS, rows)
+    );
+    toast.success(`Exported ${rows.length} status buckets`);
+  };
+
+  const exportRecentOrdersCsv = () => {
+    if (recentOrders.length === 0) return;
+    downloadCsv(
+      `chinasuuq-recent-orders-${stamp()}`,
+      toCsv(ORDERS_CSV_COLUMNS, recentOrders)
+    );
+    toast.success(`Exported ${recentOrders.length} recent orders`);
+  };
+
   /* Animated counters */
   const animRevenue = useAnimatedCounter(kpiValue(metrics, "revenue_all_time"), 1400, 0);
   const animOrders = useAnimatedCounter(kpiValue(metrics, "orders_total"), 1200, 0);
@@ -522,12 +654,16 @@ export default function AdminDashboard() {
        * here turns "the RPCs raced the session restore" from an assumption into
        * a guarantee, at the cost of one already-cached promise. */
       await supabase.auth.getSession();
+      /* One window for every rollup: the segmented control's `days` (null =
+       * All) flows into all three RPCs through rpcDays — see DATE_RANGES for
+       * why All maps to the RPCs' 365-day maximum. */
+      const span = rpcDays(rangeDays);
       const [kpiRes, dailyRes, statusRes, mpRes, ordersRes, productsRes, notifRes] =
         await Promise.all([
           getAdminKpis(),
-          getAdminRevenueDaily(7),
-          getAdminOrderStatusCounts(90),
-          getAdminRevenueByMarketplace(90),
+          getAdminRevenueDaily(span),
+          getAdminOrderStatusCounts(span),
+          getAdminRevenueByMarketplace(span),
           listOrders({ pageSize: 8 }),
           // The six best sellers, ordered and limited in Postgres. listProducts
           // pulls the whole catalog page to slice six here, which costs every
@@ -559,6 +695,7 @@ export default function AdminDashboard() {
           date: d.date,
           label: weekdayLabel(d.date),
           amount: d.revenue,
+          orders: d.orders,
         }))
       );
       setOrderStatusCounts(
@@ -621,7 +758,9 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+    /* rangeDays (not the object) is the dependency: DATE_RANGES is a module
+     * constant, so switching the segmented control re-runs the whole load. */
+  }, [rangeDays]);
 
   useEffect(() => {
     void load();
@@ -691,6 +830,15 @@ export default function AdminDashboard() {
         subtitle="Mission Control — live overview of ChinaSuuq operations"
         actions={
           <div className="flex items-center gap-2 flex-wrap">
+            {/* The window every range-filtered chart below obeys. "All" is the
+                rollup RPCs' full 365-day window — see DATE_RANGES. */}
+            <div role="group" aria-label="Date range" className="mr-1">
+              <FilterChips
+                options={DATE_RANGES.map((r) => ({ value: r.key, label: r.label }))}
+                value={rangeKey}
+                onChange={(key) => setRangeKey(key)}
+              />
+            </div>
             {/* Honest connection state: the pill used to claim Live whether or
                 not Realtime had a socket, which hid every silent stall. */}
             <span
@@ -723,12 +871,7 @@ export default function AdminDashboard() {
               New Order
             </a>
             <button
-              onClick={() =>
-                downloadCsv(
-                  `chinasuuq-recent-orders-${stamp()}`,
-                  toCsv(ORDERS_CSV_COLUMNS, recentOrders)
-                )
-              }
+              onClick={exportRecentOrdersCsv}
               disabled={recentOrders.length === 0}
               className="admin-btn-outline h-9 px-3 text-xs disabled:opacity-50"
             >
@@ -877,28 +1020,35 @@ export default function AdminDashboard() {
       {/* ─── Live Ops pulse strip ───────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: "In transit", value: ops.inTransit, href: "/admin/shipments", dot: "bg-info", icon: Ship },
-          { label: "Low stock items", value: ops.lowStock, href: "/admin/products", dot: "bg-warning", icon: Package },
-          { label: "Pending sourcing", value: ops.pendingSourcing, href: "/admin/sourcing", dot: "bg-error", icon: Clock3 },
-          { label: "Unread alerts", value: ops.unreadNotifications, href: "/admin/settings", dot: "bg-success", icon: Activity },
+          { label: "In transit", value: ops.inTransit, href: "/admin/shipments", dot: "bg-info", icon: Ship, hint: "Open shipments" },
+          { label: "Low stock items", value: ops.lowStock, href: "/admin/products", dot: "bg-warning", icon: Package, hint: "Open products" },
+          { label: "Pending sourcing", value: ops.pendingSourcing, href: "/admin/sourcing", dot: "bg-error", icon: Clock3, hint: "Open sourcing requests" },
+          /* Alerts are the unread notifications — ops events (orders, payments,
+           * shipments), not settings. There is no notifications page, and the
+           * shell's own bell routes to /admin/orders, so this chip does too. */
+          { label: "Unread alerts", value: ops.unreadNotifications, href: "/admin/orders", dot: "bg-success", icon: Activity, hint: "Unread notifications are ops events — open Orders" },
         ].map((chip, i) => (
-          <motion.a
+          <motion.div
             key={chip.label}
-            href={chip.href}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 + i * 0.05 }}
-            className="group flex items-center gap-3 rounded-2xl border border-dark-900/[0.06] bg-white px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
           >
-            <span className={`h-2 w-2 shrink-0 animate-pulse rounded-full ${chip.dot}`} />
-            <div className="min-w-0">
-              <p className="text-lg font-bold leading-none text-dark-900">{chip.value}</p>
-              <p className="mt-1 truncate text-[11px] font-medium uppercase tracking-wide text-dark-900/40">
-                {chip.label}
-              </p>
-            </div>
-            <chip.icon className="ml-auto h-4 w-4 shrink-0 text-dark-900/25 transition-colors group-hover:text-brand-500" />
-          </motion.a>
+            <Link
+              href={chip.href}
+              title={chip.hint}
+              className="group flex items-center gap-3 rounded-2xl border border-dark-900/[0.06] bg-white px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+            >
+              <span className={`h-2 w-2 shrink-0 animate-pulse rounded-full ${chip.dot}`} />
+              <div className="min-w-0">
+                <p className="text-lg font-bold leading-none text-dark-900">{chip.value}</p>
+                <p className="mt-1 truncate text-[11px] font-medium uppercase tracking-wide text-dark-900/40">
+                  {chip.label}
+                </p>
+              </div>
+              <chip.icon className="ml-auto h-4 w-4 shrink-0 text-dark-900/25 transition-colors group-hover:text-brand-500" />
+            </Link>
+          </motion.div>
         ))}
       </div>
 
@@ -912,13 +1062,32 @@ export default function AdminDashboard() {
           className="lg:col-span-2"
         >
         <SectionCard
-          title="Revenue — Last 7 Days"
-          subtitle="Daily revenue trend"
+          title={`Revenue — ${activeRange.heading}`}
+          subtitle={`Daily revenue trend · ${activeRange.caption}`}
           actions={
-            <div className="flex items-center gap-1.5 text-xs text-dark-900/50">
-              <Calendar className="h-3.5 w-3.5" />
-              {dailyRevenue.length > 0 &&
-                `${dailyRevenue[0].label} — ${dailyRevenue[dailyRevenue.length - 1].label}`}
+            <div className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5 text-xs text-dark-900/50">
+                <Calendar className="h-3.5 w-3.5" />
+                {dailyRevenue.length > 0 &&
+                  `${dailyRevenue[0].label} — ${dailyRevenue[dailyRevenue.length - 1].label}`}
+              </span>
+              <button
+                onClick={exportRevenueCsv}
+                disabled={loading || dailyRevenue.length === 0}
+                className="admin-btn-outline h-7 px-2 text-xs disabled:opacity-50"
+                title="Download this chart as CSV"
+              >
+                <Download className="h-3 w-3" />
+                CSV
+              </button>
+              <Link
+                href="/admin/orders"
+                className="admin-btn-ghost h-7 px-2 text-xs"
+                title="Open the orders these bars come from"
+              >
+                View
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Link>
             </div>
           }
         >
@@ -938,7 +1107,20 @@ export default function AdminDashboard() {
         >
         <SectionCard
           title="Order Status"
-          subtitle="Every order placed in the last 90 days"
+          subtitle={`Every order placed in ${activeRange.caption}`}
+          actions={
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={exportStatusCsv}
+                disabled={loading || orderStatusCounts.length === 0}
+                className="admin-btn-outline h-7 px-2 text-xs disabled:opacity-50"
+                title="Download these counts as CSV"
+              >
+                <Download className="h-3 w-3" />
+                CSV
+              </button>
+            </div>
+          }
         >
           {loading ? (
             <div className="h-40 animate-pulse rounded-xl bg-dark-50" />
@@ -962,13 +1144,24 @@ export default function AdminDashboard() {
       <SectionCard
         title="Recent Orders"
         actions={
-          <a
-            href="/admin/orders"
-            className="admin-btn-ghost h-7 px-2 text-xs"
-          >
-            View all
-            <ChevronRight className="h-3.5 w-3.5" />
-          </a>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={exportRecentOrdersCsv}
+              disabled={loading || recentOrders.length === 0}
+              className="admin-btn-outline h-7 px-2 text-xs disabled:opacity-50"
+              title="Download these orders as CSV"
+            >
+              <Download className="h-3 w-3" />
+              CSV
+            </button>
+            <Link
+              href="/admin/orders"
+              className="admin-btn-ghost h-7 px-2 text-xs"
+            >
+              View all
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
         }
         bodyClassName="p-0"
       >
@@ -983,13 +1176,14 @@ export default function AdminDashboard() {
                 <th>Status</th>
                 <th className="hidden lg:table-cell">Payment</th>
                 <th className="hidden lg:table-cell">Date</th>
+                <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-dark-900/[0.04]">
               {loading
                 ? Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}>
-                      {Array.from({ length: 7 }).map((_, j) => (
+                      {Array.from({ length: 8 }).map((_, j) => (
                         <td key={j} className="px-5 py-3">
                           <div className="h-4 animate-pulse rounded bg-dark-50" />
                         </td>
@@ -1029,6 +1223,16 @@ export default function AdminDashboard() {
                               month: "short",
                             })
                           : "—"}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <Link
+                          href="/admin/orders"
+                          className="admin-btn-ghost h-7 px-2 text-xs"
+                          title={`Open order ${o.order_number || o.id} in Orders`}
+                        >
+                          View
+                          <ChevronRight className="h-3 w-3" />
+                        </Link>
                       </td>
                     </motion.tr>
                   ))}
@@ -1189,7 +1393,17 @@ export default function AdminDashboard() {
         >
         <SectionCard
           title="Revenue by Marketplace"
-          subtitle="Actual purchase source — last 90 days"
+          subtitle={`Actual purchase source — ${activeRange.caption}`}
+          actions={
+            <Link
+              href="/admin/orders"
+              className="admin-btn-ghost h-7 px-2 text-xs"
+              title="Open the orders behind these bars"
+            >
+              View
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Link>
+          }
         >
           {loading ? (
             <div className="space-y-4">
@@ -1210,7 +1424,7 @@ export default function AdminDashboard() {
             </>
           ) : (
             <p className="text-center text-sm text-dark-900/40 py-8">
-              No orders in the last 90 days
+              No orders in {activeRange.caption}
             </p>
           )}
         </SectionCard>

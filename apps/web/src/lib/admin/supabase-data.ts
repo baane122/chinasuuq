@@ -171,6 +171,15 @@ export async function getOrderItems(orderId: string) {
 }
 
 // ─── Orders CRUD ──────────────────────────────────────────────────
+/**
+ * listOrders reads the admin view first (rich customer fields), and falls back
+ * to the verified `orders` base-table contract when the view denies or drifted
+ * (the live view is security_invoker and its alias set can't be probed with the
+ * anon key, so every column read below is guarded on the page too).
+ * Base-table columns verified live: reference, user_id, status, payment_status,
+ * shipping_method, subtotal_usd, service_fee_usd, total_usd, balance_due_usd,
+ * currency, delivery_address, destination_city, notes, created_at, updated_at.
+ */
 export async function listOrders({
   status,
   payment_status,
@@ -199,29 +208,88 @@ export async function listOrders({
         `order_number.ilike.%${search}%,reference.ilike.%${search}%,recipient_name.ilike.%${search}%,phone.ilike.%${search}%`
       );
     }
-    const { data, error } = await q;
-    const orders = (data as any[]) || [];
-    if (error) return { ok: false, error: error.message, orders: [] };
+    let { data, error } = await q;
+    let orders = (data as any[]) || [];
+
+    // An empty result from the view is a legitimate empty page — only a real
+    // error (denied view / drifted alias set) triggers the base-table fallback.
+    if (error) {
+      // Base-table fallback: same filters against verified columns only.
+      let fb = supabase
+        .from("orders")
+        .select(
+          "id, reference, user_id, status, payment_status, shipping_method, subtotal_usd, service_fee_usd, total_usd, balance_due_usd, currency, delivery_address, destination_city, notes, created_at, updated_at"
+        )
+        .order("created_at", { ascending: false })
+        .range(page * pageSize, page * pageSize + pageSize - 1);
+      if (status) fb = fb.eq("status", status);
+      if (payment_status) fb = fb.eq("payment_status", payment_status);
+      if (search) {
+        fb = fb.or(
+          `reference.ilike.%${search}%,destination_city.ilike.%${search}%,delivery_address.ilike.%${search}%`
+        );
+      }
+      const res = await fb;
+      if (res.error) {
+        return {
+          ok: false,
+          error: error?.message || res.error.message,
+          orders: [],
+        };
+      }
+      // Map base rows into the shape the view promised so page code that reads
+      // either shape keeps working (pages also guard per-field).
+      orders = ((res.data as any[]) || []).map((o) => ({
+        ...o,
+        order_number: o.reference,
+        profile_id: o.user_id,
+        total: o.total_usd,
+        subtotal: o.subtotal_usd,
+        shipping_cost: o.balance_due_usd,
+        service_fee: o.service_fee_usd,
+        city: o.destination_city,
+        address: o.delivery_address,
+      }));
+      // Fill customer contact for the page's user_ids (profiles.id = auth uid).
+      const uids = [...new Set(orders.map((o) => o.user_id).filter(Boolean))];
+      if (uids.length) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id, full_name, phone")
+          .in("id", uids);
+        const byId = new Map(((profs as any[]) || []).map((p) => [p.id, p]));
+        for (const o of orders) {
+          const p = byId.get(o.user_id);
+          o.customer_name = p?.full_name ?? null;
+          o.customer_phone = p?.phone ?? null;
+          o.recipient_name = p?.full_name ?? null;
+          o.phone = p?.phone ?? null;
+        }
+      }
+    }
 
     // One merge query for the whole page rather than a join the JS client cannot
     // express: `apps` is what the orders list shows so staff can see, per row,
-    // which marketplace each order was actually bought in.
+    // which marketplace each order was actually bought in. Non-fatal: an
+    // unavailable items view just leaves apps empty.
     const ids = orders.map((o) => o.id).filter(Boolean);
     if (ids.length) {
-      const { data: lines } = await supabase
+      const { data: lines, error: linesError } = await supabase
         .from("admin_order_items_view")
         .select("order_id, marketplace_key")
         .in("order_id", ids);
-      const byOrder = new Map<string, Set<string>>();
-      for (const line of (lines as any[]) || []) {
-        if (!line?.order_id) continue;
-        const set = byOrder.get(line.order_id) || new Set<string>();
-        set.add(line.marketplace_key);
-        byOrder.set(line.order_id, set);
-      }
-      for (const order of orders) {
-        const set = byOrder.get(order.id);
-        order.apps = set ? [...set].sort() : [];
+      if (!linesError) {
+        const byOrder = new Map<string, Set<string>>();
+        for (const line of (lines as any[]) || []) {
+          if (!line?.order_id) continue;
+          const set = byOrder.get(line.order_id) || new Set<string>();
+          set.add(line.marketplace_key);
+          byOrder.set(line.order_id, set);
+        }
+        for (const order of orders) {
+          const set = byOrder.get(order.id);
+          order.apps = set ? [...set].sort() : [];
+        }
       }
     }
     return { ok: true, orders };

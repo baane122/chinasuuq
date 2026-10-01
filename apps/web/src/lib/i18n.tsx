@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import en from "@/i18n/en.json";
 import so from "@/i18n/so.json";
 
@@ -8,6 +8,7 @@ type Locale = "en" | "so";
 type Translations = typeof en;
 
 const translations: Record<Locale, Translations> = { en, so };
+const LOCALE_KEY = "chinasuuq-locale";
 
 interface I18nContextType {
   locale: Locale;
@@ -18,13 +19,31 @@ interface I18nContextType {
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
+  // First render is always "en" so SSR and hydration match; the saved choice
+  // is restored right after mount (it used to be written but never read).
   const [locale, setLocaleState] = useState<Locale>("en");
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(LOCALE_KEY);
+      if (saved === "so" || saved === "en") {
+        setLocaleState(saved);
+        document.documentElement.lang = saved === "so" ? "so" : "en";
+      }
+    } catch {
+      /* private mode / storage disabled — stay on English */
+    }
+  }, []);
 
   const setLocale = useCallback((newLocale: Locale) => {
     setLocaleState(newLocale);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("chinasuuq-locale", newLocale);
+    try {
+      localStorage.setItem(LOCALE_KEY, newLocale);
+    } catch {
+      /* ignore */
     }
+    // Keep <html lang> in sync so screen readers and translation tools follow.
+    document.documentElement.lang = newLocale === "so" ? "so" : "en";
   }, []);
 
   const t = useCallback(

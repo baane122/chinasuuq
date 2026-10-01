@@ -111,9 +111,14 @@ export async function handler(req: Request) {
       .select("source_text, source_hash, translated_text")
       .eq("target_lang", targetLang)
       .in("source_hash", [...hashByText.values()]);
-    if (readErr) return json({ ok: false, error: "cache_read_failed" }, 500);
+    // Degrade, don't die: if the cache table is missing/unavailable (e.g.
+    // migration not yet applied), treat it as a cold cache and translate fresh.
+    // A hard 500 here silently kills the whole mobile translation feature —
+    // the client's best-effort contract turns any error into untranslated
+    // Chinese, which is exactly what the cache exists to avoid.
+    if (readErr) console.warn("ai-translate: cache read failed, continuing without cache:", readErr.message);
 
-    for (const row of (hitRows ?? []) as { source_text?: string; source_hash?: string; translated_text?: string }[]) {
+    for (const row of (readErr ? [] : hitRows) as { source_text?: string; source_hash?: string; translated_text?: string }[]) {
       const expected = row.source_hash ? textByHash.get(row.source_hash) : undefined;
       if (expected === undefined || row.source_text !== expected) continue;
       if (typeof row.translated_text !== "string") continue;

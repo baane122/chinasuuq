@@ -1,19 +1,19 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import {
-  ArrowLeft, ArrowRight, BadgeCheck, CheckCircle2, MessageCircle,
+  ArrowLeft, ArrowRight, BadgeCheck, FileText, CheckCircle2, MessageCircle,
   Package, ShieldCheck, Truck, Wallet,
 } from "lucide-react";
 import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { MARKETPLACE_CATALOG, getMarketplace } from "@/lib/marketplaces";
+import { waLink } from "@/lib/whatsapp";
+import QuoteRequestModal from "@/components/quote/QuoteRequestModal";
 
-const WA_NUMBER = "8615277074143";
-const waLink = (text: string) =>
-  `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(text)}`;
 
 const STEPS = [
   { icon: MessageCircle, title: "Send the product link", text: `Find any item on ${"{name}"} and send us the link or a screenshot on WhatsApp.` },
@@ -42,6 +42,7 @@ const FAQS = [
 ];
 
 export default function MarketplaceDetail({ id }: { id: string }) {
+  const [quoteOpen, setQuoteOpen] = useState(false);
   const m = getMarketplace(id);
 
   if (!m) {
@@ -55,7 +56,7 @@ export default function MarketplaceDetail({ id }: { id: string }) {
             This marketplace isn&apos;t part of the catalog yet — ask us on WhatsApp and we&apos;ll
             source from it anyway.
           </p>
-          <Link href="/marketplaces" className="admin-btn-primary mt-6">
+          <Link href="/marketplaces" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-brand-500 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-600">
             <ArrowLeft className="h-4 w-4" />
             All marketplaces
           </Link>
@@ -70,6 +71,7 @@ export default function MarketplaceDetail({ id }: { id: string }) {
   const fill = (s: string) => s.replace("{name}", m.displayName);
 
   return (
+    <>
     <div className="min-h-screen bg-warm-50">
       <Header />
       <main>
@@ -202,10 +204,20 @@ export default function MarketplaceDetail({ id }: { id: string }) {
                 <span className="inline-flex items-center gap-1.5"><BadgeCheck className="h-4 w-4 text-brand-500" /> Fixed USD quotes</span>
               </div>
             </div>
-            <a href={waLink(`Hello ChinaSuuq, I want to order from ${m.name}`)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#25D366]/25 transition-all hover:bg-[#1fb857] active:scale-[0.97]">
-              <MessageCircle className="h-4 w-4" />
-              Chat to order
-            </a>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setQuoteOpen(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:bg-brand-600 active:scale-[0.97]"
+              >
+                <FileText className="h-4 w-4" />
+                Get a free quote
+              </button>
+              <a href={waLink(`Hello ChinaSuuq, I want to order from ${m.name}`)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#25D366]/25 transition-all hover:bg-[#1fb857] active:scale-[0.97]">
+                <MessageCircle className="h-4 w-4" />
+                Chat to order
+              </a>
+            </div>
           </div>
 
           {/* Other marketplaces */}
@@ -238,5 +250,7 @@ export default function MarketplaceDetail({ id }: { id: string }) {
       <Footer />
       <WhatsAppFAB />
     </div>
+    <QuoteRequestModal open={quoteOpen} onClose={() => setQuoteOpen(false)} defaultMarketplace={m.id} />
+    </>
   );
 }

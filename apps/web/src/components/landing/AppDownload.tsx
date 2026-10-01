@@ -2,7 +2,8 @@
 
 import { useI18n } from "@/lib/i18n";
 import { motion } from "framer-motion";
-import { Smartphone, QrCode, ArrowRight, Star, CheckCircle2, MessageCircle } from "lucide-react";
+import { Smartphone, ArrowRight, CheckCircle2, MessageCircle } from "lucide-react";
+import { waLink } from "@/lib/whatsapp";
 
 export default function AppDownload() {
   const { t, locale } = useI18n();
@@ -38,7 +39,7 @@ export default function AppDownload() {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="text-3xl sm:text-4xl font-bold text-white mb-4 leading-tight"
+                className="text-3xl sm:text-4xl font-bold text-white mb-4 leading-tight whitespace-pre-line"
               >
                 {locale === "en" ? "Shop from your phone.\nDelivered to your door." : "Iibso mobaylkaaga.\nWaa laguu keeneayaa albaabkaaga."}
               </motion.h2>
@@ -51,11 +52,11 @@ export default function AppDownload() {
                 className="text-base text-white/70 mb-8 max-w-md mx-auto lg:mx-0 leading-relaxed"
               >
                 {locale === "en"
-                  ? "Browse 6 Chinese marketplaces, compare prices in real-time, pay with ZAAD or EVC Plus, and track your delivery — all in one app."
-                  : "Eeg 6 suuq oo Shiinaha ah, barbaro qiimaha toos ah, ku bixi ZAAD ama EVC Plus, oo raadso gaarsiintaada — dhammaan hal ab gudihiisa."}
+                  ? "Browse 7 Chinese marketplaces, compare prices in real-time, pay with ZAAD or EVC Plus, and track your delivery — all in one app."
+                  : "Eeg 7 suuq oo Shiinaha ah, barbaro qiimaha toos ah, ku bixi ZAAD ama EVC Plus, oo raadso gaarsiintaada — dhammaan hal ab gudihiisa."}
               </motion.p>
 
-              {/* Stats row */}
+              {/* Stats row — factual, no invented ratings or download counts */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
@@ -64,16 +65,16 @@ export default function AppDownload() {
                 className="flex flex-wrap gap-6 mb-8 justify-center lg:justify-start"
               >
                 <div className="flex items-center gap-2">
-                  <div className="flex -space-x-1">
-                    {[1, 2, 3, 4, 5].map((i) => (
-                      <Star key={i} className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
-                    ))}
-                  </div>
-                  <span className="text-xs font-semibold text-white/80">4.8/5 rating</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                  <span className="text-xs font-semibold text-white/80">
+                    {locale === "en" ? "Official Android app" : "Abka Android ee rasmiga ah"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                  <span className="text-xs font-semibold text-white/80">10,000+ downloads</span>
+                  <span className="text-xs font-semibold text-white/80">
+                    {locale === "en" ? "Somali + English inside" : "Soomaali iyo English gudihiisa"}
+                  </span>
                 </div>
               </motion.div>
 
@@ -95,30 +96,36 @@ export default function AppDownload() {
                   </div>
                 </a>
 
-                {/* Google Play (coming) */}
-                <a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20download%20the%20app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-3 bg-dark-900 hover:bg-dark-800 text-white px-5 py-3 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-dark-900/30 opacity-80">
+                {/* Google Play — honest "coming soon", not a disguised WhatsApp link */}
+                <span
+                  aria-disabled="true"
+                  className="inline-flex items-center gap-3 bg-dark-900/60 text-white/40 px-5 py-3 rounded-xl border border-white/10 select-none"
+                >
                   <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none">
                     <path d="M3 20.5V3.5C3 2.91 3.34 2.39 3.84 2.15L13.69 12L3.84 21.85C3.34 21.6 3 21.09 3 20.5ZM16.81 15.12L6.05 21.34L14.54 12.85L16.81 15.12ZM20.16 10.81C20.5 11.08 20.75 11.5 20.75 12C20.75 12.5 20.5 12.92 20.16 13.19L17.89 14.5L15.39 12L17.89 9.5L20.16 10.81ZM6.05 2.66L16.81 8.88L14.54 11.15L6.05 2.66Z" fill="currentColor"/>
                   </svg>
                   <div className="text-left">
-                    <div className="text-[10px] text-white/50 leading-tight">GET IT ON</div>
-                    <div className="text-sm font-semibold leading-tight">Google Play</div>
+                    <div className="text-[10px] leading-tight">GET IT ON</div>
+                    <div className="text-sm font-semibold leading-tight">Google Play — soon</div>
                   </div>
-                </a>
+                </span>
 
-                {/* App Store */}
-                <a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20download%20the%20app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-3 bg-dark-900 hover:bg-dark-800 text-white px-5 py-3 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-dark-900/30">
+                {/* App Store — honest "coming soon" */}
+                <span
+                  aria-disabled="true"
+                  className="inline-flex items-center gap-3 bg-dark-900/60 text-white/40 px-5 py-3 rounded-xl border border-white/10 select-none"
+                >
                   <svg className="w-7 h-7" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M18.71 19.5C17.88 20.74 17 21.95 15.66 21.97C14.32 22 13.89 21.18 12.37 21.18C10.84 21.18 10.37 21.95 9.1 22C7.79 22.05 6.8 20.68 5.96 19.47C4.25 16.56 2.93 11.3 4.7 7.72C5.57 5.94 7.36 4.86 9.28 4.84C10.56 4.81 11.78 5.7 12.57 5.7C13.36 5.7 14.85 4.62 16.41 4.8C17.08 4.83 18.88 5.07 20.04 6.78C19.91 6.86 17.72 8.1 17.75 10.76C17.78 13.9 20.57 14.97 20.6 14.98C20.57 15.06 20.17 16.46 18.71 19.5ZM13 3.5C13.73 2.67 14.94 2.04 15.94 2C16.07 3.17 15.6 4.35 14.9 5.19C14.21 6.04 13.07 6.7 11.95 6.61C11.8 5.46 12.36 4.26 13 3.5Z"/>
                   </svg>
                   <div className="text-left">
-                    <div className="text-[10px] text-white/50 leading-tight">Download on the</div>
-                    <div className="text-sm font-semibold leading-tight">App Store</div>
+                    <div className="text-[10px] leading-tight">Download on the</div>
+                    <div className="text-sm font-semibold leading-tight">App Store — soon</div>
                   </div>
-                </a>
+                </span>
 
                 {/* WhatsApp */}
-                <a href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20want%20to%20download%20the%20app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-3 bg-[#25D366] hover:bg-[#1fb857] text-white px-5 py-3 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-[#25D366]/30">
+                <a href={waLink("Hello ChinaSuuq, I want to download the app")} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-3 bg-[#25D366] hover:bg-[#1fb857] text-white px-5 py-3 rounded-xl transition-all duration-200 active:scale-[0.97] shadow-lg shadow-[#25D366]/30">
                   <MessageCircle className="w-6 h-6" />
                   <div className="text-left">
                     <div className="text-[10px] text-white/70 leading-tight">Chat with us on</div>

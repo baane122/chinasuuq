@@ -1,12 +1,13 @@
 "use client";
 
 import { Suspense, useEffect, useState, useMemo, useCallback } from "react";
+import { waLink } from "@/lib/whatsapp";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatUSD, formatCNY } from "@/lib/utils";
 import {
   ClipboardList, Loader2, Plus, Edit3, Trash2, ExternalLink,
   Download, BarChart3, ArrowUpRight, Clock, CheckCircle2,
-  Smartphone, ShoppingCart, MapPin, Check, X, Columns3, RotateCcw
+  Smartphone, ShoppingCart, MapPin, X, RotateCcw
 } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
@@ -26,27 +27,27 @@ import { motion, AnimatePresence } from "framer-motion";
 
 interface SourcingRequest {
   id: string;
-  customer_id: string;
-  marketplace: string;
+  user_id: string;
+  marketplace: string | null;
   product_url?: string;
   product_description: string;
   quantity: number;
   destination_city: string;
-  status: "pending" | "assigned" | "quoted" | "approved" | "purchased";
-  agent_id?: string;
+  status: "pending" | "assigned" | "quoted" | "approved" | "purchased" | "cancelled";
   created_at: string;
 }
 
-interface QuoteItem {
+/* Session-local record of quotes created from the drawer. `quotes` rows carry
+ * no request reference in the schema, so they cannot be re-fetched per
+ * request — the drawer list only shows what this session created. */
+interface QuoteEntry {
   id: string;
-  sourcing_request_id: string;
+  reference: string;
   product_name: string;
-  supplier: string;
-  price_cny: number;
-  price_usd: number;
-  moq: number;
-  source_url?: string;
-  selected: boolean;
+  quantity: number;
+  unit_price_cny: number;
+  total_cny: number;
+  total_usd: number;
 }
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -57,6 +58,7 @@ const statusColors: Record<string, string> = {
   quoted: "bg-purple-50 text-purple-700 border-purple-200",
   approved: "bg-green-50 text-green-700 border-green-200",
   purchased: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  cancelled: "bg-red-50 text-red-700 border-red-200",
 };
 
 const statusLabels: Record<string, string> = {
@@ -65,12 +67,13 @@ const statusLabels: Record<string, string> = {
   quoted: "Quoted",
   approved: "Approved",
   purchased: "Purchased",
+  cancelled: "Cancelled",
 };
 
 const statusWorkflow = ["pending", "assigned", "quoted", "approved", "purchased"];
 
 const defaultForm = {
-  customer_id: "",
+  user_id: "",
   marketplace: "",
   product_description: "",
   product_url: "",
@@ -78,17 +81,31 @@ const defaultForm = {
   destination_city: "",
 };
 
-const defaultQuote: QuoteItem = {
-  id: "",
-  sourcing_request_id: "",
-  product_name: "",
-  supplier: "",
-  price_cny: 0,
-  price_usd: 0,
-  moq: 1,
-  source_url: "",
-  selected: false,
-};
+const defaultQuoteForm = { unit_price_cny: 0, quantity: 1 };
+
+/* Fallback CNY→USD rate when `exchange_rates` has no active CNY→USD row. */
+const FALLBACK_CNY_USD_RATE = 0.14;
+
+/* Values allowed by the sourcing_requests.marketplace enum. */
+const MARKETPLACES = [
+  { value: "1688", label: "1688" },
+  { value: "taobao", label: "Taobao" },
+  { value: "yiwugo", label: "Yiwugo" },
+  { value: "alibaba", label: "Alibaba" },
+  { value: "chinagoods", label: "Chinagoods" },
+  { value: "jd", label: "JD" },
+];
+
+/* QT-YYYYMMDD-XXXX — 4 random chars via crypto.getRandomValues. */
+const QUOTE_REF_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function makeQuoteReference(): string {
+  const now = new Date();
+  const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes, (b) => QUOTE_REF_CHARS[b % QUOTE_REF_CHARS.length]).join("");
+  return `QT-${ymd}-${suffix}`;
+}
 
 /* ── URL-backed view state ──────────────────────────────────────
  * `view` switches between the request list and the sourcing board for the
@@ -163,9 +180,11 @@ function SourcingPageContent() {
 
   // Detail / price comparison
   const [selected, setSelected] = useState<SourcingRequest | null>(null);
-  const [quotes, setQuotes] = useState<Record<string, QuoteItem[]>>({});
+  const [quotes, setQuotes] = useState<Record<string, QuoteEntry[]>>({});
   const [showQuoteModal, setShowQuoteModal] = useState(false);
-  const [quoteForm, setQuoteForm] = useState(defaultQuote);
+  const [quoteForm, setQuoteForm] = useState(defaultQuoteForm);
+  const [savingQuote, setSavingQuote] = useState(false);
+  const [cnyRate, setCnyRate] = useState(FALLBACK_CNY_USD_RATE);
 
   /* ── Fetch ──────────────────────────────────────────────────── */
 
@@ -190,6 +209,22 @@ function SourcingPageContent() {
     // liveVersion comes from the realtime channel in the admin layout, so a
     // request captured on the phone appears without a manual reload.
   }, [fetchRequests, liveVersion]);
+
+  // Active CNY→USD rate for quote totals (see exchange_rates contract).
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("exchange_rates")
+        .select("rate")
+        .eq("from_currency", "CNY")
+        .eq("to_currency", "USD")
+        .eq("is_active", true)
+        .order("effective_from", { ascending: false })
+        .limit(1);
+      const rate = data?.[0]?.rate;
+      if (typeof rate === "number" && rate > 0) setCnyRate(rate);
+    })();
+  }, []);
 
   /* ── Filter ─────────────────────────────────────────────────── */
 
@@ -218,9 +253,9 @@ function SourcingPageContent() {
     if (q) {
       result = result.filter(
         (r) =>
-          r.customer_id.toLowerCase().includes(q) ||
-          r.marketplace.toLowerCase().includes(q) ||
-          r.destination_city.toLowerCase().includes(q) ||
+          (r.user_id ?? "").toLowerCase().includes(q) ||
+          (r.marketplace ?? "").toLowerCase().includes(q) ||
+          (r.destination_city ?? "").toLowerCase().includes(q) ||
           r.product_description?.toLowerCase().includes(q)
       );
     }
@@ -277,8 +312,8 @@ function SourcingPageContent() {
   const openEdit = (req: SourcingRequest) => {
     setEditId(req.id);
     setForm({
-      customer_id: req.customer_id,
-      marketplace: req.marketplace,
+      user_id: req.user_id ?? "",
+      marketplace: req.marketplace ?? "",
       product_description: req.product_description,
       product_url: req.product_url || "",
       quantity: req.quantity,
@@ -288,15 +323,15 @@ function SourcingPageContent() {
   };
 
   const handleSave = async () => {
-    if (!form.customer_id || !form.marketplace || !form.product_description || !form.destination_city) {
+    if (!form.user_id || !form.product_description || !form.destination_city) {
       toast.error("Please fill in all required fields");
       return;
     }
     setSaving(true);
     try {
       const payload = {
-        customer_id: form.customer_id,
-        marketplace: form.marketplace,
+        user_id: form.user_id,
+        marketplace: form.marketplace || null,
         product_description: form.product_description,
         product_url: form.product_url || null,
         quantity: form.quantity,
@@ -366,40 +401,90 @@ function SourcingPageContent() {
     }
   };
 
-  /* ── Price comparison helpers ───────────────────────────────── */
+  /* ── Quote drawer (real writes to quotes + quote_items) ─────── */
 
-  const getQuotesForRequest = (requestId: string): QuoteItem[] => {
+  const getQuotesForRequest = (requestId: string): QuoteEntry[] => {
     return quotes[requestId] || [];
   };
 
-  const addQuote = () => {
+  const openQuoteDrawer = () => {
     if (!selected) return;
-    const newQuote: QuoteItem = {
-      ...defaultQuote,
-      id: `q_${Date.now()}`,
-      sourcing_request_id: selected.id,
-      selected: false,
-    };
-    setQuoteForm(newQuote);
+    setQuoteForm({
+      unit_price_cny: 0,
+      quantity: Math.max(1, Math.floor(Number(selected.quantity) || 1)),
+    });
     setShowQuoteModal(true);
   };
 
-  const saveQuote = () => {
-    if (!selected) return;
-    const existing = quotes[selected.id] || [];
-    const newQuotes = [...existing, { ...quoteForm, id: `q_${Date.now()}` }];
-    setQuotes((prev) => ({ ...prev, [selected.id]: newQuotes }));
-    setShowQuoteModal(false);
-    toast.success("Quote added for comparison");
-  };
+  const handleAddQuote = async () => {
+    if (!selected || savingQuote) return;
+    const unitPrice = Number(quoteForm.unit_price_cny);
+    const qty = Math.max(1, Math.floor(Number(quoteForm.quantity) || 1));
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      toast.error("Enter a valid unit price in CNY");
+      return;
+    }
+    if (!selected.user_id) {
+      toast.error("This request has no customer user attached");
+      return;
+    }
 
-  const toggleQuoteSelect = (requestId: string, quoteId: string) => {
-    setQuotes((prev) => ({
-      ...prev,
-      [requestId]: (prev[requestId] || []).map((q) =>
-        q.id === quoteId ? { ...q, selected: !q.selected } : q
-      ),
-    }));
+    setSavingQuote(true);
+    try {
+      const totalCny = Math.round(unitPrice * qty * 100) / 100;
+      const totalUsd = Math.round(totalCny * cnyRate * 100) / 100;
+      // Draft quotes are valid for 14 days.
+      const validUntil = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: quoteRow, error: quoteError } = await supabase
+        .from("quotes")
+        .insert({
+          reference: makeQuoteReference(),
+          user_id: selected.user_id,
+          status: "draft",
+          total_cny: totalCny,
+          total_usd: totalUsd,
+          valid_until: validUntil,
+        })
+        .select("id, reference")
+        .single();
+      if (quoteError) throw quoteError;
+
+      const { error: itemError } = await supabase.from("quote_items").insert({
+        quote_id: quoteRow.id,
+        product_name: (selected.product_description || "").slice(0, 200),
+        quantity: qty,
+        unit_price_cny: unitPrice,
+      });
+      if (itemError) {
+        // Best-effort rollback so a failed item write leaves no orphan quote.
+        await supabase.from("quotes").delete().eq("id", quoteRow.id);
+        throw itemError;
+      }
+
+      setQuotes((prev) => ({
+        ...prev,
+        [selected.id]: [
+          ...(prev[selected.id] || []),
+          {
+            id: quoteRow.id,
+            reference: quoteRow.reference,
+            product_name: (selected.product_description || "").slice(0, 200),
+            quantity: qty,
+            unit_price_cny: unitPrice,
+            total_cny: totalCny,
+            total_usd: totalUsd,
+          },
+        ],
+      }));
+      setShowQuoteModal(false);
+      toast.success(`Quote ${quoteRow.reference} created`);
+      fetchRequests();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create quote");
+    } finally {
+      setSavingQuote(false);
+    }
   };
 
   const truncate = (text: string, max: number) => {
@@ -407,12 +492,18 @@ function SourcingPageContent() {
     return text.length > max ? text.slice(0, max) + "..." : text;
   };
 
+  // Live totals preview for the Add Quote drawer.
+  const quoteQty = Math.max(1, Math.floor(Number(quoteForm.quantity) || 1));
+  const quoteUnit = Number(quoteForm.unit_price_cny) || 0;
+  const quoteTotalCny = Math.round(quoteUnit * quoteQty * 100) / 100;
+  const quoteTotalUsd = Math.round(quoteTotalCny * cnyRate * 100) / 100;
+
   /* ── Export ─────────────────────────────────────────────────── */
 
   const handleExport = () => {
     const headers = ["Customer", "Marketplace", "Product", "Qty", "Destination", "Status", "Date"];
     const rows = filteredRequests.map((r) => [
-      r.customer_id, r.marketplace, r.product_description,
+      r.user_id ?? "", r.marketplace ?? "", r.product_description,
       String(r.quantity), r.destination_city, r.status,
       r.created_at ? formatDate(r.created_at) : "",
     ]);
@@ -454,7 +545,7 @@ function SourcingPageContent() {
               </button>
             )}
             <a
-              href="https://wa.me/8615277074143?text=Hello%20ChinaSuuq%2C%20I%20have%20a%20sourcing%20request"
+              href={waLink("Hello ChinaSuuq, I have a sourcing request")}
               target="_blank"
               rel="noopener noreferrer"
               className="admin-btn-outline"
@@ -508,7 +599,7 @@ function SourcingPageContent() {
           placeholder={
             view === "board"
               ? "Search a line by product, order reference or customer…"
-              : "Search by customer, marketplace, or city..."
+              : "Search by user, marketplace, or city..."
           }
           className="max-w-md flex-1"
         />
@@ -645,11 +736,11 @@ function SourcingPageContent() {
                     className="hover:bg-dark-50/50 transition-colors cursor-pointer"
                   >
                     <td className="px-6 py-3.5">
-                      <span className="text-sm font-medium text-dark-900">{req.customer_id}</span>
+                      <span className="text-sm font-medium text-dark-900">{req.user_id}</span>
                     </td>
                     <td className="px-6 py-3.5">
                       <span className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 text-orange-700 px-2.5 py-0.5 text-xs font-medium">
-                        {req.marketplace}
+                        {req.marketplace ?? "—"}
                       </span>
                     </td>
                     <td className="px-6 py-3.5">
@@ -777,21 +868,21 @@ function SourcingPageContent() {
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-semibold text-dark-500">Request Progress</span>
                     <span className="text-xs font-bold text-brand-600">
-                      {Math.round((statusWorkflow.indexOf(selected.status) / (statusWorkflow.length - 1)) * 100)}%
+                      {Math.round((Math.max(0, statusWorkflow.indexOf(selected.status)) / (statusWorkflow.length - 1)) * 100)}%
                     </span>
                   </div>
                   <div className="h-2 w-full rounded-full bg-dark-100 overflow-hidden">
                     <motion.div
                       className="h-full rounded-full bg-gradient-to-r from-brand-500 to-brand-600"
                       initial={{ width: 0 }}
-                      animate={{ width: `${(statusWorkflow.indexOf(selected.status) / (statusWorkflow.length - 1)) * 100}%` }}
+                      animate={{ width: `${(Math.max(0, statusWorkflow.indexOf(selected.status)) / (statusWorkflow.length - 1)) * 100}%` }}
                       transition={{ duration: 0.6 }}
                     />
                   </div>
                 </div>
 
                 {/* Quick advance */}
-                {selected.status !== "purchased" && (
+                {selected.status !== "purchased" && selected.status !== "cancelled" && (
                   <button
                     onClick={() => {
                       const idx = statusWorkflow.indexOf(selected.status);
@@ -817,8 +908,8 @@ function SourcingPageContent() {
                 <div className="space-y-3 rounded-2xl bg-dark-50 p-4">
                   <p className="text-xs font-semibold text-dark-900/50 uppercase tracking-wider">Details</p>
                   {[
-                    { label: "Customer", value: selected.customer_id },
-                    { label: "Marketplace", value: selected.marketplace },
+                    { label: "Customer", value: selected.user_id },
+                    { label: "Marketplace", value: selected.marketplace ?? "—" },
                     { label: "Quantity", value: String(selected.quantity) },
                     { label: "Destination", value: selected.destination_city },
                   ].map((item) => (
@@ -846,12 +937,14 @@ function SourcingPageContent() {
                   )}
                 </div>
 
-                {/* Price comparison */}
+                {/* Quotes created from this drawer. `quotes` rows carry no
+                    request reference in the schema, so this list only shows
+                    what this session created. */}
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs font-semibold text-dark-900/50 uppercase tracking-wider">Price Comparison</p>
+                    <p className="text-xs font-semibold text-dark-900/50 uppercase tracking-wider">Quotes</p>
                     <button
-                      onClick={addQuote}
+                      onClick={openQuoteDrawer}
                       className="flex items-center gap-1 rounded-lg bg-brand-50 px-2.5 py-1 text-[10px] font-semibold text-brand-600 hover:bg-brand-100"
                     >
                       <Plus className="h-3 w-3" />
@@ -861,42 +954,27 @@ function SourcingPageContent() {
                   {getQuotesForRequest(selected.id).length === 0 ? (
                     <div className="rounded-xl border border-dashed border-dark-200 p-6 text-center">
                       <ShoppingCart className="mx-auto h-6 w-6 text-dark-300" />
-                      <p className="mt-2 text-xs text-dark-400">No quotes yet. Add supplier quotes to compare prices.</p>
+                      <p className="mt-2 text-xs text-dark-400">
+                        No quotes created yet. New quotes are saved as drafts for this customer.
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-2">
                       {getQuotesForRequest(selected.id).map((q) => (
-                        <div
-                          key={q.id}
-                          className={cn(
-                            "rounded-xl border p-3 transition-all cursor-pointer",
-                            q.selected ? "border-brand-500 bg-brand-50/50" : "border-dark-100 hover:border-brand-300"
-                          )}
-                          onClick={() => toggleQuoteSelect(selected.id, q.id)}
-                        >
+                        <div key={q.id} className="rounded-xl border border-dark-100 p-3">
                           <div className="flex items-start justify-between">
                             <div>
                               <p className="text-sm font-semibold text-dark-900">{q.product_name}</p>
-                              <p className="text-xs text-dark-400">{q.supplier}</p>
+                              <p className="text-xs text-dark-400">{q.reference}</p>
                             </div>
                             <div className="text-right">
-                              <p className="text-sm font-bold text-brand-600">{formatCNY(q.price_cny)}</p>
-                              <p className="text-[10px] text-dark-400">~{formatUSD(q.price_usd)}</p>
+                              <p className="text-sm font-bold text-brand-600">{formatCNY(q.total_cny)}</p>
+                              <p className="text-[10px] text-dark-400">~{formatUSD(q.total_usd)}</p>
                             </div>
                           </div>
-                          <div className="mt-2 flex items-center gap-3 text-[10px] text-dark-400">
-                            <span>MOQ: {q.moq}</span>
-                            {q.source_url && (
-                              <a href={q.source_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-brand-500 hover:underline">
-                                View Source
-                              </a>
-                            )}
+                          <div className="mt-2 text-[10px] text-dark-400">
+                            {q.quantity} × {formatCNY(q.unit_price_cny)} · draft
                           </div>
-                          {q.selected && (
-                            <div className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-brand-600">
-                              <Check className="h-3 w-3" /> Selected
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -927,21 +1005,30 @@ function SourcingPageContent() {
       >
         <div className="space-y-4">
           <FormInput
-            label="Customer ID"
-            name="customer_id"
-            value={form.customer_id}
-            onChange={(v) => setForm((f) => ({ ...f, customer_id: v }))}
-            placeholder="e.g. uuid or reference"
+            label="Customer User ID"
+            name="user_id"
+            value={form.user_id}
+            onChange={(v) => setForm((f) => ({ ...f, user_id: v }))}
+            placeholder="profiles.id of the customer"
             required
           />
-          <FormInput
-            label="Marketplace"
-            name="marketplace"
-            value={form.marketplace}
-            onChange={(v) => setForm((f) => ({ ...f, marketplace: v }))}
-            placeholder="e.g. 1688, Taobao, Yiwugo"
-            required
-          />
+          <div className="space-y-1.5">
+            <label htmlFor="marketplace" className="block text-sm font-medium text-dark-700">
+              Marketplace
+            </label>
+            <select
+              id="marketplace"
+              name="marketplace"
+              value={form.marketplace}
+              onChange={(e) => setForm((f) => ({ ...f, marketplace: e.target.value }))}
+              className="w-full rounded-xl border border-dark-200 bg-white px-3.5 py-2.5 text-sm text-dark-900 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+            >
+              <option value="">None</option>
+              {MARKETPLACES.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
           <FormInput
             label="Product Description"
             name="product_description"
@@ -982,78 +1069,63 @@ function SourcingPageContent() {
         </div>
       </SidePanel>
 
-      {/* ── Add Quote Panel ── */}
+      {/* ── Add Quote Panel (writes quotes + quote_items) ── */}
       <SidePanel
         open={showQuoteModal}
         onClose={() => setShowQuoteModal(false)}
-        title="Add Supplier Quote"
-        subtitle="Compare supplier prices for this request"
+        title="Add Quote"
+        subtitle="Creates a draft quote for this customer"
         width="max-w-xl"
         footer={
           <>
             <button onClick={() => setShowQuoteModal(false)} className="admin-btn-ghost">Cancel</button>
-            <button onClick={saveQuote} className="admin-btn-primary">Add Quote</button>
+            <button onClick={handleAddQuote} disabled={savingQuote} className="admin-btn-primary">
+              {savingQuote ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Create Quote
+            </button>
           </>
         }
       >
         <div className="space-y-4">
-          <FormInput
-            label="Product Name"
-            name="product_name"
-            value={quoteForm.product_name}
-            onChange={(v) => setQuoteForm((q) => ({ ...q, product_name: v }))}
-            placeholder="Product name from supplier"
-            required
-          />
-          <FormInput
-            label="Supplier"
-            name="supplier"
-            value={quoteForm.supplier}
-            onChange={(v) => setQuoteForm((q) => ({ ...q, supplier: v }))}
-            placeholder="Supplier name or ID"
-            required
-          />
+          <div className="rounded-xl bg-dark-50 p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-dark-900/40 mb-1">Product</p>
+            <p className="text-sm text-dark-700 whitespace-pre-wrap">
+              {(selected?.product_description || "").slice(0, 200) || "—"}
+            </p>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <FormInput
-              label="Price (CNY)"
-              name="price_cny"
+              label="Quantity"
+              name="quote_quantity"
               type="number"
-              value={quoteForm.price_cny}
-              onChange={(v) => {
-                const cny = Number(v);
-                setQuoteForm((q) => ({ ...q, price_cny: cny, price_usd: Math.round(cny * 0.14 * 100) / 100 }));
-              }}
+              value={quoteForm.quantity}
+              onChange={(v) => setQuoteForm((q) => ({ ...q, quantity: Math.max(1, Math.floor(Number(v) || 1)) }))}
+              min={1}
+              required
+            />
+            <FormInput
+              label="Unit Price (CNY)"
+              name="unit_price_cny"
+              type="number"
+              value={quoteForm.unit_price_cny}
+              onChange={(v) => setQuoteForm((q) => ({ ...q, unit_price_cny: Number(v) || 0 }))}
               min={0}
               step={0.01}
               required
             />
-            <FormInput
-              label="Price (USD)"
-              name="price_usd"
-              type="number"
-              value={quoteForm.price_usd}
-              onChange={(v) => setQuoteForm((q) => ({ ...q, price_usd: Number(v) }))}
-              min={0}
-              step={0.01}
-            />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <FormInput
-              label="MOQ"
-              name="moq"
-              type="number"
-              value={quoteForm.moq}
-              onChange={(v) => setQuoteForm((q) => ({ ...q, moq: Number(v) || 1 }))}
-              min={1}
-            />
-            <FormInput
-              label="Source URL"
-              name="source_url"
-              type="url"
-              value={quoteForm.source_url || ""}
-              onChange={(v) => setQuoteForm((q) => ({ ...q, source_url: v }))}
-              placeholder="https://..."
-            />
+          <div className="rounded-xl border border-dark-100 p-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-dark-500">Total (CNY)</span>
+              <span className="font-semibold text-dark-900">{formatCNY(quoteTotalCny)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-dark-500">Total (USD)</span>
+              <span className="font-semibold text-dark-900">≈ {formatUSD(quoteTotalUsd)}</span>
+            </div>
+            <p className="mt-1 text-[10px] text-dark-400">
+              CNY→USD rate {cnyRate} · saved as draft · valid 14 days
+            </p>
           </div>
         </div>
       </SidePanel>

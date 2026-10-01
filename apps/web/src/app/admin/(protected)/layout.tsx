@@ -283,7 +283,7 @@ export default function ProtectedLayout({
           supabase
             .from("admin_sourcing_view")
             .select("id", { count: "exact", head: true })
-            .eq("status", "open"),
+            .eq("status", "pending"),
           supabase
             .from("admin_shipments_view")
             .select("id", { count: "exact", head: true })
