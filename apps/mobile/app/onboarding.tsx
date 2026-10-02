@@ -60,13 +60,13 @@ export default function OnboardingScreen() {
       setIndex(next);
       scrollRef.current?.scrollTo({ x: next * SCREEN_W, animated: true });
     } else {
-      void AsyncStorage.setItem(ONBOARDING_KEY, "1");
+      AsyncStorage.setItem(ONBOARDING_KEY, "1").catch(() => {});
       router.replace("/(tabs)/home");
     }
   };
 
   const handleSkip = () => {
-    void AsyncStorage.setItem(ONBOARDING_KEY, "1");
+    AsyncStorage.setItem(ONBOARDING_KEY, "1").catch(() => {});
     router.replace("/(tabs)/home");
   };
 

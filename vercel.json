@@ -84,7 +84,7 @@
       ]
     },
     {
-      "source": "/((?!admin(/|$)|_next(/|$)|images(/|$)|app(/|$)).*)",
+      "source": "/((?!admin(?:/|$)|_next(?:/|$)|images(?:/|$)|app(?:/|$)).*)",
       "headers": [
         {
           "key": "Cache-Control",

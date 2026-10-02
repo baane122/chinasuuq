@@ -45,6 +45,11 @@ coverage/
 # ── Vercel / Deploys ──────────────────────────────────────
 .vercel
 
+# ── AI tooling state ─────────────────────────────────────
+.kilo/
+.agents/
+.claude/
+
 # ── TypeScript ────────────────────────────────────────────
 *.tsbuildinfo
 next-env.d.ts

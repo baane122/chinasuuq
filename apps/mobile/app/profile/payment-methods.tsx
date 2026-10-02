@@ -87,7 +87,9 @@ export default function PaymentMethodsScreen() {
   const choose = async (id: string) => {
     Haptics.selectionAsync();
     setSelected(id);
-    await AsyncStorage.setItem(PREF_KEY, id);
+    try {
+      await AsyncStorage.setItem(PREF_KEY, id);
+    } catch {}
   };
 
   const openAdd = (methodId: string) => {

@@ -71,14 +71,14 @@ Edge Functions read `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_RO
 The Vercel project is rooted at the **repository root**; root `vercel.json` drives everything:
 
 - **Install**: `npm install` · **Build**: `cd apps/web && npm run build` · **Output**: `apps/web/out`
-- Pushes to `main` auto-deploy.
+- Pushes to `main` are supposed to auto-deploy; if the webhook is stale, deploy directly from the repo root: `npx vercel --prod --yes` (the root `vercel.json` carries the build config — its header `source` patterns must use non-capturing groups `(?:/|$)`, a capturing `(/|$)` is rejected by the Vercel CLI and silently kills CLI deploys).
 - Because the app is a full static export, Next.js `headers()` / `proxy.ts` never run in production. All security headers (CSP, HSTS preload, X-Frame-Options, Permissions-Policy, COOP/CORP, `/admin/*` no-store, APK `Content-Disposition`) and the `www → apex` 301 redirect live in `vercel.json`. `apps/web/next.config.ts` documents this; its own header config would be silently ignored.
 
 ### Android APK
 
 The mobile APK is a static asset of the web app:
 
-1. Build with EAS (`eas build -p android --profile preview`, project `@baaaane24/chinasuuq-mobile`). The `preview` profile is arm-only (`ORG_GRADLE_PROJECT_reactNativeArchitectures`), which is what keeps the artifact at ~75 MB and inside GitHub's 100 MB per-file push limit.
+1. Build with EAS (`eas build -p android --profile preview`, account `baaaane24`, project `@baaaane24/chinasuuq-mobile`). The `preview` profile is arm-only (`ORG_GRADLE_PROJECT_reactNativeArchitectures`), which is what keeps the artifact at ~75 MB and inside GitHub's 100 MB per-file push limit.
 2. Download the APK from the finished build's `artifacts.buildUrl` and replace `apps/web/public/app/chinasuuq.apk`.
 3. Verify the file is a complete archive — `unzip -l apps/web/public/app/chinasuuq.apk | tail -1` should report ~1,300 entries. A truncated download looks like a valid file by size and header but Android rejects it; that is how an un-installable APK shipped once (doc.md §9).
 4. Bump `expo.version` in `apps/mobile/app.json` for the human-visible version; `cli.appVersionSource: "remote"` means EAS owns the real `versionCode`.
