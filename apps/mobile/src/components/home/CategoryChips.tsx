@@ -1,5 +1,13 @@
-import React from "react";
-import { ScrollView, Text, StyleSheet, TouchableOpacity } from "react-native";
+import React, { useEffect, useRef } from "react";
+import {
+  Animated,
+  ScrollView,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 
@@ -21,31 +29,74 @@ const CATEGORIES = [
   { id: "bags", emoji: "👜", labelKey: "Bags" },
 ];
 
+function AnimatedChip({
+  isActive,
+  emoji,
+  label,
+  onPress,
+}: {
+  isActive: boolean;
+  emoji: string;
+  label: string;
+  onPress: () => void;
+}) {
+  const scale = useRef(new Animated.Value(isActive ? 1 : 0.92)).current;
+
+  useEffect(() => {
+    if (isActive) {
+      scale.setValue(0.92);
+      Animated.spring(scale, {
+        toValue: 1,
+        friction: 3,
+        tension: 140,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      scale.setValue(1);
+    }
+  }, [isActive, scale]);
+
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        style={[styles.chip, isActive && styles.chipActive]}
+        activeOpacity={0.75}
+        onPress={onPress}
+      >
+        <Text style={styles.emoji}>{emoji}</Text>
+        {isActive && <View style={styles.activeDot} />}
+        <Text style={[styles.label, isActive && styles.labelActive]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
 export function CategoryChips({ selected = "all", onSelect }: CategoryChipsProps) {
   const { t } = useI18n();
+
+  const handlePress = (id: string) => {
+    void Haptics.selectionAsync();
+    onSelect?.(id);
+  };
 
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      decelerationRate="fast"
       contentContainerStyle={styles.container}
     >
-      {CATEGORIES.map((cat) => {
-        const isActive = selected === cat.id;
-        return (
-          <TouchableOpacity
-            key={cat.id}
-            style={[styles.chip, isActive && styles.chipActive]}
-            activeOpacity={0.7}
-            onPress={() => onSelect?.(cat.id)}
-          >
-            <Text style={styles.emoji}>{cat.emoji}</Text>
-            <Text style={[styles.label, isActive && styles.labelActive]}>
-              {t(`categories.${cat.id}`) || cat.labelKey}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
+      {CATEGORIES.map((cat) => (
+        <AnimatedChip
+          key={cat.id}
+          isActive={selected === cat.id}
+          emoji={cat.emoji}
+          label={t(`categories.${cat.id}`) || cat.labelKey}
+          onPress={() => handlePress(cat.id)}
+        />
+      ))}
     </ScrollView>
   );
 }
@@ -56,22 +107,41 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
   },
   chip: {
+    height: 40,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.pill,
-    paddingHorizontal: SPACING.lg,
-    paddingVertical: SPACING.sm + 2,
-    gap: SPACING.xs + 2,
+    paddingHorizontal: 16,
+    gap: 6,
     borderWidth: 1,
     borderColor: COLORS.border,
+    // subtle inactive elevation
+    shadowColor: COLORS.black,
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   chipActive: {
     backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+    borderColor: "transparent",
+    // brand-colored active glow
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   emoji: {
-    fontSize: 16,
+    fontSize: 15,
+  },
+  activeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.white,
   },
   label: {
     fontSize: 13,
@@ -80,5 +150,6 @@ const styles = StyleSheet.create({
   },
   labelActive: {
     color: COLORS.white,
+    fontFamily: FONTS.semibold,
   },
 });

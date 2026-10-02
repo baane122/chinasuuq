@@ -17,20 +17,17 @@ import {
   Bell,
   Mic,
   Search as SearchIcon,
-  Truck,
-  BadgePercent,
-  Headphones,
   ChevronRight,
   MessageCircle,
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useAuthStore } from "@/store/auth";
 import { useI18n } from "@/lib/i18n";
 import { ProductCard } from "@/components/home/ProductCard";
 import { CategoryChips } from "@/components/home/CategoryChips";
-import { ShopByCategory } from "@/components/home/ShopByCategory";
 import { WhatsAppCard } from "@/components/home/WhatsAppCard";
 import { TrendingRow, TrendingRowSkeleton } from "@/components/home/TrendingRow";
 import { ProductCardSkeleton } from "@/components/ui/SkeletonLoader";
@@ -75,35 +72,18 @@ const HERO_BANNERS = [
   },
 ];
 
-const SERVICES = [
-  { id: "247", icon: Headphones, label_en: "24/7 Ordering", label_so: "24/7 Dalab" },
-  { id: "low", icon: BadgePercent, label_en: "Low Prices", label_so: "Qiimo Jaban" },
-  { id: "fast", icon: Truck, label_en: "Fast Delivery", label_so: "Bixi Dhaqso" },
-];
-
-// ─── Service Badge Component ─────────────────────────
-function ServiceBadge({ icon: Icon, label }: { icon: any; label: string }) {
-  return (
-    <View style={styles.serviceBadge}>
-      <View style={styles.serviceIcon}>
-        <Icon size={16} color={COLORS.primary} strokeWidth={2} />
-      </View>
-      <Text style={styles.serviceLabel}>{label}</Text>
-    </View>
-  );
-}
-
 // ─── Hero Banner Component ─────────────────────────
 function HeroBannerCarousel() {
   const [activeIndex, setActiveIndex] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
   const { locale } = useI18n();
+  const router = useRouter();
 
   useEffect(() => {
     const interval = setInterval(() => {
       setActiveIndex((prev) => {
         const next = (prev + 1) % HERO_BANNERS.length;
-        scrollRef.current?.scrollTo({ x: next * (SCREEN_W - 40), animated: true });
+        scrollRef.current?.scrollTo({ x: next * (SCREEN_W - 32), animated: true });
         return next;
       });
     }, 4000);
@@ -118,20 +98,32 @@ function HeroBannerCarousel() {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={(e) => {
-          const idx = Math.round(e.nativeEvent.contentOffset.x / (SCREEN_W - 40));
+          const idx = Math.round(e.nativeEvent.contentOffset.x / (SCREEN_W - 32));
           setActiveIndex(idx);
         }}
       >
         {HERO_BANNERS.map((b) => (
-          <View key={b.id} style={[styles.heroSlide, { width: SCREEN_W - 40 }]}>
+          <TouchableOpacity
+            key={b.id}
+            activeOpacity={0.9}
+            style={[styles.heroSlide, { width: SCREEN_W - 32 }]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push("/(tabs)/markets");
+            }}
+          >
             <Image source={b.image} style={styles.heroImg} resizeMode="cover" />
+            <LinearGradient
+              colors={["transparent", "rgba(17,17,17,0.7)"]}
+              style={styles.heroGradient}
+            />
             <View style={styles.heroOverlay}>
               <Text style={styles.heroTitle} numberOfLines={2}>
                 {locale === "en" ? b.title_en : b.title_so}
               </Text>
               <Text style={styles.heroSub}>{locale === "en" ? b.subtitle_en : b.subtitle_so}</Text>
             </View>
-          </View>
+          </TouchableOpacity>
         ))}
       </ScrollView>
       <View style={styles.heroDots}>
@@ -394,27 +386,8 @@ export default function HomeTab() {
           </ScrollView>
         </View>
 
-        {/* ── Service Badges ── */}
-        <View style={styles.serviceRow}>
-          {SERVICES.map((s) => (
-            <ServiceBadge
-              key={s.id}
-              icon={s.icon}
-              label={locale === "en" ? s.label_en : s.label_so}
-            />
-          ))}
-        </View>
-
-        {/* ── Shop by category — icon grid, opens 1688 searches ── */}
-        <View style={styles.section}>
-          <ShopByCategory />
-        </View>
-
         {/* ── Category filter chips ── */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { paddingHorizontal: SPACING.lg, marginBottom: SPACING.md }]}>
-            {t("home.categories")}
-          </Text>
           <CategoryChips selected={selectedCategory} onSelect={setSelectedCategory} />
         </View>
 
@@ -423,9 +396,16 @@ export default function HomeTab() {
           <View style={styles.sectionHeader}>
             {/* "Trending" belongs to the event-ranked row above; this grid is
                 the catalog itself, ordered by the sales the marketplace shows. */}
-            <Text style={styles.sectionTitle}>
-              {locale === "en" ? "Browse products" : "Eeg Alaabta"}
-            </Text>
+            <View style={styles.gridHeaderLeft}>
+              <Text style={styles.sectionTitle}>
+                {locale === "en" ? "Browse products" : "Eeg Alaabta"}
+              </Text>
+              <View style={styles.countPill}>
+                <Text style={styles.countPillText}>
+                  {showAll ? products.length : catalogBySales.length} items
+                </Text>
+              </View>
+            </View>
             <TouchableOpacity onPress={() => router.push("/search")}>
               <Text style={styles.seeAll}>{t("home.seeAll")}</Text>
             </TouchableOpacity>
@@ -599,31 +579,38 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   // Hero Banner
-  heroWrap: { marginBottom: SPACING.xl },
+  heroWrap: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.xl,
+  },
   heroSlide: {
-    height: 180,
-    borderRadius: RADIUS.xl,
+    height: 210,
+    borderRadius: 20,
     overflow: "hidden",
     position: "relative",
   },
   heroImg: { width: "100%", height: "100%", position: "absolute" },
+  heroGradient: {
+    position: "absolute",
+    left: 0, right: 0, bottom: 0,
+    height: 70,
+  },
   heroOverlay: {
     position: "absolute",
     left: 0, right: 0, bottom: 0,
     padding: SPACING.lg,
-    backgroundColor: "rgba(13,17,23,0.62)",
     borderTopLeftRadius: 24,
     borderBottomLeftRadius: RADIUS.xl,
     borderBottomRightRadius: RADIUS.xl,
   },
-  heroTitle: { fontSize: 17, fontFamily: FONTS.bold, color: "#fff", lineHeight: 22, marginBottom: 4, letterSpacing: -0.2 },
-  heroSub: { fontSize: 12, fontFamily: FONTS.semibold, color: "rgba(255,255,255,0.85)" },
+  heroTitle: { fontSize: 20, fontFamily: FONTS.bold, color: "#fff", lineHeight: 25, marginBottom: 4, letterSpacing: -0.3 },
+  heroSub: { fontSize: 13, fontFamily: FONTS.semibold, color: "rgba(255,255,255,0.9)" },
   heroDots: { flexDirection: "row", justifyContent: "center", marginTop: 10, gap: 6 },
   heroDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "rgba(255,90,10,0.25)" },
   heroDotActive: { width: 20, backgroundColor: COLORS.primary },
   // Sections
   section: {
-    marginBottom: SPACING.xxl,
+    marginBottom: SPACING.xl,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -631,6 +618,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: SPACING.lg,
     marginBottom: SPACING.md,
+  },
+  gridHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+  },
+  countPill: {
+    backgroundColor: COLORS.softOrange,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  countPillText: {
+    fontSize: 11,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primaryDark,
   },
   sectionTitle: {
     fontSize: 17,
@@ -676,35 +679,6 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.regular,
     color: COLORS.textSecondary,
     textAlign: "center",
-  },
-  // Service badges
-  serviceRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    paddingHorizontal: SPACING.lg,
-    marginBottom: SPACING.xxl,
-  },
-  serviceBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.softOrange,
-    borderRadius: RADIUS.pill,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    gap: SPACING.xs,
-  },
-  serviceIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: COLORS.white,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  serviceLabel: {
-    fontSize: 11,
-    fontFamily: FONTS.medium,
-    color: COLORS.black,
   },
   // Product grid
   productGrid: {
