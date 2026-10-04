@@ -2,36 +2,36 @@
   "expo": {
     "name": "ChinaSuuq",
     "slug": "chinasuuq-mobile",
-    "scheme": "chinasuuq",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "light",
-    "backgroundColor": "#FFFCF8",
-    "primaryColor": "#FF5A0A",
-    "description": "Order products from China to Somalia. Browse 1688, Taobao and YiwuGo with live translation, CNY-to-USD conversion, and a unified cart. Air or sea freight to Hargeisa, Mogadishu, Bosaso and more.",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FF6B1A"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.chinasuuq.app",
-      "buildNumber": "3",
-      "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "ChinaSuuq uses your photos to add product images when capturing items from Chinese marketplaces.",
-        "ITSAppUsesNonExemptEncryption": false
-      }
+      "bundleIdentifier": "com.chinasuuq.app"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#FFFCF8"
+        "backgroundColor": "#FF6B1A"
       },
-      "package": "com.chinasuuq.app",
-      "versionCode": 3,
-      "permissions": [
-        "INTERNET"
-      ]
+      "package": "com.chinasuuq.app"
+    },
+    "web": {
+      "favicon": "./assets/images/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "72d3fa8c-07ac-4469-89d6-df7546a3facd"
+      }
     },
     "runtimeVersion": {
       "policy": "appVersion"
@@ -40,21 +40,6 @@
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_ERROR_RECOVERY",
       "url": "https://u.expo.dev/a8484922-0c4f-4f79-b4be-f93fe1dd5747"
-    },
-    "web": {
-      "favicon": "./assets/images/icon.png"
-    },
-    "plugins": [
-      "expo-router"
-    ],
-    "extra": {
-      "supabaseUrl": "https://athkmrvsaijwgsyvwrbp.supabase.co",
-      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF0aGttcnZzYWlqd2dzeXZ3cmJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NjM4NDQsImV4cCI6MjEwMTIzOTg0NH0.QAT0gZBJl-ELFG8221MRZoZoTj0La9_TOXFXx-HiKbY",
-      "router": {},
-      "eas": {
-        "projectId": "a8484922-0c4f-4f79-b4be-f93fe1dd5747"
-      }
-    },
-    "owner": "baaaane24"
+    }
   }
 }

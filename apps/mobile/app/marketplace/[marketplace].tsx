@@ -328,11 +328,15 @@ export default function MarketplaceBrowser() {
       let CookieManager: any = null;
       
       // Check if we're in Expo Go (native modules not available)
-      if (typeof require !== 'undefined' && Platform.OS !== "web") {
+      // Use dynamic import instead of require to avoid Invariant Violation crashes
+      // when the native module is missing (Expo Go, web, or unlinked package)
+      if (Platform.OS !== "web") {
         try {
-          const mod = require("@react-native-cookies/cookies");
+          // Dynamic import is safer than require() for optional native modules
+          const mod = await import("@react-native-cookies/cookies");
           CookieManager = mod?.default ?? mod;
         } catch (e) {
+          console.log("[SyncSession] Native cookie module not available - using WebView directly");
           CookieManager = null;
         }
       }
