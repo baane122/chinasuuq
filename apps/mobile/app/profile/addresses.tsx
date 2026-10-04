@@ -7,6 +7,7 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useAuthStore } from "@/store/auth";
 import { getAddresses, deleteAddress, type SavedAddress } from "@/db/index";
+import { EmptyState } from "@/components/EmptyState";
 
 export default function AddressesScreen() {
   const router = useRouter();
@@ -54,6 +55,16 @@ export default function AddressesScreen() {
 
       {loading ? (
         <View style={styles.centerLoading}><ActivityIndicator color={COLORS.primary} /></View>
+      ) : !user?.id ? (
+        // Guests have no address storage — say so instead of an empty list
+        // that invites adding an address the save screen will refuse.
+        <EmptyState
+          icon={<MapPin size={40} color={COLORS.gray300} />}
+          title="Sign in to manage addresses"
+          subtitle="Saved delivery addresses keep checkout fast and are tied to your account."
+          actionLabel="Sign In"
+          onAction={() => router.push("/(auth)/login" as any)}
+        />
       ) : addresses.length === 0 ? (
         <View style={styles.empty}>
           <View style={styles.emptyIcon}><MapPin size={40} color={COLORS.primary} /></View>
@@ -103,16 +114,18 @@ export default function AddressesScreen() {
         />
       )}
 
-      {/* Add button */}
-      <View style={styles.floatingBtnWrap}>
-        <Pressable
-          style={styles.addBtn}
-          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); router.push("/profile/add-address" as any); }}
-        >
-          <Plus size={20} color={COLORS.white} />
-          <Text style={styles.addBtnText}>Add Address</Text>
-        </Pressable>
-      </View>
+      {/* Add button — signed-in users only */}
+      {user?.id ? (
+        <View style={styles.floatingBtnWrap}>
+          <Pressable
+            style={styles.addBtn}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); router.push("/profile/add-address" as any); }}
+          >
+            <Plus size={20} color={COLORS.white} />
+            <Text style={styles.addBtnText}>Add Address</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -133,13 +146,13 @@ const styles = StyleSheet.create({
   addrTextBlock: { flex: 1 },
   addrLabelRow: { flexDirection: "row", alignItems: "center", gap: SPACING.sm },
   addrLabel: { fontSize: 15, fontFamily: FONTS.semibold, color: COLORS.black },
-  defaultBadge: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "#ECFDF5", paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.pill },
+  defaultBadge: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: COLORS.successBg, paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.pill },
   defaultText: { fontSize: 11, fontFamily: FONTS.medium, color: COLORS.success },
   addrLine: { fontSize: 13, fontFamily: FONTS.regular, color: COLORS.textSecondary, marginTop: 4 },
   addrLine2: { fontSize: 13, fontFamily: FONTS.regular, color: COLORS.textSecondary, marginTop: 1 },
   addrActions: { flexDirection: "row", justifyContent: "flex-end", gap: SPACING.md, marginTop: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: SPACING.sm },
   actionBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: RADIUS.sm },
-  deleteBtn: { backgroundColor: "#FEF2F2" },
+  deleteBtn: { backgroundColor: COLORS.errorBg },
   actionText: { fontSize: 13, fontFamily: FONTS.medium, color: COLORS.primary },
   floatingBtnWrap: { position: "absolute", bottom: 24, left: 0, right: 0, alignItems: "center" },
   addBtn: { flexDirection: "row", alignItems: "center", gap: SPACING.sm, backgroundColor: COLORS.primary, paddingHorizontal: SPACING.xxl, paddingVertical: SPACING.md, borderRadius: RADIUS.pill, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },

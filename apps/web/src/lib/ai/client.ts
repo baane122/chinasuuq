@@ -1,38 +1,15 @@
 /**
- * ChinaSuuq AI client — OpenAI-compatible chat completions.
- * Verified working Oct 2026 via ai.ota1245.top.
- * Key is public-safe in this context (client-side app, same pattern as Supabase anon key).
+ * ChinaSuuq web AI client — chat completions through the `ai-chat` Supabase
+ * Edge Function.
+ *
+ * NO provider key ships in the browser bundle anymore: the old hardcoded
+ * direct credential leaked into the exported site chunks and is being
+ * rotated. The public quote assistant and shipment concierge now send only
+ * the conversation to the edge function, which resolves the Mission Control
+ * provider server-side. Anonymous callers are allowed there but bounded by a
+ * per-IP rate limit + request-size caps; the ONLY credential attached here is
+ * the public Supabase anon key (same pattern as every other browser request).
  */
-export const AI_BASE_URL =
-  process.env.NEXT_PUBLIC_AI_BASE_URL || "https://ai.ota1245.top/v1/chat/completions";
-export const AI_API_KEY =
-  process.env.NEXT_PUBLIC_AI_API_KEY ||
-  "sk-H5qxTgttFrT4PwtD8HSuZKHf1TPlUg6M7191U5aqqMwISEgj";
-
-/** Model tiers — measured Oct 2026 (tokens per simple translation call):
- *  - premium (gemini-3.7-flash-high): ~370 tokens (338 reasoning!) — Copilot chat only
- *  - fast    (deepseek-v4-flash):      34 tokens, 0 reasoning — translations, extraction
- *  - vision  (gemini-3.1-flash-image): 23 tokens text + image understanding — photo tasks
- */
-export const AI_MODEL_PREMIUM =
-  process.env.NEXT_PUBLIC_AI_MODEL || "[反重力次]gemini-3.7-flash-high";
-export const AI_MODEL_FAST = "deepseek-v4-flash";
-export const AI_MODEL_VISION = "gemini-3.1-flash-image";
-
-export type AiTier = "premium" | "fast" | "vision";
-
-const TIER_MODEL: Record<AiTier, string> = {
-  premium: AI_MODEL_PREMIUM,
-  fast: AI_MODEL_FAST,
-  vision: AI_MODEL_VISION,
-};
-
-/** Max output tokens per tier — caps runaway reasoning cost. */
-const TIER_MAX_TOKENS: Record<AiTier, number> = {
-  premium: 1200,
-  fast: 500,
-  vision: 600,
-};
 
 export interface AiMessage {
   role: "system" | "user" | "assistant";
@@ -41,41 +18,44 @@ export interface AiMessage {
 
 export interface AiCallOptions {
   messages: AiMessage[];
-  tier?: AiTier;
+  /** Kept for call-site compatibility; the server resolves the model. */
+  tier?: "premium" | "fast" | "vision";
   temperature?: number;
   timeoutMs?: number;
   maxTokens?: number;
 }
 
 /**
- * Calls the AI API. Returns the assistant's text content, or null on failure.
- * Never throws — callers should fall back gracefully.
+ * Calls the ai-chat edge function. Returns the assistant's text content, or
+ * null on any failure. Never throws — callers fall back gracefully.
  */
 export async function aiChat(options: AiCallOptions): Promise<string | null> {
-  const tier = options.tier ?? "fast";
+  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  if (!supabaseUrl || !anonKey) return null;
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 30_000);
   try {
-    const res = await fetch(AI_BASE_URL, {
+    const res = await fetch(`${supabaseUrl}/functions/v1/ai-chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${AI_API_KEY}`,
+        apikey: anonKey,
       },
       body: JSON.stringify({
-        model: TIER_MODEL[tier],
         messages: options.messages,
-        temperature: options.temperature ?? 0.4,
-        max_tokens: options.maxTokens ?? TIER_MAX_TOKENS[tier],
+        task: "concierge",
+        ...(typeof options.temperature === "number" ? { temperature: options.temperature } : {}),
+        ...(typeof options.maxTokens === "number" ? { max_tokens: options.maxTokens } : {}),
       }),
       signal: controller.signal,
     });
     if (!res.ok) return null;
     const data = await res.json();
-    const content: string | undefined = data?.choices?.[0]?.message?.content;
-    return typeof content === "string" && content.trim().length > 0
-      ? content.trim()
-      : null;
+    if (!data?.ok) return null;
+    const content: string | undefined = data?.content;
+    return typeof content === "string" && content.trim().length > 0 ? content.trim() : null;
   } catch {
     return null;
   } finally {

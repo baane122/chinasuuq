@@ -27,6 +27,7 @@ import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
 import { isBackendOnline, getOrders, getFavorites } from "@/db/index";
+import { StaffEntryBanner } from "@/components/staff/StaffEntryBanner";
 
 const ACCOUNT_IMG = require("../../assets/screens/account_hero.png");
 
@@ -67,11 +68,15 @@ export default function AccountScreen() {
   useEffect(() => {
     (async () => {
       try {
+        // getOrders() is the device history. For signed-in users the db layer
+        // scopes it per-user; a guest's count would be device-wide and get
+        // mislabeled as "their orders" — so guests get 0 and no count row.
+        if (!user?.id) { setOrderCount(0); return; }
         const orders = await getOrders();
         setOrderCount(orders?.length ?? 0);
       } catch {}
     })();
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     (async () => {
@@ -143,7 +148,7 @@ export default function AccountScreen() {
       id: "orders",
       icon: <ShoppingBag size={20} color={COLORS.primary} />,
       label: t("profile.myOrders"),
-      subtitle: orderCount
+      subtitle: user?.id && orderCount
         ? locale === "en" ? `${orderCount} order(s)` : `${orderCount} dalab`
         : locale === "en" ? "Track & manage orders" : "Raadso oo maamul dalabka",
       route: "/profile/order-history",
@@ -284,14 +289,9 @@ export default function AccountScreen() {
               </View>
             </View>
 
-            {/* Gold Buyer Badge */}
-            <View style={styles.badgeRow}>
-              <View style={styles.goldBadge}>
-                <Text style={styles.goldBadgeText}>🏅 {locale === "en" ? "Gold Buyer" : "Iibiye Dahab"}</Text>
-              </View>
-            </View>
-
-            {/* Stats Row */}
+            {/* Stats Row — only real, per-user numbers. The old "Gold Buyer"
+                chip and "24/7 Support" stat were hardcoded decoration with no
+                data behind them; removed rather than faked. */}
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
                 <Text style={styles.statValue}>{orderCount}</Text>
@@ -302,14 +302,13 @@ export default function AccountScreen() {
                 <Text style={styles.statValue}>{favoritesCount}</Text>
                 <Text style={styles.statLabel}>{locale === "en" ? "Saved" : "Kaydka"}</Text>
               </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>24/7</Text>
-                <Text style={styles.statLabel}>{locale === "en" ? "Support" : "Taageero"}</Text>
-              </View>
             </View>
           </View>
         )}
+
+        {/* Staff on the account tab get the same one-tap entry to
+            /staff/marketplaces as on home (banner self-hides for non-staff). */}
+        {user ? <StaffEntryBanner /> : null}
 
         {/* Backend Status */}
         <View
@@ -492,20 +491,6 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.regular,
     color: "rgba(255,255,255,0.6)",
   },
-
-  // Gold badge
-  badgeRow: { marginBottom: SPACING.md },
-  goldBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(218,165,32,0.2)",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: RADIUS.pill,
-    gap: 6,
-  },
-  goldBadgeText: { fontSize: 12, fontFamily: FONTS.semibold, color: "#DAA520" },
 
   // Stats row
   statsRow: {

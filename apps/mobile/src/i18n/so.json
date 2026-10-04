@@ -19,6 +19,18 @@
     "recentlyViewed": "Kuwa Dambe Eegay",
     "seeAll": "Dhammaan Eeg"
   },
+  "categories": {
+    "all": "Dhammaan",
+    "electronics": "Qalabka korontada",
+    "clothing": "Dharka",
+    "home": "Guriga",
+    "beauty": "Quruxda",
+    "toys": "Alaabta ciyaarta",
+    "sports": "Isboorti",
+    "automotive": "Qalabka gaadiidka",
+    "jewelry": "Dahab iyo curuud",
+    "bags": "Boorsooyin"
+  },
   "markets": {
     "1688": "Qiimo jumlo",
     "title": "Dooro Suuradda",
@@ -57,6 +69,7 @@
     "readingProductDetails": "Waa la akhriyayaa faahfaahinta…",
     "addToCart": "Ku dar kaarada",
     "signInToMarketplace": "Gal suuqa",
+    "syncSession": "Isku xir fadhiga suuqa",
     "openProductToBuy": "Fur alaab si aad u iibsato",
     "sourceDetails": "Faahfaahinta isha",
     "help": "Caawimo",
@@ -130,7 +143,8 @@
     "email": "Emayl",
     "continueBrowsing": "Sii wad daawashada",
     "requestSourcing": "Codso raadinta",
-    "saveItem": "Kaydi alaabta"
+    "saveItem": "Kaydi alaabta",
+    "item": "shay"
   },
   "profile": {
     "title": "Profile",
@@ -249,5 +263,53 @@
     "continue": "Sii wad",
     "payOnWhatsApp": "Bixi WhatsApp",
     "termsAccepted": "Waxaan aqbalay Shuruucda Adeegga iyo Siyaasadda Arrimaha Gaarka"
+  },
+  "wishlist": {
+    "title": "Liiska Kaydka",
+    "emptyTitle": "Liiskaaga kaydka waa madhan yahay",
+    "emptySub": "Taabo calaamadda jacaylka alaab kasta si aad halkan ku kaydiso.",
+    "browse": "Fiiri Alaabta",
+    "order": "Dalbo",
+    "addedToCart": "Waa lagu daray karada",
+    "couldNotRemove": "Lama saari karin alaabta",
+    "tryAgain": "Fadlan mar kale isku day."
+  },
+  "support": {
+    "heroTitle": "Maxaan kaa caawin karnaa?",
+    "whatsappTitle": "Nala soo xiriir WhatsApp",
+    "whatsappSubtitle": "Jawaab degdeg ah — waxaan joognaa 24/7",
+    "otherWays": "Siyaabo kale oo nagula soo xiriiro",
+    "faqTitle": "Su'aalaha Badanaa La Isweydiiyo",
+    "ticketTitle": "Soo dir Codsasho Caawimaad",
+    "ticketSubtitle": "Waxaan kaga jawaabi doonnaa codsigaaga emayl ama WhatsApp",
+    "subjectLabel": "Mowduuca",
+    "subjectPlaceholder": "Maxaa ku saabsan?",
+    "messageLabel": "Fariinta",
+    "messagePlaceholder": "Sharax dhibaatadaada dhowr jumloodood…",
+    "submitTicket": "Dir Codsashada",
+    "footer": "ChinaSuuq — Ka dalbo Shiinaha ilaa Soomaaliya",
+    "whatsappError": "WhatsApp lama furi karin. Fadlan hubi inuu rakiban yahay.",
+    "missingInfoTitle": "Macluun maqan",
+    "missingInfo": "Fadlan geli mowduuc iyo fariin labadaba.",
+    "ticketSubmittedTitle": "Codsashada waa la diray",
+    "ticketSubmitted": "Kooxdayada caawimaaddu waxay kula soo xiriiri doontaa dhowaan.",
+    "ticketFailedTitle": "Lama diri karin",
+    "ticketFailed": "Fadlan mar kale isku day dhowaan."
+  },
+  "settings": {
+    "profileInfo": "Xogta Shaqsiga",
+    "fullName": "Magaca Oo Dhan",
+    "fullNamePlaceholder": "Magacaaga oo dhan",
+    "phonePlaceholder": "Lambarka taleefanka",
+    "city": "Magaalada",
+    "cityPlaceholder": "Tusaale: Muqdisho, Hargeysa",
+    "shippingPreference": "Doorashada Rarka",
+    "chooseShippingMethod": "Dooro habka rarka aad doorbidayso",
+    "backendChecking": "Waa la hubinaya...",
+    "backendOnline": "Server-ka waa xiran yahay",
+    "backendOffline": "Offline — xogta taleefanka",
+    "savedTitle": "Waa la kaydiyay",
+    "savedDesc": "Xogta shaqsiga waa la cusbooneysiiyay.",
+    "saveFailed": "Lama kaydin karin. Isbeddeladaada waxaa lagu hayay qalabkan."
   }
 }

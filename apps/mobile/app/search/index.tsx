@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   StyleSheet,
@@ -46,11 +47,25 @@ function normalize(text: string): string {
   return text.toLowerCase().trim();
 }
 
-function matchesQuery(p: Product, q: string): boolean {
-  if (!q) return true;
-  const target =
-    `${p.title_english} ${p.title_original} ${p.title_somali}`.toLowerCase();
-  return q.split(/\s+/).every((token) => target.includes(token));
+// A product row's searchable text only changes when the row object changes,
+// so the lowercased target is built once per row (WeakMap keyed by identity)
+// instead of three template-string concats + a toLowerCase per keystroke per
+// product across the whole 200-item catalog.
+const matchTargetCache = new WeakMap<Product, string>();
+
+function matchTarget(p: Product): string {
+  let target = matchTargetCache.get(p);
+  if (target === undefined) {
+    target = `${p.title_english} ${p.title_original} ${p.title_somali}`.toLowerCase();
+    matchTargetCache.set(p, target);
+  }
+  return target;
+}
+
+function matchesQuery(p: Product, tokens: string[]): boolean {
+  if (tokens.length === 0) return true;
+  const target = matchTarget(p);
+  return tokens.every((token) => target.includes(token));
 }
 
 export default function SearchScreen() {
@@ -58,6 +73,12 @@ export default function SearchScreen() {
   const params = useLocalSearchParams<{ marketplace?: string; q?: string }>();
 
   const [query, setQuery] = useState(params.q ?? "");
+  // Filtering (and therefore list re-layout) follows the settled query, not
+  // every keystroke: while the customer is typing, the visible results only
+  // recompute once input pauses for 250ms. No Supabase/DB fetch happens per
+  // keystroke at all — getProducts() runs once above and serves the local
+  // cache — so this debounce is about JS-thread smoothness while typing.
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
   const [marketplaceFilter, setMarketplaceFilter] = useState<string>(
     params.marketplace ?? "all"
   );
@@ -94,6 +115,11 @@ export default function SearchScreen() {
     }
   }, [params.marketplace, params.q]);
 
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(id);
+  }, [query]);
+
   const categories = useMemo(() => {
     const set = new Set(products.map((p) => p.category).filter(Boolean));
     return Array.from(set).sort();
@@ -104,12 +130,29 @@ export default function SearchScreen() {
     return Array.from(set).sort();
   }, [products]);
 
+  // Split the settled query into tokens once; the filter then only does
+  // string.includes per product instead of re-splitting the query per product.
+  const queryTokens = useMemo(
+    () => normalize(debouncedQuery).split(/\s+/).filter(Boolean),
+    [debouncedQuery]
+  );
+
   const filteredProducts = useMemo(() => {
+    // The chips share one selection state: a bare value is a marketplace,
+    // a "cat:<name>" value is a category, "all"/"category-all" mean no
+    // narrowing. Filtering used to compare EVERY value against
+    // p.marketplace — so category chips matched nothing and yielded 0.
+    const isCategoryFilter = marketplaceFilter.startsWith("cat:");
+    const categoryValue = isCategoryFilter ? marketplaceFilter.slice(4) : "";
     let list = products.filter((p) => {
-      if (marketplaceFilter !== "all" && p.marketplace !== marketplaceFilter) {
-        return false;
+      if (marketplaceFilter !== "all" && marketplaceFilter !== "category-all") {
+        if (isCategoryFilter) {
+          if (p.category !== categoryValue) return false;
+        } else if (p.marketplace !== marketplaceFilter) {
+          return false;
+        }
       }
-      return matchesQuery(p, query);
+      return matchesQuery(p, queryTokens);
     });
 
     // Sort
@@ -128,7 +171,7 @@ export default function SearchScreen() {
       }
     });
     return list;
-  }, [products, query, marketplaceFilter, sort]);
+  }, [products, queryTokens, marketplaceFilter, sort]);
 
   const pickSort = (key: SortKey) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -140,9 +183,14 @@ export default function SearchScreen() {
   const [aiState, setAiState] = useState<"idle" | "loading" | "done" | "failed">("idle");
   const [aiPicks, setAiPicks] = useState<Record<string, string>>({});
   const [aiOrder, setAiOrder] = useState<string[]>([]);
+  // Bumped whenever the search context changes so a slow ai-chat reply for an
+  // old query can never reorder (or "fail") the results the user is looking at
+  // now — stale AI responses are ignored, not raced.
+  const aiGenRef = useRef(0);
 
   const runAiSearch = async () => {
-    if (aiState === "loading" || query.trim().length < 3) return;
+    if (aiState === "loading" || debouncedQuery.trim().length < 3) return;
+    const gen = ++aiGenRef.current;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setAiState("loading");
     const compact = filteredProducts.slice(0, 40).map((p) => ({
@@ -151,7 +199,14 @@ export default function SearchScreen() {
       category: p.category,
       price_usd: p.price_usd_estimated,
     }));
-    const ranked = await aiRankProducts(query.trim(), compact);
+    // The library waits 20s for the model — too long to leave a customer
+    // staring at a spinner. Cut our own losses at 8s and keep showing the
+    // results unranked (aiState → failed hides the overlay ordering).
+    const ranked = await Promise.race([
+      aiRankProducts(debouncedQuery.trim(), compact),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
+    ]);
+    if (gen !== aiGenRef.current) return;
     if (ranked) {
       const reasons: Record<string, string> = {};
       ranked.forEach((r) => { reasons[r.id] = r.reason; });
@@ -164,10 +219,21 @@ export default function SearchScreen() {
   };
 
   const clearAi = () => {
+    aiGenRef.current++;
     setAiState("idle");
     setAiPicks({});
     setAiOrder([]);
   };
+
+  // Picks were ranked for the previous query — drop them (and any in-flight
+  // reply) as soon as the settled query changes so the list never shows a
+  // stale AI order.
+  useEffect(() => {
+    aiGenRef.current++;
+    setAiState("idle");
+    setAiPicks({});
+    setAiOrder([]);
+  }, [debouncedQuery]);
 
   // AI-ordered + regular products, AI picks first when active
   const displayProducts = useMemo(() => {
@@ -177,6 +243,17 @@ export default function SearchScreen() {
       (a, b) => (rank.has(a.id) ? rank.get(a.id)! : 999) - (rank.has(b.id) ? rank.get(b.id)! : 999)
     );
   }, [filteredProducts, aiState, aiOrder]);
+
+  // Two cards per row, chunked explicitly: keeps the exact two-column grid
+  // look (ProductCard stays 48% wide inside its own row) and lets the FlatList
+  // virtualize whole rows independent of RN-version cell behaviour.
+  const displayRows = useMemo(() => {
+    const rows: Product[][] = [];
+    for (let i = 0; i < displayProducts.length; i += 2) {
+      rows.push(displayProducts.slice(i, i + 2));
+    }
+    return rows;
+  }, [displayProducts]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -318,7 +395,30 @@ export default function SearchScreen() {
               <SlidersHorizontal size={14} color={COLORS.textSecondary} />
               <Text style={styles.resultText}>
                 {filteredProducts.length} {filteredProducts.length === 1 ? "product" : "products"}
-                {query.trim().length >= 3 && aiState !== "loading" && (
+                {aiState === "loading" && (
+                  // In-flight AI must be cancellable — without this the only
+                  // escape is an up-to-8s spinner with no way out.
+                  <TouchableOpacity
+                    onPress={clearAi}
+                    style={{
+                      marginLeft: 8,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 4,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 999,
+                      borderWidth: 1,
+                      borderColor: COLORS.gray400,
+                    }}
+                  >
+                    <ActivityIndicator size="small" color={COLORS.primary} />
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: COLORS.textSecondary }}>
+                      AI… cancel
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {debouncedQuery.trim().length >= 3 && aiState !== "loading" && (
                   <TouchableOpacity
                     onPress={aiState === "done" ? clearAi : runAiSearch}
                     style={{
@@ -352,19 +452,28 @@ export default function SearchScreen() {
                 </Text>
               </View>
             ) : (
-              <ScrollView
-                showsVerticalScrollIndicator={false}
+              <FlatList
+                data={displayRows}
+                keyExtractor={(row) => row[0].id}
                 contentContainerStyle={styles.grid}
-              >
-                {filteredProducts.map((p) => (
-                  <ProductCard
-                    key={p.id}
-                    product={p}
-                    onPress={() => router.push(`/product/${p.id}`)}
-                  />
-                ))}
-                <View style={{ height: 40, width: "100%" }} />
-              </ScrollView>
+                renderItem={({ item: row }) => (
+                  <View style={styles.gridRow}>
+                    {row.map((p) => (
+                      <ProductCard
+                        key={p.id}
+                        product={p}
+                        onPress={() => router.push(`/product/${p.id}`)}
+                      />
+                    ))}
+                    {row.length === 1 ? <View style={styles.gridOddSpacer} /> : null}
+                  </View>
+                )}
+                initialNumToRender={5}
+                maxToRenderPerBatch={5}
+                windowSize={7}
+                removeClippedSubviews
+                showsVerticalScrollIndicator={false}
+              />
             )}
           </>
         )}
@@ -444,11 +553,16 @@ const styles = StyleSheet.create({
   },
   resultText: { fontSize: 12, color: COLORS.textSecondary, fontFamily: FONTS.medium },
   grid: {
+    paddingBottom: 40,
+  },
+  gridRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
     justifyContent: "space-between",
     paddingHorizontal: SPACING.lg,
   },
+  // Keeps an odd trailing card left-aligned exactly where the second column
+  // would have started.
+  gridOddSpacer: { width: "48%" },
   emptyState: {
     flex: 1,
     justifyContent: "center",

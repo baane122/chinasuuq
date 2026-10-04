@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import {
   ArrowLeft,
@@ -28,12 +29,13 @@ import { useCartStore } from "@/store/cart";
 import { useAuthStore } from "@/store/auth";
 import StepIndicator from "@/components/checkout/StepIndicator";
 import PaymentMethodCard from "@/components/checkout/PaymentMethodCard";
-import { formatUSD, generateOrderRef } from "@/lib/utils";
+import { formatUSD, generateOrderRef, WHATSAPP_NUMBER } from "@/lib/utils";
 import { createOrder } from "@/db";
 import { validateCartRemote } from "@/lib/cartValidateRemote";
 import { resolveMoq } from "@/lib/moqIngest";
 import { SmartRoute } from "@/components/orders/SmartRoute";
 import { calculateShipping, getShippingEstimates } from "@/lib/shipping";
+import { refreshFx } from "@/lib/exchange";
 
 const STEP_LABELS = ["Contact", "Shipping", "Payment", "Confirm"];
 const CITIES = [
@@ -54,6 +56,22 @@ export default function CheckoutScreen() {
   const getTotal = useCartStore((s) => s.getTotal);
   const total = getTotal();
   const user = useAuthStore((s) => s.user);
+  const authReady = useAuthStore((s) => s.initialized);
+
+  // Entering checkout is a money moment: pull the live rate now
+  // (non-blocking — the preview keeps the last good cached value).
+  useEffect(() => {
+    refreshFx().catch(() => {});
+  }, []);
+
+  // HARD gate — cart requires login (product decision 2026-10-03). A guest
+  // cannot checkout at all: send them to the sign-in screen instead of the
+  // old advisory banner.
+  useEffect(() => {
+    if (authReady && !user) {
+      router.replace("/(auth)/login");
+    }
+  }, [authReady, user, router]);
 
   const [step, setStep] = useState(0);
   // Place Order in-flight state: a double-tap on the final button must never
@@ -85,8 +103,10 @@ export default function CheckoutScreen() {
   const subtotal = total.subtotalUSD;
   const serviceFee = Math.round(subtotal * 0.05 * 100) / 100;
 
-  // Auto-calculate estimated international shipping cost (China → Somalia)
-  const estimatedShipping = cartItems.reduce((total, item) => {
+  // Auto-calculate estimated international shipping cost (China → Somalia).
+  // Memoized on cart + method: the pure per-item weight math used to re-run on
+  // every keystroke of the contact form.
+  const estimatedShipping = useMemo(() => cartItems.reduce((sum, item) => {
     const weight = item.product.attributes?.weight
       ? parseFloat(String(item.product.attributes.weight).replace(/[^0-9.]/g, "")) || 0.5
       : 0.5;
@@ -99,10 +119,23 @@ export default function CheckoutScreen() {
       1, // already multiplied weight by quantity
       shippingMethod
     );
-    return total + shipping.costUSD;
-  }, 0);
+    return sum + shipping.costUSD;
+  }, 0), [cartItems, shippingMethod]);
 
   const grandTotal = subtotal + serviceFee; // shipping paid on arrival in Somalia
+
+  // Guest hard gate (see effect above): a confirmed guest is being redirected
+  // to /login; while the session is still restoring nobody but a signed-in
+  // user gets past this spinner.
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator size="small" color={COLORS.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const canProceed = () => {
     switch (step) {
@@ -140,19 +173,39 @@ export default function CheckoutScreen() {
   };
 
   const placeOrder = async () => {
+    // Defence in depth for the login gate: money only moves for a signed-in
+    // account (the session behind this UI, not a typed-in name/phone).
+    if (!user) {
+      Alert.alert(
+        locale === "en" ? "Sign in required" : "Galin loo baahan yahay",
+        locale === "en"
+          ? "You must be signed in to place an order."
+          : "Waa inaad gashaa akoonka si aad dalab u gudbiso.",
+        [{ text: locale === "en" ? "Sign In" : "Gal", onPress: () => router.push("/(auth)/login") }]
+      );
+      return;
+    }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     // One resolution per line: it is the number the customer was shown, the
     // number the offline gate below tests, and the number the order keeps.
     const resolutions = cartItems.map((it) => resolveMoq(it.product));
 
-    // Server-authoritative MOQ/stock gate (best-effort: offline never blocks).
-    const validation = await validateCartRemote(
-      cartItems.map((it, i) => ({
-        productId: it.product_id ?? it.product?.id ?? it.id,
-        quantity: it.quantity,
-        minOrderQty: resolutions[i]?.displayMoq ?? null,
-      }))
-    );
+    // Server-authoritative MOQ/stock gate (best-effort: offline never blocks)
+    // and the live-rate pull are independent network calls: run them
+    // together. Submitting is THE money moment: the server prices every CNY
+    // line at its own live rate, but the cached rate on this device backs the
+    // line prices and the stamp — pull it first and wait. A failure keeps the
+    // last good value; it never blocks the order.
+    const [validation] = await Promise.all([
+      validateCartRemote(
+        cartItems.map((it, i) => ({
+          productId: it.product_id ?? it.product?.id ?? it.id,
+          quantity: it.quantity,
+          minOrderQty: resolutions[i]?.displayMoq ?? null,
+        }))
+      ),
+      refreshFx().catch(() => {}),
+    ]);
     if (validation.blocking) {
       Alert.alert("Cart needs review", validation.messages.join("\n"));
       return;
@@ -188,6 +241,7 @@ export default function CheckoutScreen() {
       .filter(Boolean)
       .join("\n");
 
+    // refreshFx was already pulled in parallel with the cart validation above.
     const result = await createOrder({
       reference: generateOrderRef(),
       status: "pending",
@@ -254,27 +308,6 @@ export default function CheckoutScreen() {
 
   const renderStep1 = () => (
     <View style={styles.stepContent}>
-      {/* Guest login prompt */}
-      {!user && (
-        <View style={styles.loginPrompt}>
-          <Text style={styles.loginPromptText}>
-            {locale === "en"
-              ? "Sign in to save your order history & track shipments"
-              : "Ku soo dhawoobo si aad u kaydiso taariikhda dalabka & raadinta"}
-          </Text>
-          <TouchableOpacity
-            style={styles.loginPromptLink}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              router.push("/(auth)/login");
-            }}
-          >
-            <Text style={styles.loginPromptLinkText}>
-              {locale === "en" ? "Sign In" : "Gal"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
       <Text style={styles.stepTitle}>Contact Information</Text>
       <Text style={styles.label}>Full Name</Text>
       <TextInput style={styles.input} placeholder="e.g. Ahmed Hassan" placeholderTextColor={COLORS.gray400} value={fullName} onChangeText={setFullName} autoCapitalize="words" />
@@ -395,14 +428,9 @@ export default function CheckoutScreen() {
         {/* The server recomputes subtotal + fee authoritatively; everything here is a preview. */}
         <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Subtotal (estimate)</Text><Text style={styles.summaryValue}>{formatUSD(subtotal)}</Text></View>
         <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Service Fee (est. 5%)</Text><Text style={styles.summaryValue}>{formatUSD(serviceFee)}</Text></View>
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>Est. Shipping ({shippingMethod === "air" ? "Air" : "Sea"})</Text>
-          <Text style={[styles.summaryValue, { color: COLORS.textMuted, fontSize: 12 }]}>
-            ~{formatUSD(estimatedShipping)} (final on arrival)
-          </Text>
-        </View>
         <View style={styles.divider} />
-        <View style={styles.summaryRow}><Text style={styles.totalLabel}>Total (estimate, excl. shipping)</Text><Text style={styles.totalValue}>{formatUSD(grandTotal)}</Text></View>
+        <View style={styles.summaryRow}><Text style={styles.totalLabel}>Subtotal + Service Fee</Text><Text style={styles.totalValue}>{formatUSD(grandTotal)}</Text></View>
+        <View style={styles.shippingNote}><Text style={styles.shippingNoteText}>Shipping: {shippingMethod === "air" ? "Air Freight" : "Sea Freight"} · Paid on arrival</Text></View>
       </View>
       <View style={styles.infoSummary}>
         <Text style={styles.infoLabel}>Contact: {fullName}</Text>
@@ -490,7 +518,20 @@ export default function CheckoutScreen() {
           </TouchableOpacity>
         </View>
         {step < 3 && (
-          <TouchableOpacity style={styles.whatsappLink} onPress={async () => { try { await Linking.openURL(whatsappOrderLink()); } catch { /* ignore */ } }}>
+          <TouchableOpacity style={styles.whatsappLink} onPress={async () => {
+            try {
+              await Linking.openURL(whatsappOrderLink());
+            } catch {
+              // No WhatsApp on this device: hand the customer the number
+              // instead of ignoring the failure.
+              Alert.alert(
+                locale === "en" ? "WhatsApp is not available." : "WhatsApp lama heli karo.",
+                locale === "en"
+                  ? `Message us directly at ${WHATSAPP_NUMBER} on WhatsApp.`
+                  : `Naga soo farriin tooska ah ${WHATSAPP_NUMBER} WhatsApp.`
+              );
+            }
+          }}>
             <MessageCircle size={16} color={COLORS.whatsapp} />
             <Text style={styles.whatsappLinkText}>Need help? Chat on WhatsApp</Text>
           </TouchableOpacity>
@@ -522,38 +563,8 @@ const styles = StyleSheet.create({
     color: COLORS.black,
     marginBottom: SPACING.xs,
   },
-  // Login prompt
-  loginPrompt: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: COLORS.softOrange,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.md,
-    marginBottom: SPACING.lg,
-    borderWidth: 1,
-    borderColor: "rgba(255,90,10,0.15)",
-  },
   paymentIdWrap: { marginTop: SPACING.md },
   paymentHint: { fontSize: 12, color: COLORS.textMuted, marginTop: 4 },
-  loginPromptText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: FONTS.medium,
-    color: COLORS.primaryDark,
-    marginRight: SPACING.md,
-  },
-  loginPromptLink: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 8,
-    borderRadius: RADIUS.pill,
-  },
-  loginPromptLinkText: {
-    fontSize: 13,
-    fontFamily: FONTS.bold,
-    color: COLORS.white,
-  },
   // Steps
   stepContent: {},
   stepTitle: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: SPACING.lg },
@@ -591,6 +602,8 @@ const styles = StyleSheet.create({
   divider: { height: 1, backgroundColor: COLORS.border, marginVertical: SPACING.md },
   totalLabel: { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.black },
   totalValue: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.primary },
+  shippingNote: { flexDirection: "row", justifyContent: "flex-end", paddingTop: SPACING.xs },
+  shippingNoteText: { fontSize: 12, fontFamily: FONTS.regular, color: COLORS.textMuted, fontStyle: "italic" },
   infoSummary: { backgroundColor: COLORS.white, borderRadius: RADIUS.lg, padding: SPACING.lg, marginTop: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
   infoLabel: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.xs },
   termsRow: { flexDirection: "row", alignItems: "center", marginTop: SPACING.lg, gap: SPACING.sm },

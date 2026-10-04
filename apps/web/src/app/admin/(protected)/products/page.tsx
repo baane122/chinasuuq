@@ -22,6 +22,7 @@ import { useUrlFilters, useDebouncedFilterValue } from "@/components/admin/useUr
 import { useTablePrefs } from "@/components/admin/useTablePrefs";
 import { useLiveVersion } from "@/lib/admin/live-store";
 import { isMissingColumnError } from "@/lib/admin/supabase-data";
+import { useFx, usdFromCny, roundCents } from "@/lib/fx";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -164,6 +165,11 @@ export default function ProductsPage() {
 
 function ProductsPageContent() {
   const { success, error: toastError } = useToast();
+  /** The one live CNY→USD rate, read-only here. The dollar price on a product is
+   *  derived from its yuan price and the rate saved in Settings → Currency — it is
+   *  never typed on this screen, and the database stamps the same number on write
+   *  (trigger source_products_stamp_usd). */
+  const fx = useFx();
 
   const { values, set, setMany, reset, isFiltered } = useUrlFilters(FILTER_DEFAULTS);
   const tablePrefs = useTablePrefs("products");
@@ -503,7 +509,18 @@ function ProductsPageContent() {
         category: formData.category.trim(),
         price_cny_min: priceCny,
         price_cny_max: priceCnyMax,
-        price_usd_estimated: formData.price_usd_estimated ? Number(formData.price_usd_estimated) : null,
+        // The dollar figure is not an input. With a yuan price on the row the
+        // database stamps it from the Settings rate (trigger
+        // source_products_stamp_usd), so sending our own number here would only
+        // be overwritten — and if it weren't, this screen would be a second place
+        // where a price is decided. Rows with no yuan price keep whatever the
+        // operator derived, which is the USD-native case.
+        // Live's price columns are NOT NULL DEFAULT 0, so an absent CNY price is
+        // 0 — which the mobile reader treats as "no price captured" and the DB
+        // trigger leaves alone rather than converting a blank into $0.00.
+        ...(priceCny && priceCny > 0
+          ? {}
+          : { price_usd_estimated: formData.price_usd_estimated ? Number(formData.price_usd_estimated) : null }),
         stock_status: formData.stock_status,
         supplier_rating: formData.supplier_rating ? Number(formData.supplier_rating) : null,
         sales_count: formData.sales_count ? Number(formData.sales_count) : 0,
@@ -583,11 +600,17 @@ function ProductsPageContent() {
     if (!deletingProduct) return;
     setDeleteLoading(true);
     try {
-      const { error: deleteError } = await supabase
+      const { data, error: deleteError } = await supabase
         .from("source_products")
         .delete()
-        .eq("id", deletingProduct.id);
+        .eq("id", deletingProduct.id)
+        .select("id");
       if (deleteError) throw deleteError;
+      // RLS denial returns 204 / 0 rows with NO error — only trust a non-empty result.
+      if (!data || data.length === 0) {
+        toastError("Blocked by permissions — nothing was deleted");
+        return;
+      }
       setProducts((prev) => prev.filter((p) => p.id !== deletingProduct.id));
       setSelectedIds((prev) => { const n = new Set(prev); n.delete(deletingProduct.id); return n; });
       success("Product deleted successfully");
@@ -606,10 +629,15 @@ function ProductsPageContent() {
     setBulkDeleting(true);
     try {
       const ids = Array.from(selectedIds);
-      const { error } = await supabase.from("source_products").delete().in("id", ids);
+      const { data, error } = await supabase.from("source_products").delete().in("id", ids).select("id");
       if (error) throw error;
+      // Empty result = RLS blocked every row despite a 204/no-error response.
+      if (!data || data.length === 0) {
+        toastError("Blocked by permissions — nothing was deleted");
+        return;
+      }
       setProducts((prev) => prev.filter((p) => !selectedIds.has(p.id)));
-      success(`${ids.length} product${ids.length > 1 ? "s" : ""} deleted`);
+      success(`${data.length} product${data.length > 1 ? "s" : ""} deleted`);
       setSelectedIds(new Set());
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Failed to delete products");
@@ -622,15 +650,21 @@ function ProductsPageContent() {
     if (selectedIds.size === 0) return;
     try {
       const ids = Array.from(selectedIds);
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("source_products")
         .update({ status: bulkStatusValue, updated_at: new Date().toISOString() })
-        .in("id", ids);
+        .in("id", ids)
+        .select("id");
       if (error) throw error;
+      // 0 rows returned = RLS blocked the write; do not claim a false success.
+      if (!data || data.length === 0) {
+        toastError("Blocked by permissions — nothing was updated");
+        return;
+      }
       setProducts((prev) =>
         prev.map((p) => selectedIds.has(p.id) ? { ...p, status: bulkStatusValue } as Product : p)
       );
-      success(`${ids.length} product${ids.length > 1 ? "s" : ""} updated to ${bulkStatusValue}`);
+      success(`${data.length} product${data.length > 1 ? "s" : ""} updated to ${bulkStatusValue}`);
       setSelectedIds(new Set());
       setBulkStatusOpen(false);
     } catch (err) {
@@ -1298,16 +1332,29 @@ function ProductsPageContent() {
                 min={0}
                 step={0.01}
               />
-              <FormInput
-                label="Price (USD Est.)"
-                name="price_usd_estimated"
-                type="number"
-                value={formData.price_usd_estimated}
-                onChange={handleFormChange("price_usd_estimated")}
-                placeholder="0.00"
-                min={0}
-                step={0.01}
-              />
+              {/* Derived, never typed: 1 USD = the rate from Settings → Currency. */}
+              <div className="space-y-1.5">
+                <label htmlFor="price_usd_derived" className="block text-sm font-medium text-dark-700">
+                  Price (USD)
+                </label>
+                <input
+                  id="price_usd_derived"
+                  type="text"
+                  readOnly
+                  value={
+                    Number(formData.price_cny_min) > 0 && fx.cnyPerUsd > 0
+                      ? formatUSD(roundCents(usdFromCny(Number(formData.price_cny_min), fx.cnyPerUsd)))
+                      : ""
+                  }
+                  placeholder={Number(formData.price_cny_min) > 0 ? "" : "Enter a CNY price"}
+                  className="w-full rounded-xl border border-dark-200 bg-dark-50 px-3.5 py-2.5 text-sm text-dark-900 focus:outline-none"
+                />
+                <p className="text-[11px] leading-snug text-dark-400">
+                  {Number(formData.price_cny_min) > 0
+                    ? `Auto-calculated at 1 USD = ${fx.cnyPerUsd} CNY. To change every price in the shop, use Settings → Currency.`
+                    : "No CNY price yet, so nothing can be converted."}
+                </p>
+              </div>
             </div>
           </div>
 

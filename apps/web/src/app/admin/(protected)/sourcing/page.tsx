@@ -20,7 +20,9 @@ import { TableControls } from "@/components/admin/TableControls";
 import { useUrlFilters, useDebouncedFilterValue } from "@/components/admin/useUrlFilters";
 import { useTablePrefs } from "@/components/admin/useTablePrefs";
 import SourcingBoard from "@/components/admin/SourcingBoard";
+import { RowCapNotice } from "@/components/admin/RowCapNotice";
 import { useLiveVersion } from "@/lib/admin/live-store";
+import { roundCents, normalizeCnyPerUsd, useFx, usdFromCny } from "@/lib/fx";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Types ─────────────────────────────────────────────────────── */
@@ -82,9 +84,6 @@ const defaultForm = {
 };
 
 const defaultQuoteForm = { unit_price_cny: 0, quantity: 1 };
-
-/* Fallback CNY→USD rate when `exchange_rates` has no active CNY→USD row. */
-const FALLBACK_CNY_USD_RATE = 0.14;
 
 /* Values allowed by the sourcing_requests.marketplace enum. */
 const MARKETPLACES = [
@@ -153,6 +152,8 @@ function SourcingPageContent() {
   const [requests, setRequests] = useState<SourcingRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Set when a fetch returned a full 1000-row page — the read cap hides older rows.
+  const [rowCapHit, setRowCapHit] = useState(false);
   const statusFilter = values.status;
   const appFilter = values.app;
   const dateFrom = values.from;
@@ -182,7 +183,17 @@ function SourcingPageContent() {
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [quoteForm, setQuoteForm] = useState(defaultQuoteForm);
   const [savingQuote, setSavingQuote] = useState(false);
-  const [cnyRate, setCnyRate] = useState(FALLBACK_CNY_USD_RATE);
+  // The live rates come from the shared fx store (exchange_rates), which Settings
+  // owns and publishes; this screen keeps no rate of its own, so a quote drafted
+  // here uses the same number checkout uses. `fx.cnyPerUsd` is CNY per 1 USD:
+  // divide a CNY amount by it, never multiply.
+  const fx = useFx();
+
+  /* One number prices this screen's quotes: the live rate through fx.ts's band
+   * check. Both the drawer preview and the stored exchange_rate read it, and a
+   * null (unreadable / out-of-band) disables the save instead of falling back
+   * to a default nobody displayed. */
+  const quoteRate = normalizeCnyPerUsd(fx.cnyPerUsd);
 
   /* ── Fetch ──────────────────────────────────────────────────── */
 
@@ -192,9 +203,12 @@ function SourcingPageContent() {
       const { data, error: fetchError } = await supabase
         .from("sourcing_requests")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(1000);
       if (fetchError) throw fetchError;
-      setRequests((data as SourcingRequest[]) || []);
+      const rows = (data as SourcingRequest[]) || [];
+      setRequests(rows);
+      setRowCapHit(rows.length >= 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sourcing requests");
     } finally {
@@ -207,22 +221,6 @@ function SourcingPageContent() {
     // liveVersion comes from the realtime channel in the admin layout, so a
     // request captured on the phone appears without a manual reload.
   }, [fetchRequests, liveVersion]);
-
-  // Active CNY→USD rate for quote totals (see exchange_rates contract).
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from("exchange_rates")
-        .select("rate")
-        .eq("from_currency", "CNY")
-        .eq("to_currency", "USD")
-        .eq("is_active", true)
-        .order("effective_from", { ascending: false })
-        .limit(1);
-      const rate = data?.[0]?.rate;
-      if (typeof rate === "number" && rate > 0) setCnyRate(rate);
-    })();
-  }, []);
 
   /* ── Filter ─────────────────────────────────────────────────── */
 
@@ -363,9 +361,14 @@ function SourcingPageContent() {
     if (!deleteId) return;
     setDeleting(true);
     try {
-      const { error: deleteError } = await supabase
-        .from("sourcing_requests").delete().eq("id", deleteId);
+      const { data, error: deleteError } = await supabase
+        .from("sourcing_requests").delete().eq("id", deleteId).select("id");
       if (deleteError) throw deleteError;
+      // RLS denial returns 204 / 0 rows with NO error.
+      if (!data || data.length === 0) {
+        toast.error("Blocked by permissions — nothing was deleted");
+        return;
+      }
       toast.success("Sourcing request deleted");
       setDeleteId(null);
       setSelected(null);
@@ -416,6 +419,10 @@ function SourcingPageContent() {
 
   const handleAddQuote = async () => {
     if (!selected || savingQuote) return;
+    if (quoteRate === null) {
+      toast.error("No live CNY→USD rate could be read. Set it in Settings → Currency before quoting.");
+      return;
+    }
     const unitPrice = Number(quoteForm.unit_price_cny);
     const qty = Math.max(1, Math.floor(Number(quoteForm.quantity) || 1));
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
@@ -429,8 +436,11 @@ function SourcingPageContent() {
 
     setSavingQuote(true);
     try {
-      const totalCny = Math.round(unitPrice * qty * 100) / 100;
-      const totalUsd = Math.round(totalCny * cnyRate * 100) / 100;
+      const totalCny = roundCents(unitPrice * qty);
+      // CNY per 1 USD, so the conversion divides (fx.ts owns the direction).
+      // `quoteRate` is the SAME number the drawer preview shows and that gets
+      // stored below — display and write can never come from different rates.
+      const totalUsd = roundCents(usdFromCny(totalCny, quoteRate));
       // Draft quotes are valid for 14 days.
       const validUntil = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -442,6 +452,9 @@ function SourcingPageContent() {
           status: "draft",
           total_cny: totalCny,
           total_usd: totalUsd,
+          // The rate this quote was priced at, so a later Settings change cannot
+          // silently rewrite what the customer was told.
+          exchange_rate: quoteRate,
           valid_until: validUntil,
         })
         .select("id, reference")
@@ -490,11 +503,12 @@ function SourcingPageContent() {
     return text.length > max ? text.slice(0, max) + "..." : text;
   };
 
-  // Live totals preview for the Add Quote drawer.
+  // Live totals preview for the Add Quote drawer. Same `quoteRate` the insert
+  // stores, so the operator can never see one price and save another.
   const quoteQty = Math.max(1, Math.floor(Number(quoteForm.quantity) || 1));
   const quoteUnit = Number(quoteForm.unit_price_cny) || 0;
-  const quoteTotalCny = Math.round(quoteUnit * quoteQty * 100) / 100;
-  const quoteTotalUsd = Math.round(quoteTotalCny * cnyRate * 100) / 100;
+  const quoteTotalCny = roundCents(quoteUnit * quoteQty);
+  const quoteTotalUsd = quoteRate === null ? 0 : roundCents(usdFromCny(quoteTotalCny, quoteRate));
 
   /* ── Export ─────────────────────────────────────────────────── */
 
@@ -558,6 +572,8 @@ function SourcingPageContent() {
           </div>
         }
       />
+
+      {rowCapHit && <RowCapNotice noun="requests" />}
 
       {/* ── Two different objects, two views ──
           Requests are what the customer asked for. The board is the order LINEs
@@ -1077,7 +1093,12 @@ function SourcingPageContent() {
         footer={
           <>
             <button onClick={() => setShowQuoteModal(false)} className="admin-btn-ghost">Cancel</button>
-            <button onClick={handleAddQuote} disabled={savingQuote} className="admin-btn-primary">
+            <button
+              onClick={handleAddQuote}
+              disabled={savingQuote || quoteRate === null}
+              className="admin-btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+              title={quoteRate === null ? "No live CNY→USD rate — set it in Settings → Currency first" : undefined}
+            >
               {savingQuote ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Create Quote
             </button>
@@ -1119,10 +1140,19 @@ function SourcingPageContent() {
             </div>
             <div className="flex justify-between">
               <span className="text-dark-500">Total (USD)</span>
-              <span className="font-semibold text-dark-900">≈ {formatUSD(quoteTotalUsd)}</span>
+              <span className="font-semibold text-dark-900">{quoteRate === null ? "—" : `≈ ${formatUSD(quoteTotalUsd)}`}</span>
             </div>
             <p className="mt-1 text-[10px] text-dark-400">
-              CNY→USD rate {cnyRate} · saved as draft · valid 14 days
+              {quoteRate === null ? (
+                <span className="text-warning">
+                  No live CNY→USD rate could be read. Set it in Settings → Currency before saving this quote.
+                </span>
+              ) : (
+                <>
+                  1 USD = {quoteRate} CNY · 1 CNY = ${(1 / quoteRate).toFixed(4)} · saved as draft · valid 14
+                  days
+                </>
+              )}
             </p>
           </div>
         </div>

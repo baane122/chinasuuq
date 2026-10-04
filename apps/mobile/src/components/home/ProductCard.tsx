@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useMemo } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Image } from "expo-image";
 import { Plus } from "lucide-react-native";
@@ -7,6 +7,7 @@ import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import type { Product } from "@/types";
 import { useCartStore } from "@/store/cart";
 import { parseMOQ, getMOQText } from "@/lib/shipping";
+import { useFx, DEFAULT_CNY_PER_USD } from "@/lib/exchange";
 import { useI18n } from "@/lib/i18n";
 
 interface ProductCardProps {
@@ -14,43 +15,66 @@ interface ProductCardProps {
   onPress?: () => void;
 }
 
-export const ProductCard = React.memo(function ProductCard({
-  product,
-  onPress,
-}: ProductCardProps) {
-  const { locale } = useI18n();
-  const addItem = useCartStore((s) => s.addItem);
-  const thumbnail = product.images?.[0] || "https://picsum.photos/300/300";
+/** Bundled gray placeholder — replaces the old external picsum.photos URL. */
+const PLACEHOLDER_IMAGE = require("../../../assets/images/placeholder.png");
 
-  // Smart MOQ parsing
-  const smartMOQ = parseMOQ(
-    product.moq || 1,
-    product.attributes || {},
-    product.title_original || product.title_english,
-    product.description_original || product.description_english
-  );
+// Module-level so a memoized card doesn't allocate a new lookup object on
+// every render of every visible card while the list scrolls.
+const MARKETPLACE_BADGE_COLORS: Record<string, string> = {
+  "1688": "#FF6600",
+  taobao: "#FF5000",
+  yiwugo: "#1A8CFF",
+  chinasuuq: COLORS.primary,
+};
 
-  const marketplaceColors: Record<string, string> = {
-    "1688": "#FF6600",
-    taobao: "#FF5000",
-    yiwugo: "#1A8CFF",
-    chinasuuq: COLORS.primary,
-  };
+export const ProductCard = React.memo(
+  function ProductCard({
+    product,
+    onPress,
+  }: ProductCardProps) {
+    const { locale } = useI18n();
+    const addItem = useCartStore((s) => s.addItem);
+    const { cnyPerUsd } = useFx();
+    // Bundled gray placeholder — no external picsum dependency.
+    const thumbnail = product.images?.[0] || null;
 
-  const handleAdd = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    addItem(product, smartMOQ);
-  };
+    // `price_usd_estimated` is a snapshot taken when the row was cached — often at
+    // the cold-start default, and it never moves when the admin changes the rate.
+    // Deriving from the yuan figure at render keeps every card, the cart and the
+    // checkout total agreeing with the one number in Admin → Settings.
+    const priceCny = Number(product.price_cny_min) || 0;
+    // Plausible CNY-per-USD band, same as the FX store: a flipped/stale rate must
+    // never render ¥1 as $10,000.
+    const rate = Math.min(Math.max(Number(cnyPerUsd) || DEFAULT_CNY_PER_USD, 2), 20);
+    const usdPrice = priceCny > 0 ? priceCny / rate : Number(product.price_usd_estimated) || 0;
 
-  return (
+    // Smart MOQ parsing — only re-derived when the product itself changes, not
+    // on every rate tick or list re-render.
+    const smartMOQ = useMemo(
+      () =>
+        parseMOQ(
+          product.moq || 1,
+          product.attributes || {},
+          product.title_original || product.title_english,
+          product.description_original || product.description_english
+        ),
+      [product]
+    );
+
+    const handleAdd = useCallback(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      addItem(product, smartMOQ);
+    }, [addItem, product, smartMOQ]);
+
+    return (
     <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={onPress}>
       <Image
-        source={{ uri: thumbnail }}
+        source={thumbnail ? { uri: thumbnail } : PLACEHOLDER_IMAGE}
         style={styles.image}
         contentFit="cover"
         transition={150}
         cachePolicy="memory-disk"
-        recyclingKey={thumbnail}
+        recyclingKey={thumbnail ?? `placeholder-${product.id}`}
         placeholder={COLORS.gray100}
       />
 
@@ -58,7 +82,7 @@ export const ProductCard = React.memo(function ProductCard({
       <View
         style={[
           styles.marketBadge,
-          { backgroundColor: marketplaceColors[product.marketplace] || COLORS.primary },
+          { backgroundColor: MARKETPLACE_BADGE_COLORS[product.marketplace] || COLORS.primary },
         ]}
       >
         <Text style={styles.marketBadgeText}>{product.marketplace}</Text>
@@ -78,7 +102,7 @@ export const ProductCard = React.memo(function ProductCard({
 
         <View style={styles.priceRow}>
           <Text style={styles.price}>
-            ${product.price_usd_estimated.toFixed(2)}
+            ${usdPrice.toFixed(2)}
           </Text>
           <View
             style={[
@@ -127,7 +151,16 @@ export const ProductCard = React.memo(function ProductCard({
       </TouchableOpacity>
     </TouchableOpacity>
   );
-});
+  },
+  // Lists (home grid, search results) hand every card a fresh inline `onPress`
+  // closure on each parent render, which defeats the default shallow compare.
+  // The only value that closure captures and that ever changes is `product`
+  // itself, so comparing product identity is sufficient — a "stale" onPress
+  // from the previous render still navigates to the same id. Prices stay live
+  // because useFx() subscribes inside the card and re-renders it on rate
+  // changes regardless of this comparator.
+  (prev, next) => prev.product === next.product
+);
 
 const styles = StyleSheet.create({
   card: {

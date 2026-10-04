@@ -5,6 +5,7 @@
 // the caller's JWT and profile role BEFORE doing any privileged work.
 // Anonymous callers must never be able to invoke a service-role code path.
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { corsHeaders } from "./cors.ts";
 
 export interface Caller {
   userId: string;
@@ -49,9 +50,16 @@ export async function requireRole(req: Request, allowed: string[]): Promise<Call
   return { userId: userData.user.id, role };
 }
 
-// Admin-only shorthand.
+// Super-admin-only shorthand. The LIVE user_role enum (after migration
+// 202609210001) is (customer, staff, super_admin) — the old "admin" label does
+// not exist, so the previous ["admin", "super_admin"] list could only ever
+// match one real role and was a dead-list trap (same 401 class of bug as
+// ai-settings' history). List exactly the live enum here.
+// NOTE: no current edge function calls requireAdmin — ai-settings moved its
+// writes to requireRole(req, ["super_admin"]) directly. Keep this in sync with
+// that list if a caller returns.
 export async function requireAdmin(req: Request): Promise<Caller | null> {
-  return requireRole(req, ["admin", "super_admin"]);
+  return requireRole(req, ["super_admin"]);
 }
 
 // Staff-or-admin shorthand (internal operations data).
@@ -60,9 +68,12 @@ export async function requireStaffOrAdmin(req: Request): Promise<Caller | null> 
 }
 
 // Uniform 401 response for unauthenticated / unauthorized callers.
+// Carries the CORS headers (audit §3 LOW): without them a browser client sees an
+// opaque "Failed to fetch" instead of the 401 body, and the real auth error is
+// undiagnosable from the console.
 export function unauthorized(message = "unauthorized"): Response {
   return new Response(JSON.stringify({ ok: false, error: message }), {
     status: 401,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }

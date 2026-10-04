@@ -7,13 +7,28 @@ import { Loader2, Save, RefreshCw, CheckCircle2, AlertCircle } from "lucide-reac
 import { z } from "zod";
 import { AiSettingsTab } from "@/components/admin/AiSettingsTab";
 import { PageHeader, SectionCard, Field } from "@/components/admin/ui";
+import { saveExchangeRate } from "@/lib/admin/supabase-data";
+import {
+  DEFAULT_CNY_PER_USD,
+  DEFAULT_SOS_PER_USD,
+  derivedReadout,
+  getFxRates,
+  invalidateFx,
+  normalizeCnyPerUsd,
+} from "@/lib/fx";
 
 const tabs = ["General", "Currency", "Shipping", "Staff", "System Health", "AI Provider"] as const;
 
+// ONE number to manage: how many yuan make one dollar. The shilling rate is not
+// an owner setting — the checkout display keeps using the fixed 530 SOS per $1
+// row in `exchange_rates` — so this form neither edits nor writes it. The bound
+// is fx.ts's plausibility band (identical to fx_rates() in the database), so a
+// rate this form refuses to save is also a rate no screen will read.
 const exchangeRateSchema = z.object({
-  cny_to_usd: z.number().min(0.0001, "Rate must be positive"),
-  cny_to_sos: z.number().min(0.0001, "Rate must be positive"),
-  updated_by: z.string().min(1, "Updated by is required"),
+  cny_per_usd: z
+    .number()
+    .positive("Enter how many CNY make 1 USD")
+    .refine((v) => normalizeCnyPerUsd(v) !== null, "Must be between 2 and 20 CNY per 1 USD (today 6.66)"),
 });
 
 type ExchangeRateData = z.infer<typeof exchangeRateSchema>;
@@ -35,12 +50,12 @@ export default function SettingsPage() {
   const [whatsappNumber, setWhatsappNumber] = useState("+86 152 7707 4143");
   const [defaultLanguage, setDefaultLanguage] = useState("en");
 
-  // Currency settings
+  // The one editable rate (CNY per 1 USD) plus the SOS row read for display.
+  // Only `exchangeRates` is ever written back.
   const [exchangeRates, setExchangeRates] = useState<ExchangeRateData>({
-    cny_to_usd: 0.138,
-    cny_to_sos: 79.5,
-    updated_by: "admin",
+    cny_per_usd: DEFAULT_CNY_PER_USD,
   });
+  const [sosPerUsd, setSosPerUsd] = useState(DEFAULT_SOS_PER_USD);
   const [rateErrors, setRateErrors] = useState<Partial<Record<keyof ExchangeRateData, string>>>({});
   const [isLoadingRates, setIsLoadingRates] = useState(false);
 
@@ -59,6 +74,7 @@ export default function SettingsPage() {
     }[]
   >([]);
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
+  const [staffError, setStaffError] = useState<string | null>(null);
 
   // AI Provider settings are managed by <AiSettingsTab /> (edge functions).
 
@@ -143,23 +159,33 @@ export default function SettingsPage() {
     if (activeTab === "Staff") {
       fetchStaff();
     }
+    if (activeTab === "Shipping") {
+      fetchShipping();
+    }
   }, [activeTab]);
+
+  // Deep link from /admin/rates ("?tab=currency"). location.search is read on the
+  // client instead of useSearchParams so the static prerender of this route does
+  // not have to be wrapped in Suspense.
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    const match = tabs.find((t) => t.toLowerCase() === (tab ?? "").toLowerCase());
+    if (match) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one honour of ?tab= on mount
+      setActiveTab(match);
+    }
+  }, []);
 
   const fetchExchangeRate = async () => {
     setIsLoadingRates(true);
     try {
-      const { data, error } = await supabase
-        .from("settings")
-        .select("value")
-        .eq("key", "exchange_rate")
-        .single();
-
-      if (!error && data?.value) {
-        const parsed = typeof data.value === "string" ? JSON.parse(data.value) : data.value;
-        setExchangeRates((prev) => ({ ...prev, ...parsed }));
-      }
-    } catch {
-      // Use default values if table doesn't exist yet
+      // fx.ts is the app's only rate reader: it already resolves the newest
+      // active row per pair, flips an upside-down entry and rejects an
+      // implausible one, so this form opens showing the number every other
+      // admin screen is actually using.
+      const fx = await getFxRates();
+      setExchangeRates({ cny_per_usd: fx.cnyPerUsd });
+      setSosPerUsd(fx.sosPerUsd);
     } finally {
       setIsLoadingRates(false);
     }
@@ -167,18 +193,24 @@ export default function SettingsPage() {
 
   const fetchStaff = async () => {
     setIsLoadingStaff(true);
+    setStaffError(null);
     try {
       const { data, error } = await supabase
         .from("staff_profiles")
         .select("id, user_id, role, department, profiles(full_name)")
         .order("created_at", { ascending: false });
 
-      if (!error) {
+      if (error) {
+        // Surface the failure instead of leaving a stale (or silently empty) list.
+        setStaffError(error.message || "Failed to load staff members.");
+        setStaffList([]);
+      } else {
         // to-one embed: supabase-js types it as an array, runtime gives one object.
         setStaffList((data as unknown as typeof staffList) || []);
       }
-    } catch {
-      // Query failed — the empty state below says so rather than faking rows.
+    } catch (err) {
+      setStaffError(err instanceof Error ? err.message : "Failed to load staff members.");
+      setStaffList([]);
     } finally {
       setIsLoadingStaff(false);
     }
@@ -195,13 +227,19 @@ export default function SettingsPage() {
         { key: "default_language", value: defaultLanguage },
       ];
 
-      for (const setting of settings) {
-        const { error } = await supabase
-          .from("settings")
-          .upsert({ key: setting.key, value: setting.value }, { onConflict: "key" });
-
-        if (error) throw error;
-      }
+      // Independent settings keys — parallelised for speed. These are NOT atomic:
+      // if one upsert fails the others may already have committed. Each key is
+      // idempotent (upsert on `key`), so re-saving after an error converges safely.
+      await Promise.all(
+        settings.map(({ key, value }) =>
+          supabase
+            .from("settings")
+            .upsert({ key, value }, { onConflict: "key" })
+            .then(({ error }) => {
+              if (error) throw error;
+            })
+        )
+      );
 
       setSaveMessage({ type: "success", text: "General settings saved successfully" });
     } catch (err) {
@@ -228,15 +266,73 @@ export default function SettingsPage() {
     setIsSaving(true);
     setSaveMessage(null);
     try {
+      // Writing the single live pair (CNY → USD) to exchange_rates. The insert
+      // trigger retires the previous active row, so history accumulates on
+      // /admin/rates while exactly one rate stays live. The SOS pair is not
+      // touched here: it is a fixed checkout display constant, not a setting.
+      const saved = await saveExchangeRate({
+        from_currency: "CNY",
+        to_currency: "USD",
+        rate: result.data.cny_per_usd,
+        reason: "Set in Admin → Settings",
+        is_active: true,
+        effective_from: new Date().toISOString(),
+      });
+      if (!saved.ok) throw new Error(saved.error || "Failed to save exchange rate");
+
+      invalidateFx();
+      setSaveMessage({ type: "success", text: "Rate updated — every screen now uses it" });
+    } catch (err) {
+      setSaveMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to save" });
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setSaveMessage(null), 3000);
+    }
+  };
+
+  // Shipping settings are persisted to the same `settings` KV table as the
+  // General & Currency tabs (key "shipping_methods"), so a save survives a
+  // reload instead of resetting to the defaults baked into the file.
+  const fetchShipping = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "shipping_methods")
+        .maybeSingle();
+      if (error || !data?.value) return; // first run: no row yet, keep defaults
+      const parsed = typeof data.value === "string" ? JSON.parse(data.value) : data.value;
+      if (Array.isArray(parsed)) {
+        setMethods((prev) =>
+          prev.map((m) => {
+            const saved = parsed.find((s: any) => s?.id === m.id);
+            return saved
+              ? {
+                  ...m,
+                  baseRate: Number(saved.baseRate) || m.baseRate,
+                  estimatedDays: saved.estimatedDays ?? m.estimatedDays,
+                }
+              : m;
+          })
+        );
+      }
+    } catch {
+      // Malformed stored value — leave the defaults untouched.
+    }
+  };
+
+  const handleSaveShipping = async () => {
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
       const { error } = await supabase
         .from("settings")
         .upsert(
-          { key: "exchange_rate", value: JSON.stringify(exchangeRates) },
+          { key: "shipping_methods", value: JSON.stringify(methods) },
           { onConflict: "key" }
         );
-
       if (error) throw error;
-      setSaveMessage({ type: "success", text: "Exchange rates updated successfully" });
+      setSaveMessage({ type: "success", text: "Shipping methods saved" });
     } catch (err) {
       setSaveMessage({ type: "error", text: err instanceof Error ? err.message : "Failed to save" });
     } finally {
@@ -248,23 +344,27 @@ export default function SettingsPage() {
   const handleRefreshRate = async () => {
     setIsLoadingRates(true);
     try {
-      const res = await fetch("https://api.exchangerate-api.com/v4/latest/CNY");
+      // Keyless, quoted from USD, so rates.CNY is CNY-per-USD — the same
+      // direction exchange_rates stores. This fills the ONE box; the shilling
+      // figure is a fixed checkout constant and is deliberately not fetched
+      // (the market rate and the app's 530 are different numbers on purpose).
+      const res = await fetch("https://open.er-api.com/v6/latest/USD");
+      if (!res.ok) throw new Error(`Rate API returned ${res.status}`);
       const data = await res.json();
-      if (data.rates?.USD) {
-        setExchangeRates((prev) => ({
-          ...prev,
-          cny_to_usd: Number(data.rates.USD.toFixed(4)),
-        }));
+
+      const cnyPerUsd = normalizeCnyPerUsd(Number(data?.rates?.CNY));
+      if (cnyPerUsd === null) {
+        throw new Error("Live rate failed the plausibility check — nothing was loaded");
       }
-      if (data.rates?.SOS) {
-        setExchangeRates((prev) => ({
-          ...prev,
-          cny_to_sos: Number(data.rates.SOS.toFixed(2)),
-        }));
-      }
-      setSaveMessage({ type: "success", text: "Exchange rates refreshed from API" });
-    } catch {
-      setSaveMessage({ type: "error", text: "Failed to fetch live rates" });
+
+      setExchangeRates({ cny_per_usd: Math.round(cnyPerUsd * 10000) / 10000 });
+      setRateErrors({});
+      setSaveMessage({ type: "success", text: "Live rate loaded — Save Rate to apply it" });
+    } catch (err) {
+      setSaveMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed to fetch live rates",
+      });
     } finally {
       setIsLoadingRates(false);
       setTimeout(() => setSaveMessage(null), 3000);
@@ -373,8 +473,8 @@ export default function SettingsPage() {
       {/* Currency Settings */}
       {activeTab === "Currency" && (
         <SectionCard
-          title="Exchange Rates"
-          subtitle="Manual rates override the live API rate"
+          title="Exchange Rate"
+          subtitle="One number controls every price in the admin and the app"
           bodyClassName="space-y-6"
           actions={
             <button
@@ -387,43 +487,52 @@ export default function SettingsPage() {
             </button>
           }
         >
-          <div className="grid gap-x-5 gap-y-1 sm:grid-cols-2">
-            <Field label="CNY → USD Rate" hint={`1 CNY = ${exchangeRates.cny_to_usd} USD`}>
+          <div className="max-w-sm">
+            <Field
+              label="CNY per 1 USD — how many ¥ make $1"
+              hint={`USD = CNY ÷ ${exchangeRates.cny_per_usd || "—"} · 1 CNY = $${
+                exchangeRates.cny_per_usd > 0 ? (1 / exchangeRates.cny_per_usd).toFixed(4) : "—"
+              }`}
+            >
               <input
                 type="number"
                 step="0.0001"
-                value={exchangeRates.cny_to_usd}
-                onChange={(e) => setExchangeRates((prev) => ({ ...prev, cny_to_usd: parseFloat(e.target.value) || 0 }))}
+                value={exchangeRates.cny_per_usd}
+                onChange={(e) => setExchangeRates((prev) => ({ ...prev, cny_per_usd: parseFloat(e.target.value) || 0 }))}
                 className={cn(
                   "admin-input",
-                  rateErrors.cny_to_usd && "border-error/60 focus:border-error/60 focus:ring-error/15"
+                  rateErrors.cny_per_usd && "border-error/60 focus:border-error/60 focus:ring-error/15"
                 )}
               />
-              {rateErrors.cny_to_usd && (
-                <p className="mt-1 text-xs font-medium text-error">{rateErrors.cny_to_usd}</p>
-              )}
-            </Field>
-            <Field label="CNY → SOS Rate" hint={`1 CNY = ${exchangeRates.cny_to_sos} SOS`}>
-              <input
-                type="number"
-                step="0.01"
-                value={exchangeRates.cny_to_sos}
-                onChange={(e) => setExchangeRates((prev) => ({ ...prev, cny_to_sos: parseFloat(e.target.value) || 0 }))}
-                className={cn(
-                  "admin-input",
-                  rateErrors.cny_to_sos && "border-error/60 focus:border-error/60 focus:ring-error/15"
-                )}
-              />
-              {rateErrors.cny_to_sos && (
-                <p className="mt-1 text-xs font-medium text-error">{rateErrors.cny_to_sos}</p>
+              {rateErrors.cny_per_usd && (
+                <p className="mt-1 text-xs font-medium text-error">{rateErrors.cny_per_usd}</p>
               )}
             </Field>
           </div>
 
+          {/* Derived from whatever is in the box, so an entry that reads wrong to
+              the eye ($0.15 per dollar typed as 0.15) is obvious before it is
+              saved — the database trigger would flip it, and better that the
+              owner sees it here first. */}
+          <div className="rounded-xl border border-brand-500/20 bg-brand-50/60 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-dark-900/45">
+              What this number does in the app
+            </p>
+            <p className="mt-1 text-sm font-bold tabular-nums text-dark-900">
+              {derivedReadout(exchangeRates.cny_per_usd, sosPerUsd)}
+            </p>
+            <p className="mt-2 text-xs text-dark-900/55">
+              Shilling is not an editable rate: checkout shows Somali prices at the fixed{" "}
+              {sosPerUsd} SOS per $1 the database already holds.
+            </p>
+          </div>
+
           <div className="rounded-xl border border-warning/20 bg-warning/5 p-4">
             <p className="text-sm text-dark-900/60">
-              <strong className="font-semibold text-dark-900">Note:</strong> Exchange rates are used to calculate product prices and order totals.
-              Manual rates override the API rate. Always verify rates before saving.
+              <strong className="font-semibold text-dark-900">Note:</strong> the box means{" "}
+              <strong className="font-semibold text-dark-900">how many yuan equal one US dollar</strong>{" "}
+              — today 6.66. Saving replaces the live rate for sourcing, quotes, orders, the customer
+              app and the AI price reader at once. Always verify the readout above before saving.
             </p>
           </div>
 
@@ -434,7 +543,7 @@ export default function SettingsPage() {
               className="admin-btn-primary"
             >
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save Rates
+              Save Rate
             </button>
           </div>
         </SectionCard>
@@ -498,6 +607,22 @@ export default function SettingsPage() {
               </div>
             </div>
           ))}
+
+          <div className="flex items-center justify-between gap-3 border-t border-dark-900/[0.06] pt-4">
+            <p className="text-[11px] leading-relaxed text-dark-900/45">
+              Saved to the settings table (key <span className="font-mono">shipping_methods</span>) —
+              the same store as General &amp; Currency — so rates survive a reload. Checkout and the
+              quote flow read these base rates.
+            </p>
+            <button
+              onClick={handleSaveShipping}
+              disabled={isSaving}
+              className="admin-btn-primary h-9 shrink-0"
+            >
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save Rates
+            </button>
+          </div>
         </SectionCard>
       )}
 
@@ -513,6 +638,14 @@ export default function SettingsPage() {
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="skeleton h-12 w-full" />
               ))}
+            </div>
+          ) : staffError ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-8 text-center">
+              <p className="text-sm font-medium text-rose-600">Couldn't load staff members.</p>
+              <p className="mt-1 text-xs text-rose-500/80">{staffError}</p>
+              <button onClick={fetchStaff} className="admin-btn-outline mt-3 h-9">
+                Retry
+              </button>
             </div>
           ) : staffList.length === 0 ? (
             <div className="rounded-xl bg-dark-50 p-8 text-center">

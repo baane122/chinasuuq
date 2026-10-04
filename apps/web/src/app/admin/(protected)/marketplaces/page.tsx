@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import {
+  listMarketplaceAccounts,
+  saveMarketplaceAccount,
+  deleteMarketplaceAccount,
+} from "@/lib/admin/supabase-data";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import {
@@ -55,9 +60,52 @@ interface MarketplaceAccount {
   is_active: boolean;
   cookies?: string | null;
   cookies_updated_at?: string | null;
+  cookies_updated_by?: string | null;
+  /** Resolved from profiles by the data layer (null when unresolvable). */
+  cookies_updated_by_name?: string | null;
   last_verified_at?: string | null;
   health?: string | null;
   created_at: string;
+}
+
+/** "2h ago"-style freshness for cookies_updated_at; null for missing/invalid. */
+function timeAgo(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  const mins = Math.floor((Date.now() - t) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/** Parses the stored "name=val; name2=val2" Cookie header into pairs. */
+function cookiePairs(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.includes("="));
+}
+
+type SessionTone = "live" | "aging" | "expired";
+
+/**
+ * Session health derived from cookie AGE, not the stored `health` text:
+ * live < 7d, aging 7–14d, expired/none > 14d or missing.
+ */
+function sessionHealth(acc: MarketplaceAccount): { tone: SessionTone; label: string } {
+  const ts = acc.cookies_updated_at;
+  if (!ts) return { tone: "expired", label: "Expired / none" };
+  const t = new Date(ts).getTime();
+  if (Number.isNaN(t)) return { tone: "expired", label: "Expired / none" };
+  const days = (Date.now() - t) / 86400000;
+  if (days < 7) return { tone: "live", label: "Live" };
+  if (days <= 14) return { tone: "aging", label: "Aging" };
+  return { tone: "expired", label: "Expired" };
 }
 
 const emptyForm = {
@@ -82,6 +130,9 @@ export default function AdminMarketplacesPage() {
   const [editing, setEditing] = useState<MarketplaceAccount | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // False when the live schema lacks the cookies/health columns: the cookie UI
+  // hides itself instead of showing blank affordances (drift-guard fallback).
+  const [hasSessionColumns, setHasSessionColumns] = useState(true);
 
   // Delete confirmation
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -89,16 +140,15 @@ export default function AdminMarketplacesPage() {
 
   // Form state
   const [form, setForm] = useState(emptyForm);
+  const [showFormPassword, setShowFormPassword] = useState(false);
 
   const fetchAccounts = useCallback(async () => {
     try {
       setIsLoading(true);
-      const { data, error } = await supabase
-        .from("marketplace_accounts")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setAccounts((data as MarketplaceAccount[]) || []);
+      const res = await listMarketplaceAccounts();
+      if (!res.ok) throw new Error(res.error || "Query failed");
+      setAccounts((res.accounts as MarketplaceAccount[]) || []);
+      setHasSessionColumns(res.hasSessionColumns);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load marketplace accounts.");
     } finally {
@@ -136,26 +186,25 @@ export default function AdminMarketplacesPage() {
     setSaving(true);
     setError(null);
     try {
-      // Stamp cookie freshness on every save that touches the session fields
+      // Stamp cookie freshness on every save that touches the session fields.
+      // When staff paste/save a session we also record WHO did it
+      // (cookies_updated_by = current auth uid) and mark health 'active';
+      // saveMarketplaceAccount drops the session columns and retries if the
+      // live schema does not have them.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const hasCookies = Boolean(form.cookies.trim());
       const payload = {
         ...form,
         cookies_updated_at: new Date().toISOString(),
-        health: form.cookies ? "fresh" : "unknown",
+        ...(hasCookies
+          ? { cookies_updated_by: session?.user?.id ?? null, health: "active" }
+          : { health: "unknown" }),
       };
-      if (editing) {
-        const { error } = await supabase
-          .from("marketplace_accounts")
-          .update(payload)
-          .eq("id", editing.id);
-        if (error) throw error;
-        toast.success("Account updated");
-      } else {
-        const { error } = await supabase
-          .from("marketplace_accounts")
-          .insert(payload);
-        if (error) throw error;
-        toast.success("Account created");
-      }
+      const res = await saveMarketplaceAccount(payload, editing?.id);
+      if (!res.ok) throw new Error(res.error || "Save failed");
+      toast.success(editing ? "Account updated" : "Account created");
       setPanelOpen(false);
       resetForm();
       fetchAccounts();
@@ -171,8 +220,8 @@ export default function AdminMarketplacesPage() {
     if (!deleteId) return;
     setDeleting(true);
     try {
-      const { error } = await supabase.from("marketplace_accounts").delete().eq("id", deleteId);
-      if (error) throw error;
+      const res = await deleteMarketplaceAccount(deleteId);
+      if (!res.ok) throw new Error(res.error || "Delete failed");
       setAccounts((prev) => prev.filter((a) => a.id !== deleteId));
       toast.success("Account deleted");
       setDeleteId(null);
@@ -194,11 +243,8 @@ export default function AdminMarketplacesPage() {
 
   const toggleShared = async (acc: MarketplaceAccount) => {
     try {
-      const { error } = await supabase
-        .from("marketplace_accounts")
-        .update({ is_shared: !acc.is_shared, is_active: acc.is_active })
-        .eq("id", acc.id);
-      if (error) throw error;
+      const res = await saveMarketplaceAccount({ is_shared: !acc.is_shared }, acc.id);
+      if (!res.ok) throw new Error(res.error || "Update failed");
       fetchAccounts();
       toast.success(acc.is_shared ? "Account unshared" : "Account shared with users");
     } catch (err) {
@@ -238,8 +284,10 @@ export default function AdminMarketplacesPage() {
         <StatCard label="Platforms Used" value={platformsUsed} icon={LayoutGrid} tone="violet" delay={3} />
       </PageGrid>
 
-      {/* Non-blocking error (save / delete / update) */}
-      {accounts.length > 0 && error && (
+      {/* Non-blocking error (load / save / delete / update) — shown whenever an
+          error is set, regardless of list length, so an initial-load failure is
+          never hidden behind a misleading empty "no accounts" state. */}
+      {error && (
         <div className="mb-6 flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">
           <KeyRound className="h-4 w-4 shrink-0" /> {error}
         </div>
@@ -299,6 +347,15 @@ export default function AdminMarketplacesPage() {
           {accounts.map((acc, i) => {
             const meta = marketplaceMeta(acc.marketplace_type);
             const showPw = showPasswordIds.has(acc.id);
+            const pairs = cookiePairs(acc.cookies);
+            const health = sessionHealth(acc);
+            const lastSynced = timeAgo(acc.cookies_updated_at);
+            const toneChip =
+              health.tone === "live"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-600"
+                : health.tone === "aging"
+                  ? "border-amber-200 bg-amber-50 text-amber-600"
+                  : "border-red-200 bg-red-50 text-red-600";
             return (
               <div
                 key={acc.id}
@@ -324,28 +381,20 @@ export default function AdminMarketplacesPage() {
                             <ShieldCheck className="h-3 w-3" /> Shared
                           </span>
                         )}
-                        {acc.cookies && (
+                        {hasSessionColumns && (
                           <span
                             className={cn(
                               "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-                              acc.health === "dead"
-                                ? "border-red-200 bg-red-50 text-red-600"
-                                : acc.health === "aging"
-                                  ? "border-amber-200 bg-amber-50 text-amber-600"
-                                  : "border-emerald-200 bg-emerald-50 text-emerald-600"
+                              toneChip
                             )}
                             title={
-                              acc.cookies_updated_at
-                                ? `Cookies updated ${new Date(acc.cookies_updated_at).toLocaleDateString()}`
-                                : "Pre-login cookies set"
+                              lastSynced
+                                ? `Cookies synced ${lastSynced}`
+                                : "No session cookies stored yet"
                             }
                           >
                             <Cookie className="h-3 w-3" />
-                            {acc.health === "dead"
-                              ? "Session dead"
-                              : acc.health === "aging"
-                                ? "Aging"
-                                : "Pre-logged"}
+                            {health.label}
                           </span>
                         )}
                       </p>
@@ -400,6 +449,47 @@ export default function AdminMarketplacesPage() {
                     </div>
                   )}
                 </div>
+
+                {acc.password_encrypted && (
+                  <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+                    <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    Customers no longer receive credentials; sessions are bridged via cookies — sync a
+                    live session from the mobile app (staff) or paste cookies here.
+                  </p>
+                )}
+
+                {acc.is_shared && hasSessionColumns && (
+                  <div className="mt-4 rounded-xl border border-dark-900/[0.06] bg-warm-50 p-3.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-dark-900/50">
+                        <Cookie className="h-3.5 w-3.5" /> Session health
+                      </p>
+                      <span
+                        className={cn(
+                          "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                          toneChip
+                        )}
+                      >
+                        {health.label}
+                      </span>
+                    </div>
+                    <div className="mt-2.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      <div className="flex items-center justify-between rounded-lg bg-white px-2.5 py-1.5">
+                        <span className="text-[11px] text-dark-900/45">Cookies</span>
+                        <span className="text-xs font-medium text-dark-800">
+                          {pairs.length > 0 ? `Yes · ${pairs.length} pair${pairs.length === 1 ? "" : "s"}` : "None"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-lg bg-white px-2.5 py-1.5">
+                        <span className="text-[11px] text-dark-900/45">Last synced</span>
+                        <span className="truncate text-xs font-medium text-dark-800" title={acc.cookies_updated_by ?? undefined}>
+                          {lastSynced ?? "Never"}
+                          {acc.cookies_updated_by_name ? ` · ${acc.cookies_updated_by_name}` : ""}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {acc.notes && <p className="mt-3 text-xs text-dark-900/50">{acc.notes}</p>}
 
@@ -479,13 +569,27 @@ export default function AdminMarketplacesPage() {
                 className="admin-input"
               />
             </Field>
-            <Field label="Password">
-              <input
-                type="text"
-                value={form.password_encrypted}
-                onChange={(e) => setForm({ ...form, password_encrypted: e.target.value })}
-                className="admin-input"
-              />
+            <Field
+              label="Password"
+              hint="Customers no longer receive credentials; sessions are bridged via cookies — sync a live session from the mobile app (staff) or paste cookies here."
+            >
+              <div className="relative">
+                <input
+                  type={showFormPassword ? "text" : "password"}
+                  value={form.password_encrypted}
+                  onChange={(e) => setForm({ ...form, password_encrypted: e.target.value })}
+                  className="admin-input pr-10"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowFormPassword((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-dark-900/40 transition-colors hover:text-dark-700"
+                  title={showFormPassword ? "Hide password" : "Show password"}
+                >
+                  {showFormPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </Field>
           </div>
 
@@ -506,18 +610,20 @@ export default function AdminMarketplacesPage() {
             </Field>
           </div>
 
-          <Field
-            label="Session Cookies (pre-login)"
-            hint="Paste the Cookie header from a logged-in browser (DevTools → Network → any request → Cookie). The app injects these so customers browse logged-in without ever seeing a login wall."
-          >
-            <textarea
-              value={form.cookies}
-              onChange={(e) => setForm({ ...form, cookies: e.target.value })}
-              rows={3}
-              placeholder="cookie2=...; t=...; cna=...; isg=..."
-              className="admin-input font-mono text-xs"
-            />
-          </Field>
+          {hasSessionColumns && (
+            <Field
+              label="Session Cookies (pre-login)"
+              hint="Paste the Cookie header from a logged-in browser (DevTools → Network → any request → Cookie). The app injects these so customers browse logged-in without ever seeing a login wall."
+            >
+              <textarea
+                value={form.cookies}
+                onChange={(e) => setForm({ ...form, cookies: e.target.value })}
+                rows={3}
+                placeholder="cookie2=...; t=...; cna=...; isg=..."
+                className="admin-input font-mono text-xs"
+              />
+            </Field>
+          )}
 
           <Field label="Notes">
             <textarea

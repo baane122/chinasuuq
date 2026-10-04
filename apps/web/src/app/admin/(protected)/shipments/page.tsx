@@ -1,17 +1,20 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 import {
   Truck, Loader2, Plane, Ship, Package, MapPin, Plus, Pencil, Trash2,
-  Calendar, Clock, Check, AlertTriangle, ArrowRight, Navigation, X
+  Calendar, Clock, Check, AlertTriangle, ArrowRight, Navigation, X, Link2
 } from "lucide-react";
 import type { Shipment } from "@/types";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
 import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
+import { RowCapNotice } from "@/components/admin/RowCapNotice";
+import { isMissingColumnError } from "@/lib/admin/supabase-data";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -86,6 +89,15 @@ export default function ShipmentsPage() {
   // Detail view
   const [selected, setSelected] = useState<Shipment | null>(null);
 
+  // order_id linking. `shipments.order_id` is added by a concurrent backend
+  // migration; it may not exist in every deploy, so we feature-detect with a
+  // column probe and only render the "Order" link when the column is live.
+  const [hasOrderId, setHasOrderId] = useState(false);
+  const [orderRefs, setOrderRefs] = useState<Record<string, string>>({});
+
+  // Set when a fetch returned a full 1000-row page — the read cap hides older rows.
+  const [rowCapHit, setRowCapHit] = useState(false);
+
   /* ── Fetch ──────────────────────────────────────────────────── */
 
   const fetchShipments = useCallback(async () => {
@@ -94,9 +106,48 @@ export default function ShipmentsPage() {
       const { data, error: fetchError } = await supabase
         .from("shipments")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(1000);
       if (fetchError) throw fetchError;
-      setShipments((data as Shipment[]) || []);
+      const rows = (data as Shipment[]) || [];
+      setShipments(rows);
+      setRowCapHit(rows.length >= 1000);
+
+      // Probe the optional order_id column WITHOUT letting it break the main list:
+      // a tiny limit-1 read; a missing-column error means "hide the link", anything
+      // else (auth, empty table with the column present) means it's available.
+      const probe = await supabase.from("shipments").select("order_id").limit(1);
+      const orderColumnLive = !probe.error && !isMissingColumnError(probe.error);
+      setHasOrderId(orderColumnLive);
+
+      // Resolve order_id → order reference so the link shows a human ref and deep
+      // links into the Orders console. Falls back to the base table if the admin
+      // view drifted / denies. Non-fatal.
+      if (orderColumnLive) {
+        const ids = [...new Set(rows.map((s) => s.order_id).filter(Boolean) as string[])];
+        if (ids.length) {
+          let { data: ords, error: ordsErr } = await supabase
+            .from("admin_orders_view")
+            .select("id, order_number, reference")
+            .in("id", ids);
+          if (ordsErr) {
+            const fb = await supabase
+              .from("orders")
+              .select("id, reference")
+              .in("id", ids);
+            // Base-table fallback has no order_number column — the map below
+            // guards per-field, so the narrower row shape is intentional.
+            ords = fb.data as unknown as typeof ords;
+          }
+          const map: Record<string, string> = {};
+          for (const o of (ords as any[]) || []) {
+            map[o.id] = o.order_number || o.reference || String(o.id).slice(0, 8);
+          }
+          setOrderRefs(map);
+        } else {
+          setOrderRefs({});
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load shipments");
     } finally {
@@ -254,11 +305,17 @@ export default function ShipmentsPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const { error: deleteError } = await supabase
+      const { data, error: deleteError } = await supabase
         .from("shipments")
         .delete()
-        .eq("id", deleteTarget.id);
+        .eq("id", deleteTarget.id)
+        .select("id");
       if (deleteError) throw deleteError;
+      // RLS denial returns 204 / 0 rows with NO error.
+      if (!data || data.length === 0) {
+        toastError("Blocked by permissions — nothing was deleted");
+        return;
+      }
       success("Shipment deleted");
       setDeleteTarget(null);
       setSelected(null);
@@ -310,6 +367,8 @@ export default function ShipmentsPage() {
           </button>
         }
       />
+
+      {rowCapHit && <RowCapNotice noun="shipments" />}
 
       {/* ── KPI Stats ── */}
       <PageGrid className="grid-cols-2 sm:grid-cols-4">
@@ -404,6 +463,7 @@ export default function ShipmentsPage() {
             <thead>
               <tr>
                 <th>Reference</th>
+                {hasOrderId && <th>Order</th>}
                 <th>Method</th>
                 <th>Route</th>
                 <th>Packages</th>
@@ -426,6 +486,23 @@ export default function ShipmentsPage() {
                       <td className="px-6 py-3.5">
                         <span className="text-sm font-medium text-brand-500">{shipment.reference}</span>
                       </td>
+                      {hasOrderId && (
+                        <td className="px-6 py-3.5">
+                          {shipment.order_id ? (
+                            <Link
+                              href={`/admin/orders?open=${shipment.order_id}`}
+                              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                              className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 hover:text-brand-700 dark:text-brand-400 dark:hover:bg-brand-500/10"
+                              title={orderRefs[shipment.order_id] || "Open this order"}
+                            >
+                              <Link2 className="h-3.5 w-3.5" />
+                              {orderRefs[shipment.order_id] || `${shipment.order_id.slice(0, 8)}…`}
+                            </Link>
+                          ) : (
+                            <span className="text-xs text-dark-300 dark:text-neutral-600">unlinked</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-6 py-3.5">
                         <div className="flex items-center gap-2">
                           <MethodIcon className={cn("h-4 w-4", methodColors[shipment.method] || "text-dark-400")} />
@@ -628,6 +705,31 @@ export default function ShipmentsPage() {
                     ))}
                   </div>
                 </div>
+
+                {/* Linked order (only when the order_id column is live) */}
+                {hasOrderId && (
+                  <div className="flex items-center justify-between rounded-2xl border border-dark-900/[0.06] bg-white p-4 dark:border-white/[0.08] dark:bg-dark-900">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500/10 text-brand-600">
+                        <Link2 className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-dark-900/40 dark:text-neutral-500">Linked order</p>
+                        <p className="text-sm font-semibold text-dark-900 dark:text-neutral-100">
+                          {selected.order_id ? orderRefs[selected.order_id] || `${selected.order_id.slice(0, 8)}…` : "No order linked"}
+                        </p>
+                      </div>
+                    </div>
+                    {selected.order_id && (
+                      <Link
+                        href={`/admin/orders?open=${selected.order_id}`}
+                        className="admin-btn-outline h-9 px-3 text-xs"
+                      >
+                        Open
+                      </Link>
+                    )}
+                  </div>
+                )}
 
                 {/* Quick actions */}
                 <div className="flex gap-3">

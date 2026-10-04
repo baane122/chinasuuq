@@ -212,13 +212,14 @@ interface TrendingCardProps {
   onAdd: () => void;
 }
 
-const TrendingCard = React.memo(function TrendingCard({
-  item,
-  rank,
-  locale,
-  onOpen,
-  onAdd,
-}: TrendingCardProps) {
+const TrendingCard = React.memo(
+  function TrendingCard({
+    item,
+    rank,
+    locale,
+    onOpen,
+    onAdd,
+  }: TrendingCardProps) {
   // A product with no scraped photo, or a photo whose CDN refused the request,
   // gets the same quiet placeholder rather than an empty grey box.
   const [loadFailed, setLoadFailed] = useState(false);
@@ -299,7 +300,14 @@ const TrendingCard = React.memo(function TrendingCard({
       </TouchableOpacity>
     </TouchableOpacity>
   );
-});
+  },
+  // The row hands every card a fresh inline `onOpen`/`onAdd` closure on each
+  // parent render, which defeats the default shallow compare. Those closures
+  // only ever read `item`, `locale`, and store/router callbacks that are
+  // stable, so identity of the item + locale + rank is the real input.
+  (prev, next) =>
+    prev.item === next.item && prev.rank === next.rank && prev.locale === next.locale
+);
 
 // ─── Loading state ───────────────────────────────────
 export function TrendingRowSkeleton() {

@@ -82,7 +82,7 @@ export async function getAdminKpis(): Promise<{
   error?: string;
 }> {
   const { data, error } = await supabase.rpc("admin_kpis");
-  if (error) return { ok: false, metrics: {}, error: error.message };
+  if (error) return { ok: false, metrics: {}, error: adminErrorMessage(error, error.message) };
   const metrics: KpiMap = {};
   for (const row of (data as any[]) || []) {
     metrics[row.metric] = {
@@ -179,13 +179,19 @@ export async function getOrderItems(orderId: string) {
  * Base-table columns verified live: reference, user_id, status, payment_status,
  * shipping_method, subtotal_usd, service_fee_usd, total_usd, balance_due_usd,
  * currency, delivery_address, destination_city, notes, created_at, updated_at.
+ *
+ * WINDOWING: this used to pull a single 50-row page and report the whole table
+ * as those 50. It now loads a wide `pageSize` window (default 250) and returns
+ * the true `total` matching row count (PostgREST head count) alongside the rows,
+ * so the Orders screen can paginate client-side AND honestly say when more rows
+ * exist beyond the loaded window.
  */
 export async function listOrders({
   status,
   payment_status,
   search,
   page = 0,
-  pageSize = 50,
+  pageSize = 250,
 }: {
   status?: string;
   payment_status?: string;
@@ -197,7 +203,8 @@ export async function listOrders({
     let q = supabase
       .from("admin_orders_view")
       .select(
-        "id, order_number, reference, profile_id, customer_name, customer_email, customer_phone, status, payment_status, payment_method, shipping_method, subtotal, shipping_cost, service_fee, total, currency, recipient_name, phone, city, address, target_marketplace, created_at, confirmed_at, shipped_at, delivered_at, cancelled_at"
+        "id, order_number, reference, profile_id, customer_name, customer_email, customer_phone, status, payment_status, payment_method, shipping_method, subtotal, shipping_cost, service_fee, total, currency, recipient_name, phone, city, address, target_marketplace, created_at, confirmed_at, shipped_at, delivered_at, cancelled_at",
+        { count: "exact" }
       )
       .order("created_at", { ascending: false })
       .range(page * pageSize, page * pageSize + pageSize - 1);
@@ -208,8 +215,9 @@ export async function listOrders({
         `order_number.ilike.%${search}%,reference.ilike.%${search}%,recipient_name.ilike.%${search}%,phone.ilike.%${search}%`
       );
     }
-    let { data, error } = await q;
+    let { data, error, count } = await q;
     let orders = (data as any[]) || [];
+    let total = count ?? orders.length;
 
     // An empty result from the view is a legitimate empty page — only a real
     // error (denied view / drifted alias set) triggers the base-table fallback.
@@ -218,7 +226,8 @@ export async function listOrders({
       let fb = supabase
         .from("orders")
         .select(
-          "id, reference, user_id, status, payment_status, shipping_method, subtotal_usd, service_fee_usd, total_usd, balance_due_usd, currency, delivery_address, destination_city, notes, created_at, updated_at"
+          "id, reference, user_id, status, payment_status, shipping_method, subtotal_usd, service_fee_usd, total_usd, balance_due_usd, currency, delivery_address, destination_city, notes, created_at, updated_at",
+          { count: "exact" }
         )
         .order("created_at", { ascending: false })
         .range(page * pageSize, page * pageSize + pageSize - 1);
@@ -233,10 +242,12 @@ export async function listOrders({
       if (res.error) {
         return {
           ok: false,
-          error: error?.message || res.error.message,
+          error: adminErrorMessage(error, res.error.message),
           orders: [],
+          total: 0,
         };
       }
+      total = res.count ?? (res.data as any[] | undefined)?.length ?? 0;
       // Map base rows into the shape the view promised so page code that reads
       // either shape keeps working (pages also guard per-field).
       orders = ((res.data as any[]) || []).map((o) => ({
@@ -292,9 +303,9 @@ export async function listOrders({
         }
       }
     }
-    return { ok: true, orders };
+    return { ok: true, orders, total };
   } catch (e) {
-    return { ok: false, error: String(e), orders: [] };
+    return { ok: false, error: String(e), orders: [], total: 0 };
   }
 }
 
@@ -331,7 +342,11 @@ export async function listCustomers({ search }: { search?: string } = {}) {
       );
     }
     const { data, error } = await q;
-    return { ok: !error, customers: data || [], error: error?.message };
+    return {
+      ok: !error,
+      customers: data || [],
+      error: error ? adminErrorMessage(error, "Failed to load customers") : undefined,
+    };
   } catch (e) {
     return { ok: false, error: String(e), customers: [] };
   }
@@ -347,6 +362,39 @@ export function isMissingColumnError(error: { code?: string; message?: string } 
   if (!error) return false;
   if (error.code === "42703" || error.code === "PGRST204") return true;
   return /does not exist|could not find the/i.test(error.message ?? "");
+}
+
+/** What the operator should DO about a dead admin session. */
+export const SESSION_DEAD_MESSAGE =
+  "Your admin session has expired. Sign out, sign in again, then reopen this page.";
+
+/**
+ * Did this request fail because the browser's JWT is gone or stale?
+ *
+ * The admin views (admin_customers_view, admin_staff_view, admin_orders_view)
+ * are `security_invoker` views granted to `authenticated` only, so an expired
+ * session reaches PostgREST as `anon` and answers 401/42501
+ * "permission denied for view …". That wording reads like a broken database and
+ * sends staff hunting for an RLS bug; the real fix is one click. Same for the
+ * "JWSError"/"invalid JWT" variants of a token the gateway rejected.
+ */
+export function isSessionDeadError(
+  error: { code?: string; message?: string } | null | undefined
+): boolean {
+  if (!error) return false;
+  if (error.code === "42501" || error.code === "401" || error.code === "PGRST301") return true;
+  return /permission denied for (view|table)|JWSError|invalid JWT|JWT expired|token has already been used|no api key/i.test(
+    error.message ?? ""
+  );
+}
+
+/** Map a PostgREST error to something an operator can act on. */
+export function adminErrorMessage(
+  error: { code?: string; message?: string } | null | undefined,
+  fallback: string
+): string {
+  if (isSessionDeadError(error)) return SESSION_DEAD_MESSAGE;
+  return error?.message || fallback;
 }
 
 /**
@@ -381,7 +429,7 @@ export async function listProducts({ search, marketplace }: { search?: string; m
       data = retry.data;
       error = retry.error;
     }
-    return { ok: !error, products: data || [], error: error?.message };
+    return { ok: !error, products: data || [], error: error ? adminErrorMessage(error, "Request failed") : undefined };
   } catch (e) {
     return { ok: false, error: String(e), products: [] };
   }
@@ -410,50 +458,10 @@ function curatedTitlePredicate(search: string): string {
 
 // ─── Marketplaces (shared accounts) ─────────────────────────────
 /**
- * The live table has no `marketplace`, `password`, `cookies` or
- * `last_refreshed_at`: the real columns are marketplace_type, username,
- * phone, email, notes, is_shared and updated_at. `password_encrypted` is
- * deliberately absent from the select — an admin list query must not pull a
- * credential blob into the browser cache, masked or not.
+ * Delete is schema-agnostic (only the id is touched), so it lives here while
+ * the list/save helpers with the column-drift probing are grouped under
+ * "Marketplace accounts" near the bottom of this file.
  */
-export async function listMarketplaceAccounts() {
-  try {
-    const { data, error } = await supabase
-      .from("marketplace_accounts")
-      .select(
-        "id, marketplace_type, account_label, username, phone, email, notes, is_shared, is_active, updated_at, created_at"
-      )
-      .order("marketplace_type");
-    return { ok: !error, accounts: data || [], error: error?.message };
-  } catch (e) {
-    return { ok: false, error: String(e), accounts: [] };
-  }
-}
-
-export async function saveMarketplaceAccount(a: any) {
-  try {
-    const row: any = {
-      marketplace_type: a.marketplace_type,
-      account_label: a.account_label || "",
-      username: a.username || "",
-      phone: a.phone || "",
-      email: a.email || "",
-      notes: a.notes || "",
-      is_shared: !!a.is_shared,
-      is_active: !!a.is_active,
-      updated_at: new Date().toISOString(),
-    };
-    // No client-side write touches password_encrypted: the credential is stored
-    // encrypted and is only ever managed through the secure edge path.
-    let res;
-    if (a.id) res = await supabase.from("marketplace_accounts").update(row).eq("id", a.id).select().single();
-    else res = await supabase.from("marketplace_accounts").insert(row).select().single();
-    return { ok: !res.error, account: res.data, error: res.error?.message };
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
-}
-
 export async function deleteMarketplaceAccount(id: string) {
   try {
     const { error } = await supabase.from("marketplace_accounts").delete().eq("id", id);
@@ -473,7 +481,7 @@ export async function listSourcing({ status }: { status?: string } = {}) {
       .limit(500);
     if (status) q = q.eq("status", status);
     const { data, error } = await q;
-    return { ok: !error, requests: data || [], error: error?.message };
+    return { ok: !error, requests: data || [], error: error ? adminErrorMessage(error, "Request failed") : undefined };
   } catch (e) {
     return { ok: false, error: String(e), requests: [] };
   }
@@ -501,7 +509,7 @@ export async function listPayments({ status }: { status?: string } = {}) {
       .limit(500);
     if (status) q = q.eq("status", status);
     const { data, error } = await q;
-    return { ok: !error, payments: data || [], error: error?.message };
+    return { ok: !error, payments: data || [], error: error ? adminErrorMessage(error, "Request failed") : undefined };
   } catch (e) {
     return { ok: false, error: String(e), payments: [] };
   }
@@ -527,19 +535,11 @@ export async function recordPayment(p: any) {
 }
 
 // ─── Exchange rates ─────────────────────────────────────────────
-export async function listExchangeRates() {
-  try {
-    const { data, error } = await supabase
-      .from("exchange_rates")
-      .select("*")
-      .order("effective_from", { ascending: false })
-      .limit(200);
-    return { ok: !error, rates: data || [], error: error?.message };
-  } catch (e) {
-    return { ok: false, error: String(e), rates: [] };
-  }
-}
-
+// One write path for the admin (Settings → Currency). Reading is not here: the
+// live row per pair is resolved, flipped and bounded in src/lib/fx.ts, and
+// /admin/rates lists the history straight from the table. A second reader used
+// to live in this file with no callers, which is how two screens could disagree
+// about what `rate` means.
 export async function saveExchangeRate(r: any) {
   try {
     // Production's vocabulary is from_currency / to_currency / effective_from /
@@ -571,7 +571,7 @@ export async function listQuotes() {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(200);
-    return { ok: !error, quotes: data || [], error: error?.message };
+    return { ok: !error, quotes: data || [], error: error ? adminErrorMessage(error, "Request failed") : undefined };
   } catch (e) {
     return { ok: false, error: String(e), quotes: [] };
   }
@@ -607,7 +607,7 @@ export async function listShipments() {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(200);
-    return { ok: !error, shipments: data || [], error: error?.message };
+    return { ok: !error, shipments: data || [], error: error ? adminErrorMessage(error, "Request failed") : undefined };
   } catch (e) {
     return { ok: false, error: String(e), shipments: [] };
   }
@@ -658,7 +658,7 @@ export async function listWarehousePackages() {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(200);
-    return { ok: !error, packages: data || [], error: error?.message };
+    return { ok: !error, packages: data || [], error: error ? adminErrorMessage(error, "Request failed") : undefined };
   } catch (e) {
     return { ok: false, error: String(e), packages: [] };
   }
@@ -684,9 +684,143 @@ export async function listStaff() {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(200);
-    return { ok: !error, staff: data || [], error: error?.message };
+    return {
+      ok: !error,
+      staff: data || [],
+      error: error ? adminErrorMessage(error, "Failed to load staff") : undefined,
+    };
   } catch (e) {
     return { ok: false, error: String(e), staff: [] };
+  }
+}
+
+// ─── Marketplace accounts ────────────────────────────────────────
+/** Columns every deployment of marketplace_accounts is known to have. */
+const MARKETPLACE_BASE_COLS =
+  "id, marketplace_type, account_label, username, password_encrypted, phone, email, notes, is_shared, is_active, created_at";
+
+/**
+ * Wider projection adding the session/health columns used by the WebView
+ * auto-login feature. Those are assumptions about the LIVE schema; if this
+ * project predates them the query retries on the base set above.
+ */
+const MARKETPLACE_SESSION_COLS =
+  MARKETPLACE_BASE_COLS + ", cookies, cookies_updated_at, last_verified_at, health";
+
+/**
+ * Session set plus cookies_updated_by (which staff member last synced the
+ * cookies). That column is arriving via a migration in flight: we prefer it,
+ * but a missing-column error falls through to the tier below so the list
+ * keeps working until the live schema catches up.
+ */
+const MARKETPLACE_SESSION_PLUS_COLS = MARKETPLACE_SESSION_COLS + ", cookies_updated_by";
+
+/**
+ * Decorative join: resolve cookies_updated_by (an auth uid) to a display name
+ * via profiles. Non-fatal by design — RLS or a deleted staff profile just
+ * leaves the name null and the UI falls back to showing the raw id.
+ */
+async function attachCookieUpdaterNames(accounts: any[]): Promise<void> {
+  const uids = [...new Set(accounts.map((a) => a?.cookies_updated_by).filter(Boolean))];
+  if (!uids.length) return;
+  const { data: profs } = await supabase
+    .from("profiles")
+    .select("id, full_name")
+    .in("id", uids);
+  const byId = new Map(((profs as any[]) || []).map((p) => [p.id, p?.full_name]));
+  for (const a of accounts) {
+    if (a?.cookies_updated_by) {
+      a.cookies_updated_by_name = byId.get(a.cookies_updated_by) ?? null;
+    }
+  }
+}
+
+/**
+ * List marketplace accounts, preferring the widest session-aware column set
+ * and stepping down one tier at a time on a missing-column error (the
+ * cookies_* columns arrive progressively; cookies_updated_by may not exist
+ * on every deployment yet). `hasSessionColumns` tells the caller whether
+ * cookies/health are live, so the UI can hide cookie/health affordances
+ * instead of showing blank ones.
+ */
+export async function listMarketplaceAccounts() {
+  try {
+    // The projections name columns the generated DB types predate (cookies,
+    // health, cookies_updated_by) and the drift probe deliberately tolerates
+    // that, so the client result is widened here; the page guards each field
+    // at read time.
+    const tiers = [MARKETPLACE_SESSION_PLUS_COLS, MARKETPLACE_SESSION_COLS, MARKETPLACE_BASE_COLS];
+    let data: any[] | null = null;
+    let lastError: { code?: string; message?: string } | null = null;
+    let hasSessionColumns = false;
+    for (const cols of tiers) {
+      const res = (await supabase
+        .from("marketplace_accounts")
+        .select(cols)
+        .order("created_at", { ascending: false })) as {
+        data: any[] | null;
+        error: { code?: string; message?: string } | null;
+      };
+      if (!res.error) {
+        data = res.data;
+        lastError = null;
+        hasSessionColumns = cols !== MARKETPLACE_BASE_COLS;
+        break;
+      }
+      // Only a schema-drift error justifies narrowing the projection; anything
+      // else (network, RLS) will fail identically on every tier.
+      if (!isMissingColumnError(res.error)) {
+        lastError = res.error;
+        break;
+      }
+      lastError = res.error;
+    }
+    if (lastError) throw lastError;
+    const accounts = data || [];
+    await attachCookieUpdaterNames(accounts);
+    return {
+      ok: true,
+      accounts,
+      hasSessionColumns,
+      error: undefined as string | undefined,
+    };
+  } catch (e) {
+    return { ok: false, accounts: [], hasSessionColumns: false, error: String(e) };
+  }
+}
+
+/**
+ * Insert or update a marketplace account. The session fields (cookies,
+ * cookies_updated_at, cookies_updated_by, last_verified_at, health) are
+ * written only when the live schema has them: on a missing-column error they
+ * are dropped and the write retried so the account still saves on older
+ * schemas.
+ */
+export async function saveMarketplaceAccount(
+  payload: Record<string, any>,
+  id?: string
+) {
+  const optionalCols = [
+    "cookies",
+    "cookies_updated_at",
+    "cookies_updated_by",
+    "last_verified_at",
+    "health",
+  ];
+  const write = (body: Record<string, any>) =>
+    id
+      ? supabase.from("marketplace_accounts").update(body).eq("id", id)
+      : supabase.from("marketplace_accounts").insert(body);
+  try {
+    let { error } = await write(payload);
+    if (error && isMissingColumnError(error)) {
+      const narrowed = { ...payload };
+      for (const c of optionalCols) delete narrowed[c];
+      ({ error } = await write(narrowed));
+    }
+    return { ok: !error, error: error?.message };
+  } catch (e) {
+    return { ok: false, error: String(e) };
   }
 }
 
@@ -698,9 +832,17 @@ export async function getSetting(key: string, fallback: any = null) {
       .select("value")
       .eq("key", key)
       .maybeSingle();
-    if (error || !data) return fallback;
+    if (error) {
+      // A failed read is NOT the same as an unset key. Without this the caller
+      // silently gets `fallback` and cannot tell "no value stored" from "read
+      // denied/errored", so log the real failure.
+      console.warn("[data]", key, error.message);
+      return fallback;
+    }
+    if (!data) return fallback; // genuinely unset — not an error
     return data.value;
-  } catch {
+  } catch (e) {
+    console.warn("[data]", key, e instanceof Error ? e.message : String(e));
     return fallback;
   }
 }

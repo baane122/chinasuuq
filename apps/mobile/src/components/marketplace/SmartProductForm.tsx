@@ -3,7 +3,7 @@
 // minimum + price ladder + carton size, shown with its provenance in
 // MoqEvidenceCard, and validated by the MOQ engine (@/lib/moq).
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -16,11 +16,13 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { BottomSheet } from "@/components/BottomSheet";
 import { useCartStore } from "@/store/cart";
+import { useAuthStore } from "@/store/auth";
 import type { Marketplace, Product } from "@/types";
-import { getCnyPerUsd } from "@/lib/exchange";
+import { useFx, cnyToUsdSync } from "@/lib/exchange";
 import { saveSourcingCapture, saveMoqDecision, enrichMoqWithAi } from "@/db";
 import { whatsappOrderLink } from "@/lib/utils";
 import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
@@ -57,15 +59,28 @@ interface SmartProductFormProps {
 // Common specs a customer may pick per category — freeform so any market item works
 const COMMON_SPECS = ["Color", "Size", "Model", "Material", "Length", "Weight"];
 
+/** Yuan → the USD text the price box shows; "" when there is no price yet. */
+function usdTextFromCny(cny: number): string {
+  const usd = cny > 0 ? cnyToUsdSync(cny) : 0;
+  return usd > 0 ? usd.toFixed(2) : "";
+}
+
 export default function SmartProductForm({ visible, listing, onClose }: SmartProductFormProps) {
   const addItem = useCartStore((s) => s.addItem);
+  const authUser = useAuthStore((s) => s.user);
+  const router = useRouter();
 
   const [qty, setQty] = useState(1);
   const [specs, setSpecs] = useState<Record<string, string>>({});
   const [activeSpec, setActiveSpec] = useState("Color");
   const [priceCny, setPriceCny] = useState(0);
-  const [usd, setUsd] = useState(0);
-  const [rate, setRate] = useState(7.25);
+  /** The price box: one state, the USD price exactly as typed/derived. */
+  const [usdInput, setUsdInput] = useState("");
+  /** true once a human typed in the box — the capture effect then stops writing priceCny. */
+  const userEditedUsd = useRef(false);
+  const { cnyPerUsd: rate } = useFx();
+  /** The USD number every other part of this sheet reads. */
+  const usd = parseFloat(usdInput) || 0;
   const [estKg, setEstKg] = useState("");
   const [estCbm, setEstCbm] = useState("");
   const [showReviewSheet, setShowReviewSheet] = useState(false);
@@ -135,13 +150,20 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
     setEstKg("");
     setEstCbm("");
     setManualMoq(null);
+    // The capture is a yuan figure: it is what gets stored, the box only mirrors it.
     const p = Number(listing.price) || 0;
+    userEditedUsd.current = false;
     setPriceCny(p);
-    getCnyPerUsd().then((r) => {
-      setRate(r);
-      setUsd(p / r);
-    });
+    setUsdInput(usdTextFromCny(p));
   }, [listing]);
+
+  // A rate that lands after the capture must still reach an untouched box;
+  // a price the customer typed is intent, so that path never writes priceCny
+  // from here — only onChangeText does.
+  useEffect(() => {
+    if (userEditedUsd.current) return;
+    setUsdInput(usdTextFromCny(priceCny));
+  }, [rate, priceCny]);
 
   // Land the customer on the real floor, not on a quantity they cannot buy.
   useEffect(() => {
@@ -159,6 +181,27 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
   const handleAdd = () => {
     if (!validation.valid) {
       Alert.alert("Quantity Issue", validation.message);
+      return;
+    }
+    // Cart requires login (product decision 2026-10-03): a guest cannot put a
+    // captured listing into the cart. Staff are authenticated users, so this
+    // never blocks a sourcing workflow.
+    if (!authUser) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        "Sign in required",
+        "You need a ChinaSuuq account to add items to your cart. Sign in to continue.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Sign In",
+            onPress: () => {
+              onClose();
+              router.push("/(auth)/login");
+            },
+          },
+        ]
+      );
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -182,7 +225,7 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
       addItem(product, qty, specs, {
         estimated_kg: parseFloat(estKg) || undefined,
         estimated_cbm: parseFloat(estCbm) || undefined,
-        exchange_rate: rate || undefined,
+        exchange_rate: rate,
       });
     }
     Alert.alert(
@@ -219,8 +262,7 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
               <Text style={styles.priceLine}>
                 <Text style={styles.priceCny}>¥{priceCny.toFixed(2)}</Text>
                 <Text style={styles.priceSep}>  ·  </Text>
-                <Text style={styles.priceUsd}>${usd.toFixed(2)} USD</Text>
-                <Text style={styles.rateHint}>  @ 1:{rate.toFixed(2)}</Text>
+                <Text style={styles.priceUsd}>${usd.toFixed(2)}</Text>
               </Text>
               <Text style={styles.sourceTag}>{listing.platform.toUpperCase()}</Text>
             </View>
@@ -230,10 +272,14 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
                 <Text style={styles.priceEditPrefix}>$</Text>
                 <TextInput
                   style={styles.priceEditInput}
-                  value={usd ? usd.toFixed(2) : ""}
+                  value={usdInput}
                   onChangeText={(t) => {
-                    const v = parseFloat(t.replace(/[^\\d.]/g, "")) || 0;
-                    setUsd(v);
+                    const clean = t.replace(/[^\d.]/g, "");
+                    const v = parseFloat(clean) || 0;
+                    // A human owns the price now: this is the only writer of priceCny
+                    // from here on, and the yuan figure is derived from the USD typed.
+                    userEditedUsd.current = true;
+                    setUsdInput(clean);
                     setPriceCny(v > 0 ? Math.round(v * rate * 100) / 100 : 0);
                   }}
                   keyboardType="decimal-pad"
@@ -483,7 +529,6 @@ const styles = StyleSheet.create({
   priceCny: { fontSize: 15, fontFamily: FONTS.bold, color: COLORS.textSecondary },
   priceSep: { fontSize: 13, color: COLORS.gray400 },
   priceUsd: { fontSize: 15, fontFamily: FONTS.bold, color: COLORS.primary },
-  rateHint: { fontSize: 11, color: COLORS.textMuted },
   sourceTag: { marginTop: 6, alignSelf: "flex-start", backgroundColor: COLORS.softOrange, paddingHorizontal: SPACING.sm, paddingVertical: 2, borderRadius: RADIUS.pill },
   // price edit
   priceEditWrap: { justifyContent: "center", alignItems: "flex-end", marginLeft: SPACING.sm },

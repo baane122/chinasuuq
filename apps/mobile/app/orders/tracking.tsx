@@ -7,6 +7,9 @@ import {
   Pressable,
   TextInput,
   ActivityIndicator,
+  RefreshControl,
+  Linking,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -21,6 +24,7 @@ import {
   Calendar,
 } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS, whatsappOrderLink } from "@/lib/theme";
+import { WHATSAPP_NUMBER } from "@/lib/utils";
 import { ORDER_STATUS_LABELS } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
 import { getOrders, getOrderById } from "@/db/index";
@@ -34,6 +38,43 @@ const TRACKING_IMG = require("../../assets/screens/tracking.png");
  *  Anything else, including "failed"/"refunded"/unknown, is NOT confirmed. */
 const PAID_PAYMENT_STATUSES = new Set(["paid", "confirmed"]);
 
+/** Canonical order-status ladder. A timeline step is "done" once the real
+ *  status has reached (or passed) the step's minimum rung on this list.
+ *  Hoisted to a module const: addStage used to rebuild this array literal on
+ *  every one of its 11 calls. */
+const STATUS_FLOW = [
+  "pending",
+  "confirmed",
+  "purchasing",
+  "purchased",
+  "in_transit_china",
+  "warehouse",
+  "inspection",
+  "consolidated",
+  "shipped",
+  "in_transit",
+  "arrived_somalia",
+  "customs",
+  "ready_for_pickup",
+  "out_for_delivery",
+  "delivered",
+] as const;
+
+/** [label, location, minimum status] for the sourcing/transport leg steps. */
+const LATER_STAGES: ReadonlyArray<readonly [string, string, string]> = [
+  ["Purchased", "1688 Platform", "purchasing"],
+  ["Arrived at Warehouse", "Guangzhou Warehouse", "in_transit_china"],
+  ["Quality Inspection", "Guangzhou Warehouse", "warehouse"],
+  ["Consolidated", "Guangzhou, China", "consolidated"],
+  ["Shipped", "Guangzhou, China", "shipped"],
+  ["In Transit", "Hong Kong", "in_transit"],
+  ["Arrived at Destination", "Mogadishu Airport", "arrived_somalia"],
+  ["Customs Clearance", "Mogadishu Port", "customs"],
+  ["Ready for Pickup", "Mogadishu Warehouse", "ready_for_pickup"],
+  ["Out for Delivery", "Your Address", "out_for_delivery"],
+  ["Delivered", "Your Address", "delivered"],
+];
+
 /** Build a full tracking timeline from an order's status. A step is completed
  *  only when the real order/payment_status says so — nothing is assumed. */
 function buildTrackingTimeline(order: LocalOrder): TimelineEvent[] {
@@ -46,23 +87,13 @@ function buildTrackingTimeline(order: LocalOrder): TimelineEvent[] {
     { status: "Payment Confirmed", location: "Online", done: paymentConfirmed },
   ];
 
-  const addStage = (s: string, loc: string, minStatus: string) => {
-    const orderIdx = ["pending", "confirmed", "purchasing", "purchased", "in_transit_china", "warehouse", "inspection", "consolidated", "shipped", "in_transit", "arrived_somalia", "customs", "ready_for_pickup", "out_for_delivery", "delivered"].indexOf(status);
-    const minIdx = ["pending", "confirmed", "purchasing", "purchased", "in_transit_china", "warehouse", "inspection", "consolidated", "shipped", "in_transit", "arrived_somalia", "customs", "ready_for_pickup", "out_for_delivery", "delivered"].indexOf(minStatus);
-    stages.push({ status: s, location: loc, done: orderIdx >= minIdx });
-  };
-
-  addStage("Purchased", "1688 Platform", "purchasing");
-  addStage("Arrived at Warehouse", "Guangzhou Warehouse", "in_transit_china");
-  addStage("Quality Inspection", "Guangzhou Warehouse", "warehouse");
-  addStage("Consolidated", "Guangzhou, China", "consolidated");
-  addStage("Shipped", "Guangzhou, China", "shipped");
-  addStage("In Transit", "Hong Kong", "in_transit");
-  addStage("Arrived at Destination", "Mogadishu Airport", "arrived_somalia");
-  addStage("Customs Clearance", "Mogadishu Port", "customs");
-  addStage("Ready for Pickup", "Mogadishu Warehouse", "ready_for_pickup");
-  addStage("Out for Delivery", "Your Address", "out_for_delivery");
-  addStage("Delivered", "Your Address", "delivered");
+  const orderIdx = STATUS_FLOW.indexOf(
+    status as (typeof STATUS_FLOW)[number]
+  );
+  for (const [label, location, minStatus] of LATER_STAGES) {
+    const minIdx = STATUS_FLOW.indexOf(minStatus as (typeof STATUS_FLOW)[number]);
+    stages.push({ status: label, location, done: orderIdx >= minIdx });
+  }
 
   // Add timestamps: past events get the order's updated_at, current/pending get "Pending"
   let foundActive = false;
@@ -79,7 +110,8 @@ function buildTrackingTimeline(order: LocalOrder): TimelineEvent[] {
 }
 
 export default function TrackingScreen() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const tt = (en: string, so: string) => (locale === "en" ? en : so);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [searchQuery, setSearchQuery] = useState("");
@@ -87,6 +119,7 @@ export default function TrackingScreen() {
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // If an id was passed from the detail screen, load it directly
   useEffect(() => {
@@ -139,6 +172,16 @@ export default function TrackingScreen() {
     }
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    if (id) {
+      await loadById(id);
+    } else if (searchQuery.trim()) {
+      await handleSearch();
+    }
+    setRefreshing(false);
+  };
+
   const timeline = order ? buildTrackingTimeline(order) : [];
 
   return (
@@ -159,6 +202,14 @@ export default function TrackingScreen() {
         style={styles.content}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.primary}
+            colors={[COLORS.primary]}
+          />
+        }
       >
         {/* Search Input */}
         <View style={styles.searchContainer}>
@@ -273,8 +324,18 @@ export default function TrackingScreen() {
                   const url = whatsappOrderLink(
                     ref ? `Tracking question for order ${ref}` : "Tracking question"
                   );
-                  import("react-native").then(({ Linking }) => {
-                    Linking.openURL(url).catch(() => {});
+                  // Static Linking (it was dynamically re-imported here) and a
+                  // visible failure path: a swallowed catch left the customer
+                  // tapping a dead button. Show the number so they can still
+                  // reach support.
+                  Linking.openURL(url).catch(() => {
+                    Alert.alert(
+                      tt("WhatsApp is not available.", "WhatsApp lama heli karo."),
+                      tt(
+                        `Message us directly at ${WHATSAPP_NUMBER} on WhatsApp.`,
+                        `Naga soo farriin tooska ah ${WHATSAPP_NUMBER} WhatsApp.`
+                      )
+                    );
                   });
                 }}
               >

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ExternalLink, ImageOff, PackageSearch } from "lucide-react";
 import { getOrderItems } from "@/lib/admin/supabase-data";
+import { usdFromCny } from "@/lib/fx";
 import { cn, formatUSD } from "@/lib/utils";
 
 /**
@@ -37,13 +38,17 @@ function toNumber(v: unknown): number | null {
  * Unit cost in USD. cost_price is authoritative; the mobile app records the CNY
  * unit price plus the rate it used, so that is the fallback. Neither means the
  * margin is genuinely unknown, and "—" is better than a invented number.
+ *
+ * The line's own exchange_rate is CNY per 1 USD at purchase time, which is why
+ * the conversion goes through usdFromCny() rather than today's live rate: a line
+ * bought at 7.2 ¥/$ must not be re-priced by a later Settings change.
  */
 function unitCostUsd(item: any): number | null {
   const cost = toNumber(item.cost_price);
   if (cost !== null) return cost;
   const cny = toNumber(item.unit_price_cny);
   const rate = toNumber(item.exchange_rate);
-  if (cny !== null && rate && rate > 0) return cny / rate;
+  if (cny !== null && rate && rate > 0) return usdFromCny(cny, rate);
   return null;
 }
 
@@ -186,7 +191,7 @@ export default function OrderProvenance({ orderId }: { orderId: string }) {
                         <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-dark-900/60 ring-1 ring-dark-100">
                           ¥{toNumber(item.unit_price_cny)}
                           {toNumber(item.exchange_rate)
-                            ? ` @ ${toNumber(item.exchange_rate)}`
+                            ? ` @ ${toNumber(item.exchange_rate)} ¥/$`
                             : ""}
                         </span>
                       )}

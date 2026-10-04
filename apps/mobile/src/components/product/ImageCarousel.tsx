@@ -15,6 +15,15 @@ import { COLORS, SPACING, RADIUS } from "@/lib/theme";
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const IMAGE_SIZE = SCREEN_WIDTH - SPACING.lg * 2;
 
+/**
+ * A scraped listing can carry 30+ full-size photos. Decoding every one at
+ * mount is what made product open feel slow, so only the page you are on and
+ * this many pages either side actually render an <Image>; the rest keep the
+ * same box (paging geometry is unchanged) with a gray placeholder that fills
+ * in from the memory/disk cache as you swipe toward it.
+ */
+const RENDER_WINDOW = 2;
+
 interface ImageCarouselProps {
   images: string[];
 }
@@ -39,19 +48,26 @@ export default function ImageCarousel({ images }: ImageCarouselProps) {
         onScroll={onScroll}
         scrollEventThrottle={16}
       >
-        {images.map((uri, i) => (
-          <View key={i} style={styles.imageWrapper}>
-            <Image
-              source={{ uri }}
-              style={styles.image}
-              contentFit="cover"
-              transition={150}
-              cachePolicy="memory-disk"
-              recyclingKey={uri}
-              placeholder={COLORS.gray100}
-            />
-          </View>
-        ))}
+        {images.map((uri, i) => {
+          const near = Math.abs(i - activeIndex) <= RENDER_WINDOW;
+          return (
+            <View key={i} style={styles.imageWrapper}>
+              {near ? (
+                <Image
+                  source={{ uri }}
+                  style={styles.image}
+                  contentFit="cover"
+                  transition={150}
+                  cachePolicy="memory-disk"
+                  recyclingKey={uri}
+                  placeholder={COLORS.gray100}
+                />
+              ) : (
+                <View style={styles.imagePlaceholder} />
+              )}
+            </View>
+          );
+        })}
       </ScrollView>
 
       {/* Heart / Favorite overlay */}
@@ -93,6 +109,12 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
     borderRadius: RADIUS.xl,
+  },
+  imagePlaceholder: {
+    width: "100%",
+    height: "100%",
+    borderRadius: RADIUS.xl,
+    backgroundColor: COLORS.gray100,
   },
   heartBtn: {
     position: "absolute",

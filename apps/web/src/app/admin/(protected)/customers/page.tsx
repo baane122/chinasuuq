@@ -58,7 +58,7 @@ const CUSTOMER_COLUMNS: { key: string; label: string }[] = [
   { key: "orders", label: "Orders" },
   { key: "spent", label: "Spent" },
   { key: "joined", label: "Joined" },
-  { key: "notes", label: "Notes" },
+  { key: "notes", label: "Notes (this device)" },
 ];
 
 /** listCustomers reads the newest 500 profiles — never claim more than that. */
@@ -467,7 +467,12 @@ function CustomersPageContent() {
                 {!tablePrefs.isHidden("spent") && <th className="hidden md:table-cell">Spent</th>}
                 {!tablePrefs.isHidden("joined") && <th className="hidden lg:table-cell">Joined</th>}
                 {!tablePrefs.isHidden("notes") && (
-                  <th className="hidden lg:table-cell">Notes</th>
+                  <th
+                    className="hidden lg:table-cell"
+                    title="Saved on this device only — staff notes live in this browser's localStorage, not in the database, so they are not shared between devices or staff accounts."
+                  >
+                    Notes (this device)
+                  </th>
                 )}
               </tr>
             </thead>
@@ -539,7 +544,10 @@ function CustomersPageContent() {
                   {!tablePrefs.isHidden("notes") && (
                     <td className="hidden lg:table-cell">
                       {(notes[c.id]?.length ?? 0) > 0 ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-semibold text-brand-700">
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-semibold text-brand-700"
+                          title="Saved on this device only — not stored in the database or shared between staff."
+                        >
                           <MessageSquare className="h-3 w-3" />
                           {notes[c.id].length}
                         </span>
@@ -568,8 +576,9 @@ function CustomersPageContent() {
                   Staff notes
                 </p>
                 <p className="text-[11px] text-dark-900/40">
-                  Saved in this browser only — there is no notes table in the database yet, so
-                  these do not sync between devices or staff accounts.
+                  Saved on this device only — staff notes are kept in this browser's
+                  localStorage (there is no notes table in the database yet), so they do not
+                  sync between devices or staff accounts.
                 </p>
                 <div className="flex gap-2">
                   <input
@@ -580,6 +589,7 @@ function CustomersPageContent() {
                       if (e.key === "Enter") handleAddNote();
                     }}
                     placeholder="Add a note…"
+                    title="Saved on this device only — not stored in the database."
                     className="admin-input flex-1 text-xs"
                   />
                   <button

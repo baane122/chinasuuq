@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import * as Font from "expo-font";
+import * as Updates from "expo-updates";
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -11,6 +12,7 @@ import {
 } from "@expo-google-fonts/inter";
 import { View, StyleSheet } from "react-native";
 import { useAuthStore } from "@/store/auth";
+import { warmFx } from "@/lib/exchange";
 import { COLORS } from "@/lib/theme";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { I18nProvider } from "@/lib/i18n";
@@ -45,6 +47,7 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
+    warmFx(); // non-blocking: hydrate FX store + re-pull on app focus
     (async () => {
       await loadSession();
       if (fontsLoaded) {
@@ -52,6 +55,25 @@ export default function RootLayout() {
       }
     })();
   }, [fontsLoaded, loadSession]);
+
+  // OTA updates: check on launch, download in background, apply on next cold
+  // start. Never blocks first render and never surfaces failures to the user.
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!Updates.isEnabled) return; // dev / Expo Go / unconfigured
+        const check = await Updates.checkForUpdateAsync();
+        if (check.isAvailable) {
+          const fetched = await Updates.fetchUpdateAsync();
+          // Intentionally no reloadAsync(): the update is applied silently on
+          // the next cold start so the running UI is never interrupted.
+          void fetched;
+        }
+      } catch {
+        // Offline, server hiccup, dev-mode rejection — stay silent.
+      }
+    })();
+  }, []);
 
   // Keep splash visible while loading
   if (!fontsLoaded) return null;

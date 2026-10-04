@@ -30,6 +30,7 @@ import {
   Zap,
 } from "lucide-react";
 import { PageHeader, StatCard, PageGrid, SectionCard, FilterChips } from "@/components/admin/ui";
+import { STATUS_COLORS, chartPalette, marketplaceStyle } from "@/lib/admin/theme";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { useToast } from "@/components/admin/Toast";
 import { supabase } from "@/lib/supabase";
@@ -179,48 +180,10 @@ const STATUS_CSV_COLUMNS: { header: string; value: (row: OrderStatusCount & { sh
 ];
 
 /* ─── Presentation maps for server-side buckets ─────────────────── */
-/**
- * Keyed by the normalised (mobile) status, because every DB status spelling is
- * funnelled through mapDbStatusToMobile() before it reaches the donut. Anything
- * unmapped renders grey, so an unrecognised status is visible rather than
- * silently coloured like something it is not.
- */
-const STATUS_COLORS: Record<string, string> = {
-  pending: "#F59E0B",
-  confirmed: "#3B82F6",
-  purchasing: "#3B82F6",
-  purchased: "#10B981",
-  warehouse: "#8B5CF6",
-  inspection: "#8B5CF6",
-  consolidated: "#8B5CF6",
-  shipped: "#0EA5E9",
-  in_transit: "#0EA5E9",
-  customs: "#F97316",
-  out_for_delivery: "#FF5A0A",
-  delivered: "#10B981",
-  cancelled: "#9CA3AF",
-};
-
-/** Keys are matched after normalising, because the RPC returns whatever the
- *  app recorded. The registered names in the marketplaces table are lowercase
- *  slugs (1688, taobao, yiwugo, chinagoods, dollarstore). */
-const MARKETPLACE_STYLE: Record<string, { color: string; icon: string }> = {
-  "1688": { color: "#FF5A0A", icon: "🏪" },
-  taobao: { color: "#FF6A00", icon: "🛒" },
-  yiwugo: { color: "#F97316", icon: "📦" },
-  chinagoods: { color: "#FF5A0A", icon: "🏪" },
-  dollarstore: { color: "#F97316", icon: "🛒" },
-  unattributed: { color: "#9CA3AF", icon: "📊" },
-};
-
-function marketplaceStyle(name: string) {
-  return (
-    MARKETPLACE_STYLE[name.trim().toLowerCase().replace(/\s+/g, "")] || {
-      color: "#9CA3AF",
-      icon: "📊",
-    }
-  );
-}
+/* STATUS_COLORS, MARKETPLACE_STYLE and marketplaceStyle moved to
+   lib/admin/theme.ts so the donut/bar hex literals live once, mapped to the
+   @theme tokens in globals.css instead of raw hex scattered through the page.
+   Imported below alongside the rest. */
 
 /**
  * Which failures are worth re-attempting without asking the operator.
@@ -296,7 +259,7 @@ function useAnimatedCounter(end: number, duration = 1200, decimals = 0) {
 /* ─── Mini sparkline (SVG) ──────────────────────────────────────── */
 function MiniSparkline({
   data,
-  color = "#FF5A0A",
+  color = chartPalette.brand,
 }: {
   data: number[];
   color?: string;
@@ -699,7 +662,7 @@ export default function AdminDashboard() {
       setOrderStatusCounts(
         mergeStatusCounts(statusRes.counts).map((s) => ({
           ...s,
-          color: STATUS_COLORS[s.status] || "#9CA3AF",
+          color: STATUS_COLORS[s.status] || chartPalette.neutral,
         }))
       );
       setMarketplaceRevenue(

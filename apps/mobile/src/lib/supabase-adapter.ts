@@ -66,6 +66,13 @@ export function adaptOrder(order: LocalOrder, userId: string): OrderRow {
   };
 }
 
+/** NUMERIC columns arrive as strings; a non-finite or non-positive value is
+ *  absence of data, not a billable zero. */
+function positiveNumber(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /** Adapt an `orders` row (+ its order_items rows) back to the mobile LocalOrder shape. */
 export function unadaptOrder(row: any, items?: any[]): LocalOrder {
   return {
@@ -74,6 +81,10 @@ export function unadaptOrder(row: any, items?: any[]): LocalOrder {
     status: mapDbStatusToMobile(row.status),
     items: Array.isArray(items) ? items.map(unadaptOrderItem) : [],
     total_usd: Number(row.total_usd) || 0,
+    // Server-decided money. PostgREST numerics arrive as strings; NaN or ≤0
+    // is missing, not zero — the screens then fall back to the total alone.
+    subtotal_usd: positiveNumber(row.subtotal_usd),
+    service_fee_usd: positiveNumber(row.service_fee_usd),
     shipping_method: row.shipping_method === "sea" ? "sea" : "air",
     payment_status: row.payment_status || "pending",
     // Production stores no payment method / recipient name / phone on the order;

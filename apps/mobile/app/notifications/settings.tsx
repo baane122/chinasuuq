@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -22,7 +23,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { supabase } from "@/lib/supabase";
+import { getNotifications } from "@/db/index";
 
 const NOTIF_KEY = "chinasuuq-notif-settings";
 
@@ -59,9 +60,27 @@ export default function NotificationSettingsScreen() {
   const { locale } = useI18n();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const authReady = useAuthStore((s) => s.initialized);
   const [settings, setSettings] = useState<NotifSettings>(defaults);
   const [history, setHistory] = useState<NotificationHistory[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+
+  // Guests get nothing here: the toggles never reach a server, so showing
+  // them would be a placebo. Send them back to sign in first.
+  const tt = (en: string, so: string) => (locale === "en" ? en : so);
+  useEffect(() => {
+    if (!authReady) return; // wait for session restore before deciding
+    if (!user?.id) {
+      Alert.alert(
+        tt("Sign in required", "Fadlan soo gal"),
+        tt(
+          "Notification settings are for signed-in accounts.",
+          "Dejinta ogeysiisyada waxaa loogu talagalay xisaabaadka la gali karo."
+        ),
+        [{ text: tt("OK", "Hagaag"), onPress: () => router.back() }]
+      );
+    }
+  }, [authReady, user?.id]);
 
   useEffect(() => {
     (async () => {
@@ -80,13 +99,11 @@ export default function NotificationSettingsScreen() {
         return;
       }
       try {
-        const { data } = await supabase
-          .from("notifications")
-          .select("id, title, type, created_at")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(10);
-        setHistory((data as any[]) || []);
+        // Resilient read in db/ — Supabase first, cached rows when offline.
+        const rows = await getNotifications(user.id, 10);
+        setHistory(
+          rows.map((n) => ({ id: n.id, title: n.title, type: n.type, created_at: n.created_at }))
+        );
       } catch {
         setHistory([]);
       } finally {

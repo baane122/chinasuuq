@@ -5,23 +5,42 @@
 // DELETE: with ?task=<name>, removes that task's override (falls back to
 //       the global provider). Without, 405.
 // All writes are audited with updated_by.
+//
+// WRITE GATE (audit 2026-10-04): POST/DELETE rewrite the GLOBAL provider
+// api_key/base_url that every other AI function loads — a staff account could
+// redirect all AI traffic and capture the replacement key (config poisoning).
+// Writes therefore require super_admin. GET stays staff-readable: the key is
+// masked there, and Mission Control's staff views need to see the config.
+// The live user_role enum is (customer, staff, super_admin) after migration
+// 202609210001 — there is no 'admin' variant, so the write list is exactly
+// ["super_admin"].
 
 import { corsHeaders } from "../_shared/cors.ts";
-import { requireAdmin, unauthorized } from "../_shared/auth.ts";
+import { requireRole, requireStaffOrAdmin, unauthorized } from "../_shared/auth.ts";
 import { validateProviderBaseUrl, type AiTask } from "../_shared/ai-provider.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const VALID_TASKS: AiTask[] = ["copilot", "translation", "vision", "extraction"];
 
+// Matches the live user_role enum; 'admin' does not exist (202609210001).
+const SUPER_ADMIN_ONLY = ["super_admin"];
+
 export async function handler(req: Request) {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // SECURITY: this function manages the AI provider secret via the service
-  // role. Only authenticated admins may call it — previously ANY anonymous
+  // role. Only authenticated staff may call it — previously ANY anonymous
   // visitor could read settings and overwrite the provider (settings
   // poisoning, since ai-extraction trusts base_url from this table).
-  const admin = await requireAdmin(req);
-  if (!admin) return unauthorized("admin_required");
+  // NOTE: the live user_role enum has no 'admin' variant (dropped by
+  // migration 202609210001), so requireAdmin(['admin','super_admin']) 401'd
+  // every staff account — this was the "Could not reach the AI settings
+  // service" failure on the admin Settings → AI Provider tab.
+  const isWrite = req.method === "POST" || req.method === "DELETE";
+  const admin = isWrite
+    ? await requireRole(req, SUPER_ADMIN_ONLY)
+    : await requireStaffOrAdmin(req);
+  if (!admin) return unauthorized(isWrite ? "super_admin_required" : "staff_required");
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -44,7 +63,11 @@ export async function handler(req: Request) {
           .select("*")
           .eq("task", taskParam)
           .maybeSingle();
-        if (error) return json({ ok: false, error: error.message }, 500);
+        if (error) {
+          // Stable code; the Postgres message is logged server-side only.
+          console.error("ai-settings: task read failed", error.message);
+          return json({ ok: false, error: "settings_read_failed" }, 500);
+        }
         if (!data) return json({ ok: true, configured: false, override: false }, 200);
 
         const apiKey = String(data.api_key || "");
@@ -148,7 +171,11 @@ export async function handler(req: Request) {
             updated_at: new Date().toISOString(),
           }, { onConflict: "task" });
 
-        if (error) return json({ ok: false, error: error.message }, 500);
+        if (error) {
+          // Stable code; the Postgres message is logged server-side only.
+          console.error("ai-settings: task override write failed", error.message);
+          return json({ ok: false, error: "settings_write_failed" }, 500);
+        }
         return json({ ok: true, message: "saved", task }, 200);
       }
 
@@ -187,7 +214,9 @@ export async function handler(req: Request) {
         }, { onConflict: "id" });
 
       if (error) {
-        return json({ ok: false, error: error.message }, 500);
+        // Stable code; the Postgres message is logged server-side only.
+        console.error("ai-settings: global provider write failed", error.message);
+        return json({ ok: false, error: "settings_write_failed" }, 500);
       }
 
       return json({ ok: true, message: "saved" }, 200);
@@ -206,13 +235,19 @@ export async function handler(req: Request) {
         .from("ai_provider_tasks")
         .delete()
         .eq("task", taskParam);
-      if (error) return json({ ok: false, error: error.message }, 500);
+      if (error) {
+        // Stable code; the Postgres message is logged server-side only.
+        console.error("ai-settings: task override delete failed", error.message);
+        return json({ ok: false, error: "settings_write_failed" }, 500);
+      }
       return json({ ok: true, message: "removed", task: taskParam }, 200);
     }
 
     return json({ ok: false, error: "method_not_allowed" }, 405);
   } catch (e) {
-    return json({ ok: false, error: (e as Error).message || "internal" }, 500);
+    // Stable code only — the raw exception message never reaches the caller.
+    console.error("ai-settings: unhandled error", (e as Error)?.name, (e as Error)?.message);
+    return json({ ok: false, error: "internal_error" }, 500);
   }
 }
 

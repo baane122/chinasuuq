@@ -15,17 +15,21 @@ import {
 } from "@/components/admin/ui";
 import { useToast } from "@/components/admin/Toast";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
+import { RowCapNotice } from "@/components/admin/RowCapNotice";
 import FormInput from "@/components/admin/FormInput";
+import { fxRatesUnavailableMessage, normalizeCnyPerUsd, roundCents, usdFromCny, useFx } from "@/lib/fx";
 
 interface QuoteRow {
   id: string;
-  request_id: string;
+  /** Nullable: a quote raised from the Sourcing page can carry no request row. */
+  request_id: string | null;
   total_cny: number;
   total_usd: number;
+  /** CNY per 1 USD that priced this quote: USD = total_cny ÷ exchange_rate. */
   exchange_rate: number;
   fees: number;
   freight_estimate: number;
-  valid_until: string;
+  valid_until: string | null;
   status: "draft" | "sent" | "approved" | "rejected" | "expired";
   created_at?: string;
 }
@@ -44,14 +48,24 @@ const statusColors: Record<string, string> = {
 const EMPTY_FORM = {
   request_id: "",
   total_cny: "",
-  total_usd: "",
   fees: "",
   freight_estimate: "",
   valid_until: "",
 };
 
+/** Rounded to 4 places so a stored rate is readable and still exact enough. */
+const roundRate = (n: number) => Math.round(n * 10000) / 10000;
+
+/* Legacy rows were inserted with exchange_rate 0, which prices nothing; they
+ * render as "—" rather than as a rate of zero. */
+const storedRate = (raw: number | string | null | undefined): number | null => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
 export default function QuotesPage() {
   const { toast } = useToast();
+  const fx = useFx();
   const [quotes, setQuotes] = useState<QuoteRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,16 +87,22 @@ export default function QuotesPage() {
   const [deleteQuote, setDeleteQuote] = useState<QuoteRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Set when a fetch returned a full 1000-row page — the read cap hides older rows.
+  const [rowCapHit, setRowCapHit] = useState(false);
+
   const fetchQuotes = async () => {
     try {
       setIsLoading(true);
       const { data, error: fetchError } = await supabase
         .from("quotes")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(1000);
 
       if (fetchError) throw fetchError;
-      setQuotes((data as QuoteRow[]) || []);
+      const rows = (data as QuoteRow[]) || [];
+      setQuotes(rows);
+      setRowCapHit(rows.length >= 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load quotes");
     } finally {
@@ -94,27 +114,56 @@ export default function QuotesPage() {
     fetchQuotes();
   }, []);
 
+  /* request_id is nullable — a quote raised from the Sourcing page has none — so
+   * every string in this filter is read through text(), never .toLowerCase(). */
   const filteredQuotes = quotes.filter((q) => {
     if (search === "") return true;
-    return q.request_id.toLowerCase().includes(search.toLowerCase());
+    return (q.request_id ?? "").toLowerCase().includes(search.toLowerCase());
   });
+
+  /* The quote screen READS the rate — it does not choose one. Settings →
+   * Currency owns the single live CNY→USD pair, so the USD total is always
+   * total_cny ÷ that rate and the stored exchange_rate is that same number.
+   * The old manual-USD box reverse-engineered a rate from typed totals, which
+   * made this page a second rate editor; it also used to re-save the rate on
+   * every quote save, which could overwrite the owner's number with a cached
+   * default if the table was momentarily unreadable. Both are gone: a rate that
+   * did not come from an active DB row (or that fails the plausibility band)
+   * blocks the save — nothing is ever priced at a number nobody saw. */
+  const liveRate = fx.fromLiveRow ? normalizeCnyPerUsd(fx.cnyPerUsd) : null;
+  const saveRate = liveRate === null ? null : roundRate(liveRate);
+
+  const priceFromForm = (cnyText: string) => {
+    const totalCny = Number(cnyText) || 0;
+    const totalUsd = saveRate === null ? 0 : roundCents(usdFromCny(totalCny, saveRate));
+    return { totalCny, totalUsd };
+  };
+
+  const blockedByRate = () => {
+    toast("error", fxRatesUnavailableMessage);
+  };
 
   const handleCreate = async () => {
     if (!form.request_id) {
       toast("error", "Request ID is required");
       return;
     }
+    if (saveRate === null) {
+      blockedByRate();
+      return;
+    }
     try {
       setCreating(true);
+      const { totalCny, totalUsd } = priceFromForm(form.total_cny);
       const payload = {
         request_id: form.request_id,
-        total_cny: Number(form.total_cny) || 0,
-        total_usd: Number(form.total_usd) || 0,
+        total_cny: totalCny,
+        total_usd: totalUsd,
         fees: Number(form.fees) || 0,
         freight_estimate: Number(form.freight_estimate) || 0,
         valid_until: form.valid_until || null,
-        exchange_rate: 0,
-        status: "draft",
+        exchange_rate: saveRate,
+        status: "draft" as const,
       };
       const { error: insertError } = await supabase.from("quotes").insert(payload);
       if (insertError) throw insertError;
@@ -129,12 +178,21 @@ export default function QuotesPage() {
     }
   };
 
+  /* Only a draft can be re-priced. Once a quote has been sent or approved, its
+   * total is what the customer saw and agreed to, so editing the CNY amount at
+   * today's rate would silently change a number somebody already accepted. */
   const openEdit = (q: QuoteRow) => {
+    if (q.status !== "draft") {
+      toast(
+        "error",
+        `This quote is ${q.status}, so its total is locked. Duplicate it as a new draft to re-price at today's rate.`
+      );
+      return;
+    }
     setEditQuote(q);
     setEditForm({
-      request_id: q.request_id,
+      request_id: q.request_id ?? "",
       total_cny: String(q.total_cny ?? ""),
-      total_usd: String(q.total_usd ?? ""),
       fees: String(q.fees ?? ""),
       freight_estimate: String(q.freight_estimate ?? ""),
       valid_until: q.valid_until ? q.valid_until.slice(0, 10) : "",
@@ -144,12 +202,22 @@ export default function QuotesPage() {
 
   const handleEdit = async () => {
     if (!editQuote) return;
+    if (editQuote.status !== "draft") {
+      toast("error", "This quote is no longer a draft — its total was already sent to the customer, so it can't be re-priced here.");
+      return;
+    }
+    if (saveRate === null) {
+      blockedByRate();
+      return;
+    }
     try {
       setSavingEdit(true);
+      const { totalCny, totalUsd } = priceFromForm(editForm.total_cny);
       const payload = {
         request_id: editForm.request_id,
-        total_cny: Number(editForm.total_cny) || 0,
-        total_usd: Number(editForm.total_usd) || 0,
+        total_cny: totalCny,
+        total_usd: totalUsd,
+        exchange_rate: saveRate,
         fees: Number(editForm.fees) || 0,
         freight_estimate: Number(editForm.freight_estimate) || 0,
         valid_until: editForm.valid_until || null,
@@ -193,11 +261,17 @@ export default function QuotesPage() {
     if (!deleteQuote) return;
     try {
       setDeleting(true);
-      const { error: deleteError } = await supabase
+      const { data, error: deleteError } = await supabase
         .from("quotes")
         .delete()
-        .eq("id", deleteQuote.id);
+        .eq("id", deleteQuote.id)
+        .select("id");
       if (deleteError) throw deleteError;
+      // RLS denial returns 204 / 0 rows with NO error.
+      if (!data || data.length === 0) {
+        toast("error", "Blocked by permissions — nothing was deleted");
+        return;
+      }
       toast("success", "Quote deleted");
       setDeleteQuote(null);
       setQuotes((prev) => prev.filter((q) => q.id !== deleteQuote.id));
@@ -211,6 +285,38 @@ export default function QuotesPage() {
   const totalQuotes = quotes.length;
   const sentCount = quotes.filter((q) => q.status === "sent").length;
 
+  /* Live previews for the two panels: the same priceFromForm the save uses, so
+   * what is displayed is exactly what is stored. */
+  const createPreview = priceFromForm(form.total_cny);
+  const editPreview = priceFromForm(editForm.total_cny);
+
+  const usdBox = (label: string, amount: number) => (
+    <div className="space-y-1.5">
+      <span className="block text-sm font-medium text-dark-700">{label}</span>
+      <p className="w-full rounded-xl border border-dark-200 bg-dark-50 px-3.5 py-2.5 text-sm text-dark-900 tabular-nums">
+        {saveRate === null ? "—" : formatUSD(amount)}
+      </p>
+    </div>
+  );
+
+  const rateHint = (
+    <>
+      {saveRate === null ? (
+        <span className="text-warning">
+          No live CNY→USD rate could be read. Open Settings → Currency and confirm the rate before saving —
+          an unpriced quote is never written.
+        </span>
+      ) : (
+        <>
+          USD = CNY ÷ {saveRate} (1 CNY = ${(1 / saveRate).toFixed(4)}), the live rate from Settings →
+          Currency. The quote only reads it, never edits it, and it is saved on the row as{" "}
+          <span className="font-mono">exchange_rate</span>, so a later rate change cannot rewrite what the
+          customer was quoted.
+        </>
+      )}
+    </>
+  );
+
   return (
     <div>
       <PageHeader
@@ -223,6 +329,8 @@ export default function QuotesPage() {
           </button>
         }
       />
+
+      {rowCapHit && <RowCapNotice noun="quotes" />}
 
       {!isLoading && !error && (
         <PageGrid>
@@ -282,7 +390,7 @@ export default function QuotesPage() {
                     <tr key={quote.id}>
                       <td>
                         <span className="font-mono text-[13px] font-semibold text-brand-600">
-                          {quote.request_id}
+                          {quote.request_id ?? "—"}
                         </span>
                       </td>
                       <td>
@@ -294,7 +402,24 @@ export default function QuotesPage() {
                         </span>
                       </td>
                       <td>
-                        <span className="text-dark-500">{Number(quote.exchange_rate) || "—"}</span>
+                        {(() => {
+                          const rate = storedRate(quote.exchange_rate);
+                          return rate === null ? (
+                            <span
+                              className="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-semibold text-warning"
+                              title="This quote was saved before the rate was recorded, so its USD total cannot be re-derived. Re-save it from the edit panel to pin today's rate."
+                            >
+                              rate not recorded
+                            </span>
+                          ) : (
+                            <span
+                              className="text-dark-500 tabular-nums"
+                              title={`${rate} CNY per 1 USD — USD = CNY ÷ ${rate}`}
+                            >
+                              {rate} · 1 CNY = ${(1 / rate).toFixed(4)}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td>
                         <span className="text-dark-600">{formatUSD(Number(quote.fees) || 0)}</span>
@@ -396,15 +521,9 @@ export default function QuotesPage() {
               onChange={(v) => setForm((f) => ({ ...f, total_cny: v }))}
               placeholder="0.00"
             />
-            <FormInput
-              label="Total USD"
-              name="total_usd"
-              type="number"
-              value={form.total_usd}
-              onChange={(v) => setForm((f) => ({ ...f, total_usd: v }))}
-              placeholder="0.00"
-            />
+            {usdBox("Total USD", createPreview.totalUsd)}
           </div>
+          <p className="-mt-2 text-[11px] text-dark-900/45 tabular-nums">{rateHint}</p>
           <div className="grid grid-cols-2 gap-4">
             <FormInput
               label="Fees"
@@ -468,14 +587,9 @@ export default function QuotesPage() {
               value={editForm.total_cny}
               onChange={(v) => setEditForm((f) => ({ ...f, total_cny: v }))}
             />
-            <FormInput
-              label="Total USD"
-              name="total_usd"
-              type="number"
-              value={editForm.total_usd}
-              onChange={(v) => setEditForm((f) => ({ ...f, total_usd: v }))}
-            />
+            {usdBox("Total USD", editPreview.totalUsd)}
           </div>
+          <p className="-mt-2 text-[11px] text-dark-900/45 tabular-nums">{rateHint}</p>
           <div className="grid grid-cols-2 gap-4">
             <FormInput
               label="Fees"

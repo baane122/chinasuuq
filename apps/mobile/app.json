@@ -33,6 +33,14 @@
         "INTERNET"
       ]
     },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "url": "https://u.expo.dev/a8484922-0c4f-4f79-b4be-f93fe1dd5747"
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },

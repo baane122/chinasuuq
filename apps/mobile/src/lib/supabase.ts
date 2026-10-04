@@ -26,61 +26,82 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
-// ---- Marketplace account helpers ----
-// Used by the WebView to auto-inject shared login cookies for
-// Taobao / YiwuGo / other login-walled marketplaces.
+// ---- Marketplace session helpers (session-cookie model) ----
+// Customer WebView paths inject ONLY the shared session cookies fetched via
+// `get_marketplace_session`. Credentials are never read on mobile: the legacy
+// `getMarketplaceAccount` helper (which selected username/password_encrypted
+// straight off `marketplace_accounts`) has been deleted — it had zero call
+// sites and no reason to exist under the session-cookie model.
 
-export interface MarketplaceAccount {
-  id: string;
-  marketplace: string;
-  username: string;
-  password: string;
-  cookies?: string;
-  is_active: boolean;
-  last_refreshed_at?: string;
+/**
+ * Fetch the ACTIVE SHARED SESSION (cookies only) for a marketplace.
+ *
+ * Session-cookie model: the SECURITY DEFINER RPC `get_marketplace_session`
+ * returns rows of { marketplace, cookies, cookies_updated_at, health } and
+ * NEVER username/password. Zero rows for guests or when no session is stored.
+ * Returns null on any failure so the WebView simply shows the public site.
+ */
+export interface MarketplaceSession {
+  cookies: string;
+  cookiesUpdatedAt: string | null;
+  health: string | null;
+}
+
+export async function getMarketplaceSession(
+  marketplace: string
+): Promise<MarketplaceSession | null> {
+  try {
+    const { data, error } = await supabase.rpc("get_marketplace_session", {
+      p_marketplace: marketplace,
+    });
+    if (error || !Array.isArray(data) || data.length === 0) return null;
+    type Row = {
+      marketplace?: string;
+      cookies?: string;
+      cookies_updated_at?: string | null;
+      health?: string | null;
+    };
+    const rows = data as Row[];
+    // Prefer a row for the exact marketplace, most-recently-refreshed first.
+    const row =
+      rows
+        .filter((r) => (r.marketplace ?? "") === marketplace)
+        .sort((a, b) =>
+          String(b.cookies_updated_at ?? "").localeCompare(
+            String(a.cookies_updated_at ?? "")
+          )
+        )[0] ?? rows[0];
+    if (!row?.cookies) return null;
+    return {
+      cookies: row.cookies,
+      cookiesUpdatedAt: row.cookies_updated_at ?? null,
+      health: row.health ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Fetch the active shared account for a marketplace.
- * Prefers the SECURITY DEFINER RPC `get_shared_marketplace_account`
- * (works for logged-out users once the 202609240001 migration is applied);
- * falls back to a direct read of the real table columns, which works for
- * authenticated users today (RLS policy requires a session).
- * Returns null if none found or backend is unreachable.
+ * Push the WebView's current cookies up to the shared session store
+ * (edge function `marketplace-session-sync`, staff/super_admin only).
+ * Resolves { ok } — never throws.
  */
-export async function getMarketplaceAccount(
-  marketplace: string
-): Promise<MarketplaceAccount | null> {
+export async function syncMarketplaceSession(
+  marketplace: string,
+  cookies: string
+): Promise<{ ok: boolean; error?: string }> {
   try {
-    const { data: rpcData, error: rpcError } = await supabase
-      .rpc("get_shared_marketplace_account", { p_marketplace: marketplace })
-      .maybeSingle();
-    if (!rpcError && rpcData) return rpcData as unknown as MarketplaceAccount;
-  } catch {
-    // fall through to direct read
-  }
-  try {
-    const { data, error } = await supabase
-      .from("marketplace_accounts")
-      .select("id, marketplace_type, username, password_encrypted, is_active, updated_at")
-      .eq("marketplace_type", marketplace)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error || !data) return null;
-    // Normalize to the mobile-facing shape
-    return {
-      id: data.id,
-      marketplace: data.marketplace_type,
-      username: data.username ?? "",
-      password: data.password_encrypted ?? "",
-      cookies: undefined,
-      is_active: data.is_active,
-      last_refreshed_at: data.updated_at,
-    } as MarketplaceAccount;
-  } catch {
-    return null;
+    const { data, error } = await supabase.functions.invoke(
+      "marketplace-session-sync",
+      { body: { marketplace, cookies } }
+    );
+    if (error) return { ok: false, error: error.message };
+    const res = data as { ok?: boolean; error?: string } | null;
+    if (res?.ok) return { ok: true };
+    return { ok: false, error: res?.error ?? "Sync was refused" };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "Network error" };
   }
 }
 

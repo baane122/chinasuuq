@@ -2,7 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Loader2, Save, RefreshCw, Key, Globe, Cpu, CheckCircle, XCircle, Trash2, MessageSquare, Languages, Eye, PackageSearch, Server } from "lucide-react";
-import { edgeFetch } from "@/lib/supabase";
+import { supabase, edgeFetch } from "@/lib/supabase";
+import {
+  useAdminPermissions,
+  allowed,
+  PERMISSIONS,
+} from "@/lib/admin/permissions";
+import { PermissionNotice } from "@/components/admin/ui";
 
 // Full AI provider CRUD for Mission Control.
 //
@@ -86,9 +92,13 @@ function ProviderCard({
   const current = () => ({
     baseUrl: baseUrl.trim().replace(/\/+$/, ""),
     model: model.trim(),
-    // Empty key = "keep existing" on save; the server enforces this for tasks
-    // and requires a fresh key for the global config.
-    apiKey: apiKey.trim() || state.apiKeyMasked || "",
+    // ONLY the raw value typed into the box. Blank means "unchanged". We must
+    // NOT fall back to state.apiKeyMasked: the ai-settings edge function does
+    // not recognise a masked placeholder ("sk-a...xyz") as "keep existing" —
+    // on a task save it stores whatever it receives, and on a global save a
+    // >=10-char masked string would silently overwrite the real secret.
+    // The caller omits the api_key field entirely when this is empty.
+    apiKey: apiKey.trim(),
   });
 
   const run = async (kind: "save" | "test" | "reset") => {
@@ -212,27 +222,66 @@ function ProviderCard({
   );
 }
 
+type Blocked = "none" | "auth" | "undeployed" | "error";
+
 export function AiSettingsTab() {
+  const perms = useAdminPermissions();
+  const canEdit = allowed(perms, "aiKeys");
   const [global, setGlobal] = useState({ baseUrl: "", model: "", apiKeyMasked: "", configured: false });
   const [tasks, setTasks] = useState<Record<string, TaskView>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<Blocked>("none");
 
   const load = useCallback(async () => {
     setIsLoading(true);
+    setBlocked("none");
+    // Gateway-level rejection of a dead/expired session (verify_jwt) never
+    // carries CORS headers, so supabase-js reports it as a fetch failure and
+    // every screen shows a misleading "could not reach" message. Catch the
+    // common case here: no live session → say exactly that and stop.
+    const { data: sess } = await supabase.auth.getSession();
+    if (!sess?.session) {
+      setBlocked("auth");
+      setNotice("Your admin session has expired. Sign in again and reopen this page.");
+      return;
+    }
     try {
-      const data = await edgeFetch<ProviderView>("ai-settings");
-      setGlobal({
-        baseUrl: data.base_url || "",
-        model: data.model || "",
-        apiKeyMasked: data.api_key_masked || "",
-        configured: Boolean(data.is_configured),
-      });
-      const map: Record<string, TaskView> = {};
-      for (const t of data.tasks ?? []) map[t.task] = t;
-      setTasks(map);
+      // Status-aware read: edgeFetch swallows the HTTP code, so use the
+      // functions client, which surfaces it on error.context.status.
+      const { data, error } = await supabase.functions.invoke<ProviderView>("ai-settings");
+      const status = (error as unknown as { context?: { status?: number } } | null)?.context?.status;
+
+      if (status === 404) {
+        setBlocked("undeployed");
+        setNotice("The ai-settings edge function isn’t deployed in this project yet, so provider keys can’t be read or saved.");
+      } else if (status === 401 || status === 403) {
+        setBlocked("auth");
+        setNotice(
+          "The AI provider endpoint rejected your session (401/403). It verifies a staff JWT server-side: make sure you’re signed in as staff — and if you are, the ai-settings function’s staff check still needs fixing on the backend."
+        );
+      } else if (error) {
+        setBlocked("error");
+        setNotice("Could not reach the AI settings service. Check your connection and try again.");
+      } else if (!data || (data as ProviderView).error) {
+        setBlocked("error");
+        setNotice((data as ProviderView)?.error ?? "The AI settings service returned no data.");
+      } else {
+        const view = data as ProviderView;
+        setGlobal({
+          baseUrl: view.base_url || "",
+          model: view.model || "",
+          apiKeyMasked: view.api_key_masked || "",
+          configured: Boolean(view.is_configured),
+        });
+        const map: Record<string, TaskView> = {};
+        for (const t of view.tasks ?? []) map[t.task] = t;
+        setTasks(map);
+        setNotice(null);
+      }
     } catch {
-      setNotice("Could not load AI settings. Check that you are signed in as staff.");
+      setBlocked("error");
+      setNotice("Could not load AI settings.");
     } finally {
       setIsLoading(false);
     }
@@ -243,7 +292,11 @@ export function AiSettingsTab() {
   const saveGlobal = async (v: { baseUrl: string; model: string; apiKey: string }) => {
     const data = await edgeFetch<{ ok: boolean; message?: string; errors?: string[]; error?: string }>("ai-settings", {
       method: "POST",
-      body: { base_url: v.baseUrl, model: v.model, api_key: v.apiKey },
+      // api_key omitted entirely when unchanged: the global path requires a
+      // fresh key and does not special-case a masked placeholder, so sending
+      // one would corrupt the stored secret. A blank box now correctly fails
+      // with "api_key_too_short" instead of silently overwriting.
+      body: { base_url: v.baseUrl, model: v.model, ...(v.apiKey ? { api_key: v.apiKey } : {}) },
     });
     if (data.ok) { await load(); return { ok: true, message: "Global provider saved." }; }
     return { ok: false, message: data.errors?.join(", ") || data.error || "Save failed" };
@@ -252,7 +305,9 @@ export function AiSettingsTab() {
   const saveTask = (task: string) => async (v: { baseUrl: string; model: string; apiKey: string }) => {
     const data = await edgeFetch<{ ok: boolean; message?: string; errors?: string[]; error?: string }>("ai-settings", {
       method: "POST",
-      body: { task, base_url: v.baseUrl, model: v.model, api_key: v.apiKey },
+      // api_key omitted entirely when unchanged. The task path treats an
+      // omitted key as "keep the existing stored secret" server-side.
+      body: { task, base_url: v.baseUrl, model: v.model, ...(v.apiKey ? { api_key: v.apiKey } : {}) },
     });
     if (data.ok) { await load(); return { ok: true, message: `${TASK_META[task]?.label ?? task} provider saved.` }; }
     return { ok: false, message: data.errors?.join(", ") || data.error || "Save failed" };
@@ -267,7 +322,17 @@ export function AiSettingsTab() {
   const testProvider = (task?: string) => async (v: { baseUrl: string; model: string; apiKey: string }) => {
     const data = await edgeFetch<AiTestResponse>("ai-test-connection", {
       method: "POST",
-      body: { base_url: v.baseUrl, api_key: v.apiKey, model: v.model, task },
+      // Blank fields are OMITTED, not sent as "": the function resolves them
+      // from the stored provider for this task (that is what "leave blank to
+      // keep" means on screen), and an empty string used to come back as
+      // missing_fields — the Test button could never pass without retyping the
+      // secret.
+      body: {
+        ...(v.baseUrl?.trim() ? { base_url: v.baseUrl.trim() } : {}),
+        ...(v.model?.trim() ? { model: v.model.trim() } : {}),
+        ...(v.apiKey?.trim() ? { api_key: v.apiKey.trim() } : {}),
+        ...(task ? { task } : {}),
+      },
     });
     return { ok: !!data.ok, message: data.ok ? (data.note || "Connected") : (data.detail || data.error || "Failed") };
   };
@@ -277,15 +342,34 @@ export function AiSettingsTab() {
   }
 
   const taskList = Object.keys(TASK_META);
+  const showEditor = blocked === "none" && canEdit;
 
   return (
     <div className="space-y-6">
-      {notice && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-700">{notice}</div>
+      {/* RBAC affordance banners — a UI gate only; server RLS stays coarse. */}
+      {!perms.loading && !perms.configured && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          Permissions not configured — any signed-in staff member can edit AI provider keys until you seed the permission tables.
+        </div>
+      )}
+      {!perms.loading && perms.configured && !canEdit && (
+        <PermissionNotice required={`${PERMISSIONS.aiKeys.resource}:${PERMISSIONS.aiKeys.action}`} />
       )}
 
-      {/* Global default provider */}
-      <ProviderCard
+      {/* Honest status banner when the edge function can’t be reached. */}
+      {blocked !== "none" && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <p>{notice}</p>
+          <button onClick={load} className="admin-btn-outline mt-3 h-8 px-3 text-xs">
+            <RefreshCw className="h-3.5 w-3.5" /> Retry
+          </button>
+        </div>
+      )}
+
+      {showEditor && (
+        <>
+          {/* Global default provider */}
+          <ProviderCard
         title="Global Default Provider"
         subtitle="Used by every AI task without its own override below"
         icon={Server}
@@ -325,6 +409,8 @@ export function AiSettingsTab() {
           })}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

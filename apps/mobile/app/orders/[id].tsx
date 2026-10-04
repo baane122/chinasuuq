@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import {
   ArrowLeft,
   Package,
@@ -24,6 +24,7 @@ import {
   Phone,
   RefreshCw,
   XCircle,
+  Lock,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { Linking } from "react-native";
@@ -32,8 +33,15 @@ import { ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
 import { getOrderById, updateOrderStatus } from "@/db/index";
 import type { LocalOrder } from "@/db/index";
+import { useAuthStore } from "@/store/auth";
+import { supabase } from "@/lib/supabase";
 import { Timeline, TimelineEvent } from "@/components/orders/Timeline";
 import { StatusBadge } from "@/components/orders/StatusBadge";
+
+/** Queued (never-synced) orders carry a synthetic `local-…` id with no
+ *  production row to check ownership against; anything that looks like a
+ *  uuid must be verified against orders.user_id before it is rendered. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The fulfillment ladder in the same order as the live order_status enum.
  *  A stage counts as done only when the order's real status has reached it. */
@@ -109,26 +117,118 @@ export default function OrderDetailScreen() {
   const { t } = useI18n();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const user = useAuthStore((s) => s.user);
+  const authReady = useAuthStore((s) => s.initialized);
   const [order, setOrder] = useState<LocalOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
+  // Ownership gate: this route loads by RAW id (getOrderById does not scope),
+  // so a stranger reading an order UUID must not see the buyer's PII.
+  const [roleChecked, setRoleChecked] = useState(false);
+  const [isStaff, setIsStaff] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const orderRef = useRef<LocalOrder | null>(null);
 
-  const loadOrder = async () => {
-    if (!id) return;
-    setLoading(true);
+  // Role resolution mirrors app/staff/marketplaces.tsx: the auth-store role is
+  // the fast path, the profiles table is the authority.
+  useEffect(() => {
+    if (!authReady) return;
+    let alive = true;
+    (async () => {
+      if (!user?.id) {
+        if (alive) { setIsStaff(false); setRoleChecked(true); }
+        return;
+      }
+      const storeRole = String(user.role ?? "");
+      if (storeRole === "staff" || storeRole === "super_admin") {
+        if (alive) { setIsStaff(true); setRoleChecked(true); }
+        return;
+      }
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", user.id)
+          .maybeSingle();
+        const role = String((data as any)?.role ?? "");
+        if (alive) setIsStaff(role === "staff" || role === "super_admin");
+      } catch {
+        if (alive) setIsStaff(false);
+      } finally {
+        if (alive) setRoleChecked(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [authReady, user?.id, user?.role]);
+
+  const loadOrder = useCallback(async () => {
+    if (!id || !authReady || !roleChecked) return;
+    // Only show the full-screen spinner on a cold load; refocus refreshes are
+    // silent so the visible order never flashes away. (A ref, not state,
+    // keeps this callback stable — a new identity would re-run focus effects.)
+    setLoading(orderRef.current === null);
+    setLoadError(false);
     try {
+      // Guests cannot open order details at all — the only data they could
+      // reach is this device's own cache, which the orders list already shows.
+      if (!user?.id) {
+        orderRef.current = null;
+        setOrder(null);
+        setLocked(true);
+        return;
+      }
       const data = await getOrderById(id);
-      setOrder(data);
+      if (!data) {
+        orderRef.current = null;
+        setOrder(null);
+        setLocked(false);
+        return;
+      }
+      let allowed = isStaff;
+      if (!allowed) {
+        if (!UUID_RE.test(data.id)) {
+          // Queued on this device, no production row yet — local provenance.
+          allowed = true;
+        } else {
+          // Ask the server who owns it. RLS hides other users' rows, so a
+          // visible row with a foreign user_id means this account may not
+          // see this order.
+          try {
+            const { data: owner, error } = await supabase
+              .from("orders")
+              .select("user_id")
+              .eq("id", data.id)
+              .maybeSingle();
+            if (error) throw error;
+            allowed = !!owner && (owner as any).user_id === user.id;
+          } catch {
+            // Could not verify — surface a retry state, never the PII.
+            if (orderRef.current === null) setLoadError(true);
+            return;
+          }
+        }
+      }
+      orderRef.current = allowed ? data : null;
+      setOrder(allowed ? data : null);
+      setLocked(!allowed);
     } catch (e) {
       console.error("Failed to load order", e);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, authReady, roleChecked, user?.id, isStaff]);
 
-  useEffect(() => {
-    loadOrder();
-  }, [id]);
+  // Re-fetch every time the screen gains focus (status may have moved) and
+  // whenever the auth/role gate resolves. useFocusEffect also runs on mount.
+  useFocusEffect(
+    useCallback(() => {
+      void loadOrder();
+    }, [loadOrder])
+  );
 
   const handleTrack = () => {
     router.push(`/orders/tracking?id=${order?.id || id}`);
@@ -200,6 +300,57 @@ export default function OrderDetailScreen() {
     );
   }
 
+  if (loadError && !order) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => router.back()} accessibilityLabel="Go back">
+            <ArrowLeft size={24} color={COLORS.black} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Order</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <Text style={styles.notFoundText}>
+            We couldn't reach the server to load this order. Check your connection and try again.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.primaryButtonSM, pressed && styles.primaryButtonPressed]}
+            onPress={() => loadOrder()}
+          >
+            <Text style={styles.primaryButtonTextSmall}>Try again</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (locked) {
+    // Owner check failed (or guest) — deliberately vague so the screen never
+    // confirms whether the UUID exists.
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => router.back()} accessibilityLabel="Go back">
+            <ArrowLeft size={24} color={COLORS.black} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Not available</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <Lock size={36} color={COLORS.textMuted} style={{ marginBottom: SPACING.md }} />
+          <Text style={styles.notFoundText}>
+            This order isn't available on your account.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.primaryButtonSM, pressed && styles.primaryButtonPressed]}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.primaryButtonTextSmall}>Go Back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (!order) {
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
@@ -211,12 +362,20 @@ export default function OrderDetailScreen() {
         </View>
         <View style={styles.loadingContainer}>
           <Text style={styles.notFoundText}>This order could not be found.</Text>
-          <Pressable
-            style={({ pressed }) => [styles.primaryButtonSM, pressed && styles.primaryButtonPressed]}
-            onPress={() => router.back()}
-          >
-            <Text style={styles.primaryButtonTextSmall}>Go Back</Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", gap: SPACING.md }}>
+            <Pressable
+              style={({ pressed }) => [styles.primaryButtonSM, pressed && styles.primaryButtonPressed]}
+              onPress={() => loadOrder()}
+            >
+              <Text style={styles.primaryButtonTextSmall}>Try again</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.secondaryButton, pressed && styles.secondaryButtonPressed]}
+              onPress={() => router.back()}
+            >
+              <Text style={styles.secondaryButtonText}>Go Back</Text>
+            </Pressable>
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -365,7 +524,9 @@ export default function OrderDetailScreen() {
             <Text style={styles.primaryButtonText}>Track Shipment</Text>
           </Pressable>
 
-          {order && order.status !== "delivered" && order.status !== "cancelled" ? (
+          {/* Owner-or-staff only: reaching this render already passed the
+              ownership gate above, `!locked` keeps that explicit. */}
+          {!locked && order && order.status !== "delivered" && order.status !== "cancelled" ? (
             <Pressable
               style={({ pressed }) => [
                 styles.updateButton,

@@ -71,26 +71,37 @@ export async function handler(req: Request) {
       ? Math.min(Math.max(Math.round(body.max_tokens), 16), 4000)
       : 1200;
 
-    const resp = await fetch(`${provider.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${provider.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: provider.model,
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-      }),
-    });
+    let resp: Response;
+    try {
+      resp = await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${provider.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: provider.model,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (e) {
+      // Timeout is an AbortSignal DOMException: classified by e.name (the
+      // message is "The operation was aborted", never "TimeoutError").
+      const name = (e as Error)?.name ?? "";
+      if (name === "TimeoutError" || name === "AbortError") {
+        return json({ ok: false, error: "model_timeout" }, 504);
+      }
+      return json({ ok: false, error: "model_unreachable" }, 502);
+    }
 
     if (!resp.ok) {
-      const detail = await resp.text().catch(() => "");
-      return json(
-        { ok: false, error: "provider_error", status: resp.status, detail: detail.slice(0, 400) },
-        502
-      );
+      // Status only — the request headers held the key, so nothing from this
+      // response body may be echoed back to the caller (ai-translate pattern).
+      console.error("ai-proxy: provider call failed, status", resp.status);
+      return json({ ok: false, error: "provider_error", status: resp.status }, 502);
     }
 
     const data = await resp.json();
@@ -101,7 +112,9 @@ export async function handler(req: Request) {
 
     return json({ ok: true, content: content.trim(), model: provider.model }, 200);
   } catch (e) {
-    return json({ ok: false, error: (e as Error).message || "internal" }, 500);
+    // Stable code only — the raw exception message never reaches the caller.
+    console.error("ai-proxy: unhandled error", (e as Error)?.name, (e as Error)?.message);
+    return json({ ok: false, error: "internal_error" }, 500);
   }
 }
 

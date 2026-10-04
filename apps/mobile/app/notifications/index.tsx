@@ -15,20 +15,12 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { supabase } from "@/lib/supabase";
+import { getNotifications, markAllNotificationsRead, type AppNotification } from "@/db/index";
 import { EmptyState } from "@/components/EmptyState";
 
 const EMPTY_NOTIF_IMG = require("../../assets/screens/empty_notifications.png");
 
-interface Notification {
-  id: string;
-  title: string;
-  body: string | null;
-  type: string;
-  /** Production stores a plain boolean here; there is no read_at timestamp. */
-  read: boolean;
-  created_at: string;
-}
+type Notification = AppNotification;
 
 const TYPE_ICONS: Record<string, any> = {
   order: Package,
@@ -54,14 +46,8 @@ export default function NotificationsScreen() {
         setItems([]);
         return;
       }
-      const { data, error } = await supabase
-        .from("notifications")
-        .select("id, title, body, type, read, created_at")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(50);
-      if (error) throw error;
-      setItems((data as any[]) || []);
+      // Resilient read (Supabase first, device cache as fallback) in db/.
+      setItems(await getNotifications(user.id, 50));
     } catch (e) {
       console.warn("Failed to load notifications", e);
       setItems([]);
@@ -84,18 +70,13 @@ export default function NotificationsScreen() {
   const markAllRead = async () => {
     if (!user?.id) return;
     Haptics.selectionAsync();
-    try {
-      const { error } = await supabase
-        .from("notifications")
-        .update({ read: true })
-        .eq("user_id", user.id)
-        .eq("read", false);
-      // Say so when the write is refused, instead of moving dots the server
-      // never cleared.
-      if (error) throw error;
+    // Say so when the write is refused, instead of moving dots the server
+    // never cleared.
+    const result = await markAllNotificationsRead(user.id);
+    if (result.ok) {
       setItems((prev) => prev.map((n) => ({ ...n, read: true })));
-    } catch (e) {
-      console.warn("Failed to mark notifications read", e);
+    } else {
+      console.warn("Failed to mark notifications read", result.error);
     }
   };
 

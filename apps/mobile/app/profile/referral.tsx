@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, Alert, ScrollView, Share, Clipboard } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ArrowLeft, Share2, Copy, MessageCircle } from "lucide-react-native";
+import { ArrowLeft, Share2, Copy, Gift } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useAuthStore } from "@/store/auth";
@@ -15,13 +15,15 @@ export default function ReferralScreen() {
   const user = useAuthStore((s) => s.user);
   const [copied, setCopied] = useState(false);
 
-  // Simple deterministic referral code derived from user id / email
+  // Deterministic referral code derived from the signed-in user's own account.
+  // Guests are gated below — showing a fake shared "CHINASUUQ" code implied a
+  // program the server has no notion of.
   const refCode = user
-    ? (user.email || user.id || "GUEST")
+    ? (user.email || user.id || "")
         .replace(/[^a-zA-Z0-9]/g, "")
         .slice(0, 8)
         .toUpperCase()
-    : "CHINASUUQ";
+    : "";
   const refLink = `https://chinasuuq.com/r/${refCode}`;
 
   const handleCopy = () => {
@@ -45,8 +47,42 @@ export default function ReferralScreen() {
   const HOW_IT_WORKS = [
     { step: "1", title: "Share your code", desc: "Send your referral code to friends & family in Somalia." },
     { step: "2", title: "They order", desc: "They use ChinaSuuq to import products from China with air or sea freight." },
-    { step: "3", title: "You earn", desc: "Earn rewards on every completed order they make. Rewards come via ZAAD or Edahab." },
+    {
+      step: "3",
+      title: "Rewards coming soon",
+      desc: "We're still building the reward program — there's no payout yet. We'll notify you when referrals start earning.",
+    },
   ];
+
+  // Guest gate: no account → no personal code, no promise to make.
+  if (!user?.id) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.header}>
+          <Pressable style={styles.backButton} onPress={() => router.back()} android_ripple={{ color: COLORS.gray100 }}>
+            <ArrowLeft size={22} color={COLORS.black} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Refer & Earn</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={styles.guestCard}>
+          <Gift size={40} color={COLORS.primary} />
+          <Text style={styles.guestTitle}>Sign in to get your code</Text>
+          <Text style={styles.guestSub}>
+            Referral codes are tied to your account. Sign in to share yours, and
+            we'll let you know when rewards go live.
+          </Text>
+          <Pressable
+            style={styles.shareBtn}
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/(auth)/login" as any); }}
+            android_ripple={{ color: "rgba(255,255,255,0.2)" }}
+          >
+            <Text style={styles.shareBtnText}>Sign In</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -63,8 +99,11 @@ export default function ReferralScreen() {
         {/* Hero */}
         <View style={styles.hero}>
           <Image source={REFERRAL_IMG} style={styles.heroIllustration} contentFit="contain" />
-          <Text style={styles.heroTitle}>Give $10, Get $10</Text>
-          <Text style={styles.heroSub}>Share ChinaSuuq with friends and both of you earn rewards.</Text>
+          <Text style={styles.heroTitle}>Share ChinaSuuq with friends</Text>
+          <Text style={styles.heroSub}>
+            Your personal code is below. Reward payouts are coming soon —
+            we'll announce them here and in the app.
+          </Text>
         </View>
 
         {/* Referral code */}
@@ -109,6 +148,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md, backgroundColor: COLORS.white, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   backButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   headerTitle: { fontSize: 17, fontFamily: FONTS.semibold, color: COLORS.black },
+  guestCard: { flex: 1, alignItems: "center", justifyContent: "center", padding: SPACING.xxxl, gap: SPACING.md },
+  guestTitle: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, textAlign: "center" },
+  guestSub: { fontSize: 14, fontFamily: FONTS.regular, color: COLORS.textSecondary, textAlign: "center", lineHeight: 20 },
   hero: { alignItems: "center", paddingVertical: SPACING.xxl, backgroundColor: COLORS.white, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border },
   heroIllustration: { width: 120, height: 120, marginBottom: SPACING.md },
   heroIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", marginBottom: SPACING.md },

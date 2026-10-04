@@ -15,6 +15,7 @@ import {
   EMPTY_IMAGES,
 } from "@/components/admin/ui";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
+import { RowCapNotice } from "@/components/admin/RowCapNotice";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
 
@@ -107,6 +108,9 @@ export default function WarehousePage() {
   const [deleteTarget, setDeleteTarget] = useState<WarehousePackageRow | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // Set when a fetch returned a full 1000-row page — the read cap hides older rows.
+  const [rowCapHit, setRowCapHit] = useState(false);
+
   const fetchPackages = async () => {
     try {
       setIsLoading(true);
@@ -114,10 +118,13 @@ export default function WarehousePage() {
       const { data, error: fetchError } = await supabase
         .from("warehouse_packages")
         .select("*")
-        .order("received_at", { ascending: false });
+        .order("received_at", { ascending: false })
+        .limit(1000);
 
       if (fetchError) throw fetchError;
-      setPackages((data as WarehousePackageRow[]) || []);
+      const rows = (data as WarehousePackageRow[]) || [];
+      setPackages(rows);
+      setRowCapHit(rows.length >= 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load warehouse data");
     } finally {
@@ -267,12 +274,19 @@ export default function WarehousePage() {
     if (!deleteTarget) return;
     setDeleteLoading(true);
     try {
-      const { error: deleteError } = await supabase
+      const { data, error: deleteError } = await supabase
         .from("warehouse_packages")
         .delete()
-        .eq("id", deleteTarget.id);
+        .eq("id", deleteTarget.id)
+        .select("id");
 
       if (deleteError) throw deleteError;
+
+      // RLS denial returns 204 / 0 rows with NO error.
+      if (!data || data.length === 0) {
+        toastError("Blocked by permissions — nothing was deleted");
+        return;
+      }
 
       success("Package deleted");
       setDeleteTarget(null);
@@ -298,6 +312,8 @@ export default function WarehousePage() {
           </button>
         }
       />
+
+      {rowCapHit && <RowCapNotice noun="packages" />}
 
       {!isLoading && !error && (
         <PageGrid>

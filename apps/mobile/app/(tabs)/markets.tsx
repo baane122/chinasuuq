@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Pressable } from 
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
-import { MapPin, ShoppingCart, Languages, ChevronDown, ChevronRight, ArrowUpRight } from "lucide-react-native";
+import { MapPin, ShoppingCart, Languages, ArrowUpRight } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
@@ -47,11 +47,11 @@ export default function MarketsTab() {
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.headerTitle}>{l("Markets", "Suuqyada")}</Text>
-              <TouchableOpacity style={styles.destSelector} activeOpacity={0.7}>
+              {/* Single enabled destination (so-mogadishu) — informational, not a picker. */}
+              <View style={styles.destSelector}>
                 <MapPin size={11} color={COLORS.primary} />
                 <Text style={styles.destText}>{l("Mogadishu", "Muqdisho")}</Text>
-                <ChevronDown size={11} color={COLORS.textMuted} />
-              </TouchableOpacity>
+              </View>
             </View>
             <View style={styles.headerRight}>
               <TouchableOpacity style={styles.langBtn} onPress={toggleLanguage} activeOpacity={0.7}>
@@ -152,7 +152,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    minHeight: 44,
   },
   destText: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.primary },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },

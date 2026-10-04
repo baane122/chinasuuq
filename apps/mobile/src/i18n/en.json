@@ -19,6 +19,18 @@
     "recentlyViewed": "Recently Viewed",
     "seeAll": "See All"
   },
+  "categories": {
+    "all": "All",
+    "electronics": "Electronics",
+    "clothing": "Clothing",
+    "home": "Home",
+    "beauty": "Beauty",
+    "toys": "Toys",
+    "sports": "Sports",
+    "automotive": "Auto",
+    "jewelry": "Jewelry",
+    "bags": "Bags"
+  },
   "markets": {
     "1688": "Wholesale prices",
     "title": "Select Marketplace",
@@ -57,6 +69,7 @@
     "readingProductDetails": "Reading product details…",
     "addToCart": "Add to cart",
     "signInToMarketplace": "Sign in to marketplace",
+    "syncSession": "Sync session",
     "openProductToBuy": "Open a product to buy",
     "sourceDetails": "Source details",
     "help": "Help",
@@ -130,7 +143,8 @@
     "email": "Email",
     "continueBrowsing": "Continue browsing",
     "requestSourcing": "Request sourcing",
-    "saveItem": "Save item"
+    "saveItem": "Save item",
+    "item": "item"
   },
   "profile": {
     "title": "Profile",
@@ -249,5 +263,53 @@
     "continue": "Continue",
     "payOnWhatsApp": "Pay on WhatsApp",
     "termsAccepted": "I agree to the Terms of Service and Privacy Policy"
+  },
+  "wishlist": {
+    "title": "Wishlist",
+    "emptyTitle": "Your wishlist is empty",
+    "emptySub": "Tap the heart on any product to save it here.",
+    "browse": "Browse Products",
+    "order": "Order",
+    "addedToCart": "Added to cart",
+    "couldNotRemove": "Could not remove item",
+    "tryAgain": "Please try again."
+  },
+  "support": {
+    "heroTitle": "How can we help?",
+    "whatsappTitle": "Chat with us on WhatsApp",
+    "whatsappSubtitle": "Fast responses — we're here 24/7",
+    "otherWays": "Other Ways to Reach Us",
+    "faqTitle": "Frequently Asked Questions",
+    "ticketTitle": "Submit a Support Ticket",
+    "ticketSubtitle": "We'll reply to your request via email or WhatsApp",
+    "subjectLabel": "Subject",
+    "subjectPlaceholder": "What is this about?",
+    "messageLabel": "Message",
+    "messagePlaceholder": "Describe your issue in a few sentences…",
+    "submitTicket": "Submit Ticket",
+    "footer": "ChinaSuuq — Order from China to Somalia",
+    "whatsappError": "Could not open WhatsApp. Please make sure it's installed.",
+    "missingInfoTitle": "Missing info",
+    "missingInfo": "Please enter both a subject and a message.",
+    "ticketSubmittedTitle": "Ticket submitted",
+    "ticketSubmitted": "Our support team will get back to you shortly.",
+    "ticketFailedTitle": "Could not submit",
+    "ticketFailed": "Please try again later."
+  },
+  "settings": {
+    "profileInfo": "Profile Information",
+    "fullName": "Full Name",
+    "fullNamePlaceholder": "Your full name",
+    "phonePlaceholder": "Phone number",
+    "city": "City",
+    "cityPlaceholder": "e.g. Mogadishu, Hargeisa",
+    "shippingPreference": "Shipping Preference",
+    "chooseShippingMethod": "Choose your default shipping method",
+    "backendChecking": "Checking...",
+    "backendOnline": "Backend Online",
+    "backendOffline": "Offline — local data",
+    "savedTitle": "Saved",
+    "savedDesc": "Profile updated successfully.",
+    "saveFailed": "Could not save. Your changes were kept on this device."
   }
 }

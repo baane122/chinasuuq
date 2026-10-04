@@ -27,8 +27,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { supabase } from "@/lib/supabase";
-import { getPaymentsByUser, type PaymentRecord } from "@/db/index";
+import {
+  getPaymentsByUser,
+  getSavedPaymentMethods,
+  addSavedPaymentMethod,
+  deleteSavedPaymentMethod,
+  type PaymentRecord,
+} from "@/db/index";
 
 const PAYMENT_IMG = require("../../assets/screens/payment_methods.png");
 
@@ -50,7 +55,6 @@ interface SavedMethod {
   label: string | null;
   is_default: boolean;
 }
-
 export default function PaymentMethodsScreen() {
   const { t, locale } = useI18n();
   const router = useRouter();
@@ -69,18 +73,22 @@ export default function PaymentMethodsScreen() {
       try {
         const list = await getPaymentsByUser(user.id);
         setPayments(list);
-      } catch {}
+      } catch (e) {
+        // Serve what we have, but say what broke.
+        console.warn("[payment-methods] payment history load failed", e);
+      }
       try {
         const stored = await AsyncStorage.getItem(PREF_KEY);
         if (stored) setSelected(stored);
-        const { data } = await supabase
-          .from("customer_payment_methods")
-          .select("id, method, identifier, label, is_default")
-          .eq("profile_id", user.id)
-          .order("is_default", { ascending: false });
-        if (data) setSaved(data as SavedMethod[]);
-      } catch {}
-      setLoading(false);
+        // Resilient read in db/ — cached methods when the backend is down.
+        const rows = await getSavedPaymentMethods(user.id);
+        setSaved(rows);
+      } catch (e) {
+        console.warn("[payment-methods] saved methods load failed", e);
+      } finally {
+        // Loading clears whether or not either read succeeded.
+        setLoading(false);
+      }
     })();
   }, [user?.id]);
 
@@ -112,19 +120,15 @@ export default function PaymentMethodsScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const method = METHODS.find((m) => m.id === modalMethod);
-      const { data, error } = await supabase
-        .from("customer_payment_methods")
-        .insert({
-          profile_id: user.id,
-          method: modalMethod,
-          identifier: phone.trim(),
-          label: method?.name || null,
-          is_default: saved.length === 0,
-        })
-        .select("id, method, identifier, label, is_default")
-        .single();
-      if (error) throw error;
-      if (data) setSaved((prev) => [data as SavedMethod, ...prev]);
+      const { row, error } = await addSavedPaymentMethod({
+        profileId: user.id,
+        method: modalMethod,
+        identifier: phone.trim(),
+        label: method?.name || null,
+        isDefault: saved.length === 0,
+      });
+      if (error) throw new Error(error);
+      if (row) setSaved((prev) => [row as SavedMethod, ...prev]);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setModalMethod(null);
       setPhone("");
@@ -136,10 +140,19 @@ export default function PaymentMethodsScreen() {
   };
 
   const removeMethod = async (id: string) => {
+    if (!user?.id) return;
     try {
-      await supabase.from("customer_payment_methods").delete().eq("id", id);
+      // Confirm the delete before touching the list — the old optimistic
+      // filter + empty catch let a refused removal still hide the row.
+      const res = await deleteSavedPaymentMethod(user.id, id);
+      if (!res.ok) {
+        Alert.alert("Error", res.error || "Could not remove payment method.");
+        return;
+      }
       setSaved((prev) => prev.filter((m) => m.id !== id));
-    } catch {}
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Could not remove payment method.");
+    }
   };
 
   return (

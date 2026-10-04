@@ -212,6 +212,12 @@ export interface Shipment {
   estimated_arrival: string;
   actual_arrival?: string;
   tracking_number?: string;
+  carrier?: string | null;
+  notes?: string | null;
+  /** Nullable FK added by the backend agent (shipments.order_id). Feature-detected
+   *  in the admin Shipments screen: the column may not exist in every deploy, so
+   *  the UI hides the "Order" link when the schema probe fails. */
+  order_id?: string | null;
   documents: string[];
   created_at: string;
 }

@@ -83,14 +83,14 @@ export default function SupportScreen() {
   const openWhatsApp = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Linking.openURL(WHATSAPP_LINK).catch(() => {
-      Alert.alert("Error", "Could not open WhatsApp. Please make sure it's installed.");
+      Alert.alert(t("common.error"), t("support.whatsappError"));
     });
   };
 
   const handleSubmitTicket = async () => {
     if (submitting) return;
     if (!subject.trim() || !message.trim()) {
-      Alert.alert("Missing info", "Please enter both a subject and a message.");
+      Alert.alert(t("support.missingInfoTitle"), t("support.missingInfo"));
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -101,12 +101,23 @@ export default function SupportScreen() {
         authUser?.id ?? null
       );
       if (result.ok) {
-        Alert.alert("Ticket submitted", "Our support team will get back to you shortly.");
+        Alert.alert(t("support.ticketSubmittedTitle"), t("support.ticketSubmitted"));
         setSubject("");
         setMessage("");
       } else {
-        Alert.alert("Could not submit", result.error || "Please try again later.");
+        Alert.alert(t("support.ticketFailedTitle"), result.error || t("support.ticketFailed"));
       }
+    } catch (e) {
+      // createSupportTicket rejected the request outright (network throw) —
+      // without this the promise rejection was unhandled and the form gave
+      // no feedback at all.
+      console.warn("[support] ticket submit failed", e);
+      Alert.alert(
+        t("common.error"),
+        locale === "en"
+          ? "Couldn't send — check your connection and try again."
+          : "Ma jirin — fadlan hubi isku xirka internetka kadibna isku day mar kale."
+      );
     } finally {
       setSubmitting(false);
     }
@@ -134,7 +145,7 @@ export default function SupportScreen() {
         {/* Support Hero Illustration */}
         <View style={styles.heroWrap}>
           <Image source={SUPPORT_HERO} style={styles.heroImg} contentFit="contain" />
-          <Text style={styles.heroTitle}>How can we help?</Text>
+          <Text style={styles.heroTitle}>{t("support.heroTitle")}</Text>
         </View>
 
         {/* WhatsApp Contact Card */}
@@ -147,9 +158,9 @@ export default function SupportScreen() {
             <MessageCircle size={28} color={COLORS.white} fill={COLORS.white} />
           </View>
           <View style={styles.whatsappTextBlock}>
-            <Text style={styles.whatsappTitle}>Chat with us on WhatsApp</Text>
+            <Text style={styles.whatsappTitle}>{t("support.whatsappTitle")}</Text>
             <Text style={styles.whatsappSubtitle}>
-              Fast responses — we're here 24/7
+              {t("support.whatsappSubtitle")}
             </Text>
           </View>
           <ExternalLink size={18} color={COLORS.whatsapp} />
@@ -157,7 +168,7 @@ export default function SupportScreen() {
 
         {/* Contact Options */}
         <View style={styles.contactCard}>
-          <Text style={styles.contactCardTitle}>Other Ways to Reach Us</Text>
+          <Text style={styles.contactCardTitle}>{t("support.otherWays")}</Text>
 
           <Pressable
             style={styles.contactRow}
@@ -171,7 +182,7 @@ export default function SupportScreen() {
               <Phone size={18} color={COLORS.primary} />
             </View>
             <View style={styles.contactTextBlock}>
-              <Text style={styles.contactLabel}>Phone</Text>
+              <Text style={styles.contactLabel}>{t("common.phone")}</Text>
               <Text style={styles.contactValue}>+252 61 123 4567</Text>
             </View>
             <ChevronRight size={18} color={COLORS.gray400} />
@@ -187,11 +198,11 @@ export default function SupportScreen() {
             }}
             android_ripple={{ color: COLORS.gray100 }}
           >
-            <View style={[styles.contactIconWrapper, { backgroundColor: "#EFF6FF" }]}>
+            <View style={[styles.contactIconWrapper, { backgroundColor: COLORS.infoBg }]}>
               <Mail size={18} color={COLORS.info} />
             </View>
             <View style={styles.contactTextBlock}>
-              <Text style={styles.contactLabel}>Email</Text>
+              <Text style={styles.contactLabel}>{t("common.email")}</Text>
               <Text style={styles.contactValue}>support@chinasuuq.com</Text>
             </View>
             <ChevronRight size={18} color={COLORS.gray400} />
@@ -201,7 +212,7 @@ export default function SupportScreen() {
         {/* FAQ Section */}
         <View style={styles.faqCard}>
           <Text style={styles.faqCardTitle}>
-            <HelpCircle size={16} color={COLORS.primary} /> Frequently Asked Questions
+            <HelpCircle size={16} color={COLORS.primary} /> {t("support.faqTitle")}
           </Text>
 
           {FAQ_ITEMS.map((item, index) => (
@@ -222,29 +233,29 @@ export default function SupportScreen() {
               <Send size={18} color={COLORS.primary} />
             </View>
             <View>
-              <Text style={styles.ticketTitle}>Submit a Support Ticket</Text>
+              <Text style={styles.ticketTitle}>{t("support.ticketTitle")}</Text>
               <Text style={styles.ticketSubtitle}>
-                We'll reply to your request via email or WhatsApp
+                {t("support.ticketSubtitle")}
               </Text>
             </View>
           </View>
 
-          <Text style={styles.inputLabel}>Subject</Text>
+          <Text style={styles.inputLabel}>{t("support.subjectLabel")}</Text>
           <TextInput
             style={styles.input}
             value={subject}
             onChangeText={setSubject}
-            placeholder="What is this about?"
+            placeholder={t("support.subjectPlaceholder")}
             placeholderTextColor={COLORS.textMuted}
             maxLength={120}
           />
 
-          <Text style={styles.inputLabel}>Message</Text>
+          <Text style={styles.inputLabel}>{t("support.messageLabel")}</Text>
           <TextInput
             style={[styles.input, styles.messageInput]}
             value={message}
             onChangeText={setMessage}
-            placeholder="Describe your issue in a few sentences…"
+            placeholder={t("support.messagePlaceholder")}
             placeholderTextColor={COLORS.textMuted}
             multiline
             textAlignVertical="top"
@@ -266,7 +277,7 @@ export default function SupportScreen() {
             ) : (
               <>
                 <Send size={16} color={COLORS.white} />
-                <Text style={styles.submitButtonText}>Submit Ticket</Text>
+                <Text style={styles.submitButtonText}>{t("support.submitTicket")}</Text>
               </>
             )}
           </Pressable>
@@ -274,7 +285,7 @@ export default function SupportScreen() {
 
         {/* Footer */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>ChinaSuuq — Order from China to Somalia</Text>
+          <Text style={styles.footerText}>{t("support.footer")}</Text>
           <Text style={styles.footerVersion}>v1.0.0</Text>
         </View>
 
@@ -335,7 +346,7 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
     marginHorizontal: SPACING.lg,
     marginTop: SPACING.lg,
-    backgroundColor: "#ECFDF5",
+    backgroundColor: COLORS.successBg,
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
     borderWidth: 1,

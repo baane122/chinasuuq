@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tailwind v4 defaults `dark:` to prefers-color-scheme. Mission Control owns a
+   manual toggle, so dark styling is driven by a `.dark` class on <html>
+   (persisted to localStorage by components/admin/ThemeToggle.tsx) instead. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* ── Brand scale (ChinaSuuq orange — matches mobile app) ── */
   --color-brand-50: #FFF7ED;
@@ -41,6 +46,41 @@
   --radius-lg: 18px;
   --radius-2xl: 28px;
   --radius-pill: 999px;
+}
+
+/* ── Mission Control semantic surfaces ──
+   Admin cards / inputs / tables / rows resolve their colours from these
+   variables instead of raw `bg-white`/`text-dark-900` literals, so flipping the
+   `.dark` class on <html> (via components/admin/ThemeToggle.tsx) restyles the
+   whole console without touching every utility in JSX. One source of truth. */
+:root {
+  --admin-surface: #ffffff;              /* raised cards, inputs, panels */
+  --admin-surface-2: var(--color-dark-50); /* table header / subtle inset */
+  --admin-canvas: var(--color-warm-50);   /* page background */
+  --admin-border: rgba(17, 17, 17, 0.06);
+  --admin-border-strong: rgba(17, 17, 17, .14);
+  --admin-text: var(--color-dark-900);
+  --admin-text-muted: rgba(17, 17, 17, 0.5);
+  --admin-text-faint: rgba(17, 17, 17, 0.35);
+  --admin-hover: rgba(17, 17, 17, 0.05);
+  --admin-row-hover: rgba(255, 90, 10, 0.04);
+  --skeleton-base: #f1efed;
+  --skeleton-highlight: #e7e4e1;
+}
+
+.dark {
+  --admin-surface: var(--color-dark-900);
+  --admin-surface-2: var(--color-dark-800);
+  --admin-canvas: var(--color-dark-950);
+  --admin-border: rgba(255, 255, 255, 0.08);
+  --admin-border-strong: rgba(255, 255, 255, 0.16);
+  --admin-text: #f5f5f4;
+  --admin-text-muted: rgba(245, 245, 244, 0.6);
+  --admin-text-faint: rgba(245, 245, 244, 0.4);
+  --admin-hover: rgba(255, 255, 255, 0.06);
+  --admin-row-hover: rgba(255, 90, 10, 0.1);
+  --skeleton-base: #1c1917;
+  --skeleton-highlight: #292524;
 }
 
 @layer base {
@@ -186,22 +226,24 @@ body {
   }
 }
 
-/* ═══ Admin (Mission Control) ═══ */
+/* ═══ Admin (Mission Control) ═══
+   Every value below resolves from the semantic surface variables defined above,
+   so a single `.dark` toggle restyles inputs, buttons, tables and skeletons. */
 @layer components {
   .admin-input {
-    @apply h-10 w-full rounded-xl border border-dark-900/10 bg-white px-3.5 text-sm text-dark-900 placeholder:text-dark-900/35 transition-all focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10;
+    @apply h-10 w-full rounded-xl border border-[var(--admin-border)] bg-[var(--admin-surface)] px-3.5 text-sm text-[var(--admin-text)] placeholder:text-[var(--admin-text-faint)] transition-all focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10;
   }
   .admin-label {
-    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-dark-900/45;
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[var(--admin-text-muted)];
   }
   .admin-btn-primary {
     @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-500 px-4 text-sm font-semibold text-white shadow-sm transition-all hover:bg-brand-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
   }
   .admin-btn-ghost {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-dark-900/60 transition-all hover:bg-dark-900/5 hover:text-dark-900 active:scale-[0.98];
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-[var(--admin-text-muted)] transition-all hover:bg-[var(--admin-hover)] hover:text-[var(--admin-text)] active:scale-[0.98];
   }
   .admin-btn-outline {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-dark-900/12 bg-white px-4 text-sm font-semibold text-dark-900/80 transition-all hover:border-dark-900/25 hover:text-dark-900 active:scale-[0.98];
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[var(--admin-border-strong)] bg-[var(--admin-surface)] px-4 text-sm font-semibold text-[var(--admin-text-muted)] transition-all hover:border-brand-500/50 hover:text-[var(--admin-text)] active:scale-[0.98];
   }
   .admin-btn-danger {
     @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-error/20 bg-error/5 px-4 text-sm font-semibold text-error transition-all hover:bg-error/10 active:scale-[0.98];
@@ -210,13 +252,13 @@ body {
 
 /* Table row polish for admin tables */
 .admin-table th {
-  @apply whitespace-nowrap bg-dark-50/80 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-dark-900/40;
+  @apply whitespace-nowrap bg-[var(--admin-surface-2)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--admin-text-muted)];
 }
 .admin-table td {
-  @apply border-t border-dark-900/[0.06] px-4 py-3.5 align-middle text-sm text-dark-900;
+  @apply border-t border-[var(--admin-border)] px-4 py-3.5 align-middle text-sm text-[var(--admin-text)];
 }
 .admin-table tbody tr {
-  @apply transition-colors hover:bg-brand-50/40;
+  @apply transition-colors hover:bg-[var(--admin-row-hover)];
 }
 
 /* Skeleton shimmer */
@@ -225,7 +267,7 @@ body {
   100% { background-position: 400px 0; }
 }
 .skeleton {
-  background: linear-gradient(90deg, #f1efed 25%, #e7e4e1 50%, #f1efed 75%);
+  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-highlight) 50%, var(--skeleton-base) 75%);
   background-size: 800px 100%;
   animation: shimmer 1.4s infinite linear;
   border-radius: 10px;

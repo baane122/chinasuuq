@@ -169,7 +169,7 @@ export default function HelpScreen() {
             <View
               style={[
                 styles.contactIconWrap,
-                { backgroundColor: "#ECFDF5" },
+                { backgroundColor: COLORS.successBg },
               ]}
             >
               <MessageCircle size={20} color={COLORS.whatsapp} />

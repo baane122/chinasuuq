@@ -75,7 +75,12 @@ export const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF0aGttcnZzYWlqd2dzeXZ3cmJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NjM4NDQsImV4cCI6MjEwMTIzOTg0NH0.QAT0gZBJl-ELFG8221MRZoZoTj0La9_TOXFXx-HiKbY";
 
 export const SITE_URL = "https://chinasuuq.com";
-export const DEFAULT_EXCHANGE_RATE = 7.0;
+// Last-resort offline FX fallbacks (managed rate: `exchange_rates` via
+// src/lib/exchange.ts). Contract: units of the first currency per 1 USD.
+// 6.66 is the owner's rate set in Admin → Settings on 2026-10-03; it is only
+// ever used before the first fetch succeeds, never instead of the live rate.
+export const DEFAULT_CNY_PER_USD = 6.66;
+export const DEFAULT_SOS_PER_USD = 530;
 export const MAX_CART_QUANTITY = 999;
 export const CART_STORAGE_KEY = "chinasuuq-cart";
 export const ADMIN_SESSION_COOKIE = "chinasuuq-admin-session";

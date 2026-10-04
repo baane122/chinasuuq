@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getFxSync } from "@/lib/exchange";
 import type { CartItem, Product } from "@/types";
 
 interface CartStore {
@@ -24,10 +25,16 @@ export const useCartStore = create<CartStore>()(
             JSON.stringify(i.selected_options) === JSON.stringify(options)
         );
         const cny = product.price_cny_min || product.price_cny_max || 0;
-        const usdFromCny = cny > 0 ? cny / (meta.exchange_rate || 7.25) : 0;
-        // Prefer the estimated USD, else derive from the CNY snapshot so the
-        // cart never shows $0 for a product that has a real CNY price.
-        const usdEst = product.price_usd_estimated > 0 ? product.price_usd_estimated : usdFromCny;
+        // Stamp the same CNY-per-USD rate we used for the math; the caller's
+        // capture-time rate wins, otherwise read the live FX store.
+        const fxRate =
+          Number(meta.exchange_rate) > 0 ? Number(meta.exchange_rate) : getFxSync().cnyPerUsd;
+        const usdFromCny = cny > 0 ? cny / fxRate : 0;
+        // When there is a yuan cost, USD is DERIVED from it at the rate we
+        // stamp — that is the only way `exchange_rate` is honestly "the rate
+        // used". Only CNY-less lines (USD-native marketplaces) keep their
+        // stored price_usd_estimated.
+        const usdEst = usdFromCny > 0 ? usdFromCny : product.price_usd_estimated > 0 ? product.price_usd_estimated : 0;
         const snapshot = {
           ...product,
           price_cny_min: cny,
@@ -61,7 +68,7 @@ export const useCartStore = create<CartStore>()(
                 selected_options: options,
                 price_cny_snapshot: cny,
                 price_usd_estimated: usdEst,
-                exchange_rate: meta.exchange_rate || 7.25,
+                exchange_rate: fxRate,
                 estimated_kg: meta.estimated_kg,
                 estimated_cbm: meta.estimated_cbm,
                 added_at: new Date().toISOString(),

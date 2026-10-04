@@ -643,8 +643,8 @@ export default function Customer360Drawer({
                                               )}
                                               {num(line.exchange_rate) !== null && (
                                                 <span>
-                                                  @ {num(line.exchange_rate)}{" "}
-                                                  <span title="The CNY→USD rate recorded when this line was bought. A later rate change cannot rewrite it.">
+                                                  @ {num(line.exchange_rate)} ¥/${" "}
+                                                  <span title="How many CNY one US dollar bought when this line was purchased. A later rate change cannot rewrite it.">
                                                     (fixed at purchase)
                                                   </span>
                                                 </span>

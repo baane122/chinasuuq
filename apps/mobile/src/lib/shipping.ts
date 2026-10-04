@@ -1,6 +1,8 @@
 // Smart shipping cost calculator for ChinaSuuq
 // Auto-calculates shipping based on weight, dimensions, and method
 
+import { getFxSync } from "./exchange";
+
 export interface ShippingEstimate {
   method: "air" | "sea";
   costUSD: number;
@@ -16,9 +18,8 @@ export interface ProductShipping {
   marketplace: string;
 }
 
-// Exchange rates (should be updated from API in production)
-const CNY_TO_USD = 0.14; // ~7.14 CNY per USD
-const USD_TO_SOS = 570; // ~570 SOS per USD
+// Freight rates (per kg) - China to Somalia
+// Currency rates come from the live FX store (src/lib/exchange.ts) — no literals here.
 
 // Air freight rates (per kg) - China to Somalia
 const AIR_RATE_PER_KG = 8.50; // USD per kg for air freight
@@ -62,7 +63,8 @@ export function calculateShipping(
     label = "Sea Freight";
   }
 
-  const costCNY = Math.round(costUSD / CNY_TO_USD);
+  // USD → CNY via the live rate; rounding happens only at display (formatPrice).
+  const costCNY = Number(costUSD) * (getFxSync().cnyPerUsd || 1);
 
   return {
     method,
@@ -257,29 +259,10 @@ export function convertCurrency(
   from: "USD" | "CNY" | "SOS",
   to: "USD" | "CNY" | "SOS"
 ): number {
-  // Convert to USD first
-  let usd: number;
-  switch (from) {
-    case "USD":
-      usd = amount;
-      break;
-    case "CNY":
-      usd = amount * CNY_TO_USD;
-      break;
-    case "SOS":
-      usd = amount / USD_TO_SOS;
-      break;
-  }
-
-  // Convert from USD to target
-  switch (to) {
-    case "USD":
-      return usd;
-    case "CNY":
-      return usd / CNY_TO_USD;
-    case "SOS":
-      return usd * USD_TO_SOS;
-    default:
-      return usd;
-  }
+  const fx = getFxSync();
+  const a = Number(amount);
+  if (!Number.isFinite(a) || from === to) return a;
+  // Everything transits through USD; round only at the caller's display step.
+  const usd = from === "USD" ? a : from === "CNY" ? a / fx.cnyPerUsd : a / fx.sosPerUsd;
+  return to === "USD" ? usd : to === "CNY" ? usd * fx.cnyPerUsd : usd * fx.sosPerUsd;
 }

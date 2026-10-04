@@ -1,5 +1,6 @@
 "use client";
-import { Suspense, useState, useEffect, useMemo, useCallback } from "react";
+import { Suspense, useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { DataTable, Column } from "@/components/admin/DataTable";
 import { StatusBadge } from "@/components/admin/StatusBadge";
 import { PageHeader, StatCard, PageGrid, FilterChips, TableShell, SkeletonTable, EMPTY_IMAGES } from "@/components/admin/ui";
@@ -15,7 +16,8 @@ import {
   ChevronRight, ExternalLink, RefreshCw, Check, ArrowRight, Download, RotateCcw
 } from "lucide-react";
 import { cn, formatUSD, formatDate, formatDateTime } from "@/lib/utils";
-import { listOrders, updateOrder } from "@/lib/admin/supabase-data";
+import { listOrders, updateOrder, getOrderItems } from "@/lib/admin/supabase-data";
+import { chartPalette } from "@/lib/admin/theme";
 import { ORDERS_CSV_COLUMNS, downloadCsv, stamp, toCsv } from "@/lib/admin/csv";
 import OrderProvenance from "@/components/admin/OrderProvenance";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
@@ -130,6 +132,7 @@ function OrdersPageContent() {
   const liveVersion = useLiveVersion(["orders"]);
 
   const [orders, setOrders] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<any | null>(null);
@@ -163,6 +166,7 @@ function OrdersPageContent() {
     const res = await listOrders({ status: status === "all" ? undefined : status, search: q });
     if (res.ok) {
       setOrders(res.orders);
+      setTotal(res.total ?? res.orders.length);
     } else {
       setError(res.error || "Failed to load orders");
     }
@@ -173,6 +177,34 @@ function OrdersPageContent() {
     load(statusFilter, committedSearch);
     // liveVersion re-reads the list when realtime confirms a write elsewhere.
   }, [statusFilter, committedSearch, load, liveVersion]);
+
+  /* ── Deep link: ?open=<id> opens a specific order's drawer ─────
+     Shipment rows link to their order with /admin/orders?open=<id>. Once the
+     list has loaded we locate the row, open its drawer, then strip the param so
+     a reload or shared link doesn't reopen it. Falls back honestly if the order
+     isn't inside the loaded window. */
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const handledOpen = useRef<string | null>(null);
+  useEffect(() => {
+    const openId = searchParams.get("open");
+    if (!openId || loading) return;
+    if (handledOpen.current === openId) return;
+    const match = orders.find((o) => o.id === openId);
+    if (match) {
+      setSelected(match);
+    } else if (orders.length > 0) {
+      toastError("That order isn’t in the newest loaded set — search for its reference to open it.");
+    } else {
+      return; // still empty (first paint); wait for rows before deciding
+    }
+    handledOpen.current = openId;
+    const qs = new URLSearchParams(searchParams.toString());
+    qs.delete("open");
+    const next = qs.toString();
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [searchParams, loading, orders, router, pathname, toastError]);
 
   /* ── Filtered ──────────────────────────────────────────────── */
 
@@ -311,15 +343,49 @@ function OrdersPageContent() {
 
   /* ── Print Invoice ─────────────────────────────────────────── */
 
-  const printInvoice = (order: any) => {
+  const printInvoice = async (order: any) => {
     const w = window.open("", "_blank");
     if (!w) return;
+
+    // Real per-line provenance from admin_order_items_view, not a single
+    // fabricated "target_marketplace × 1" row. If the items view is unavailable
+    // or the order predates line capture, we say so explicitly rather than
+    // printing a made-up item — the money summary below is still the real one.
+    let items: any[] = [];
+    let itemsNote = "";
+    try {
+      const res = await getOrderItems(order.id);
+      if (res.ok) items = res.items;
+      else itemsNote = "Itemised lines were unavailable, so this invoice shows the order total only.";
+    } catch {
+      itemsNote = "Itemised lines were unavailable, so this invoice shows the order total only.";
+    }
+
+    const esc = (s: unknown) =>
+      String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+
+    const lineRows = items.length
+      ? items
+          .map(
+            (it) => `
+        <tr>
+          <td>${esc(it.product_name || "Item")}${it.variant_name ? ` <span style="color:#888;">(${esc(it.variant_name)})</span>` : ""}${it.marketplace_name ? ` <span style="color:#888;">· ${esc(it.marketplace_name)}</span>` : ""}</td>
+          <td style="text-align:right;">${Number(it.quantity) || 0}</td>
+          <td style="text-align:right;">${formatUSD(Number(it.unit_price) || 0)}</td>
+          <td style="text-align:right;">${formatUSD(Number(it.total_price ?? (Number(it.unit_price) || 0) * (Number(it.quantity) || 0)))}</td>
+        </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="4" style="text-align:center;color:#888;">${
+          itemsNote || "No itemised lines were recorded for this order."
+        }</td></tr>`;
+
     w.document.write(`
-      <html><head><title>Invoice ${orderRef(order)}</title>
+      <html><head><title>Invoice ${esc(orderRef(order))}</title>
       <style>
         body { font-family: system-ui, sans-serif; padding: 40px; color: #111; }
-        .header { display: flex; justify-content: space-between; border-bottom: 2px solid #FF5A0A; padding-bottom: 16px; margin-bottom: 24px; }
-        .logo { font-size: 24px; font-weight: bold; color: #FF5A0A; }
+        .header { display: flex; justify-content: space-between; border-bottom: 2px solid ${chartPalette.brand}; padding-bottom: 16px; margin-bottom: 24px; }
+        .logo { font-size: 24px; font-weight: bold; color: ${chartPalette.brand}; }
         table { width: 100%; border-collapse: collapse; margin: 16px 0; }
         th, td { padding: 8px 12px; border: 1px solid #e5e5e5; text-align: left; font-size: 13px; }
         th { background: #f5f5f5; font-weight: 600; }
@@ -334,16 +400,16 @@ function OrdersPageContent() {
         </div>
         <div style="text-align: right;">
           <div style="font-size: 20px; font-weight: bold;">INVOICE</div>
-          <div style="font-size: 13px; color: #666;">${orderRef(order)}</div>
+          <div style="font-size: 13px; color: #666;">${esc(orderRef(order))}</div>
           <div style="font-size: 13px; color: #666;">${order.created_at ? new Date(order.created_at).toLocaleDateString() : ""}</div>
         </div>
       </div>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
         <div>
           <h3 style="font-size: 12px; text-transform: uppercase; color: #999; margin-bottom: 8px;">Bill To</h3>
-          <div style="font-size: 14px;">${order.customer_name || "Guest"}</div>
-          <div style="font-size: 13px; color: #666;">${orderPhone(order)}</div>
-          <div style="font-size: 13px; color: #666;">${orderCity(order)}</div>
+          <div style="font-size: 14px;">${esc(order.customer_name || "Guest")}</div>
+          <div style="font-size: 13px; color: #666;">${esc(orderPhone(order))}</div>
+          <div style="font-size: 13px; color: #666;">${esc(orderCity(order))}</div>
         </div>
         <div>
           <h3 style="font-size: 12px; text-transform: uppercase; color: #999; margin-bottom: 8px;">Order Details</h3>
@@ -353,8 +419,8 @@ function OrdersPageContent() {
         </div>
       </div>
       <table>
-        <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
-        <tr><td>${order.target_marketplace || "—"}</td><td>1</td><td>${formatUSD(orderTotal(order))}</td><td>${formatUSD(orderTotal(order))}</td></tr>
+        <tr><th>Item</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th></tr>
+        ${lineRows}
       </table>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
         <div></div>
@@ -662,6 +728,18 @@ function OrdersPageContent() {
             value={appFilter}
             onChange={(v) => set("app", v)}
           />
+        </div>
+      )}
+
+      {/* ── Window notice ──
+          The server returns the newest 250 matching orders (a wide window, not
+          the old hard 50). When more exist we say so instead of implying the
+          KPIs below describe every order. Narrow with status/date/search. */}
+      {!loading && !error && total > orders.length && (
+        <div className="flex items-center gap-2 rounded-xl border border-info/25 bg-info/5 px-4 py-2.5 text-xs font-medium text-info dark:border-info/30 dark:bg-info/10">
+          <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+          Showing the newest {orders.length.toLocaleString()} of {total.toLocaleString()} matching orders —
+          use the status chips, date range or search to narrow the set.
         </div>
       )}
 

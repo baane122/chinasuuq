@@ -123,15 +123,19 @@ type Rule = {
 // real 10. A label whose number sits on its own line is still caught, by the
 // bare-number rule at the bottom, at the confidence an unlabelled number earns.
 const RULES: Rule[] = [
-  // "起订量: 5" / "最小起订量 5 件" / "起批 50" — a label, then the number.
-  { re: new RegExp(`(?:最小)?起[订批](?:量|数)?[ \\t]*[:：=]?[ \\t]*(${NUM})`, "g"), confidence: 0.95, group: 1, pick: "lowest" },
-  // "2件起批" / "100 件起批" — the 1688 native form, number then unit then 起.
-  { re: new RegExp(`(${NUM})[ \\t]*[${UNIT}]?[ \\t]*起[ \\t]*[批售]?`, "g"), confidence: 0.95, group: 1, pick: "lowest" },
+  // "起订量: 5" / "最小起订量 5 件" / "起批 50" / "起购 30" — a label, then the number.
+  { re: new RegExp(`(?:最小)?起[订批购](?:量|数)?[ \\t]*[:：=]?[ \\t]*(${NUM})`, "g"), confidence: 0.95, group: 1, pick: "lowest" },
+  // "2件起批" / "100 件起批" / "100件起购" — the 1688 native form, number then unit then 起.
+  { re: new RegExp(`(${NUM})[ \\t]*[${UNIT}]?[ \\t]*起[ \\t]*[批售购]?`, "g"), confidence: 0.95, group: 1, pick: "lowest" },
   // "MOQ: 10" / "moq=100" / "最小购买量 20".
   { re: /(?:moq|最小购买量|最低购买量)[ \t]*[:：=]?[ \t]*(\d+)/gi, confidence: 0.9, group: 1, pick: "lowest" },
-  // "Min. order: 20 Pieces" / "Minimum Order Quantity 30 units" — common
-  // YiwuGo/1688 spellings; the period belongs to the abbreviation.
+  // "Min. order: 20 Pieces" / "Minimum Order Quantity 30 units" / "minimum
+  // purchase: 24" — common YiwuGo/1688 spellings; the period belongs to the
+  // abbreviation.
   { re: /\bmin(?:imum)?\.?[ \t]*(?:(?:order|purchase|quantity|qty)[ \t]*){1,2}[:：=]?[ \t]*(\d+)/gi, confidence: 0.9, group: 1, pick: "lowest" },
+  // "360 minimum purchase" — the number-first shape machine translation
+  // produces from "360件起购". YiwuGo renders MOQ exactly this way in English.
+  { re: /(\d+)[ \t]*(?:pcs|pieces?|units?|sets?|pairs?|boxes?)?[ \t]*minimum\b/gi, confidence: 0.85, group: 1, pick: "lowest" },
   // Price ladder "2-19件 ¥12 / 20-99件 ¥10 / ≥100件 ¥8": group 1 is each tier's
   // lower bound, and the lowest of them is the quantity one buyer may order.
   { re: new RegExp(`(\\d+)[ \\t]*[-~—–][ \\t]*\\d+[ \\t]*[${UNIT}]`, "g"), confidence: 0.9, group: 1, pick: "lowest" },
@@ -507,7 +511,7 @@ export function describeMoq(resolution: ResolvedMoq, locale: MoqLocale = "en"): 
  */
 export function selectMoqEvidence(text: string | null | undefined, budgetChars = 4000): string {
   if (typeof text !== "string" || !text.trim()) return "";
-  const keyword = /起批|起订|最小|moq|min\.?\s*order|minimum\s*order|每箱|混批|[≥>]\s*\d|件以上|[¥￥]/i;
+  const keyword = /起批|起订|起购|最小|moq|min\.?\s*order|min\.?\s*purchas|minimum\s*(?:order|purchas|qty|quantity)|每箱|装箱|整箱|混批|[≥>]\s*\d|件以上|[¥￥]/i;
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())

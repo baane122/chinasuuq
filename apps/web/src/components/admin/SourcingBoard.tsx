@@ -486,7 +486,7 @@ const LineCard = memo(function LineCard({
       <p className="mt-1.5 flex items-center gap-1 text-[10px] text-dark-900/50 tabular-nums">
         <CircleDollarSign className="h-2.5 w-2.5 shrink-0" />
         {cny !== null && rate !== null
-          ? `¥${cny.toFixed(2)} @ ${rate} (rate pinned on the line)`
+          ? `¥${cny.toFixed(2)} @ ${rate} ¥/$ (rate pinned on the line)`
           : cny !== null
             ? `¥${cny.toFixed(2)} (no rate pinned on the line)`
             : "No CNY cost pinned on this line"}

@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { cn, formatUSD, formatDate, formatDateTime } from "@/lib/utils";
+import { cn, formatDate, formatDateTime } from "@/lib/utils";
+import { formatSos, formatUsd } from "@/lib/fx";
 import {
   Loader2, CheckCircle2, XCircle, Clock, Plus, Pencil, Trash2,
   TrendingUp, Download, Check, RefreshCw
@@ -11,7 +12,9 @@ import type { Payment } from "@/types";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
-import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
+import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel, PermissionNotice } from "@/components/admin/ui";
+import { RowCapNotice } from "@/components/admin/RowCapNotice";
+import { useAdminPermissions, allowed, PERMISSIONS } from "@/lib/admin/permissions";
 
 /* ── Constants ─────────────────────────────────────────────────── */
 
@@ -47,6 +50,61 @@ const methodColors: Record<string, string> = {
 const METHODS = ["zaad", "edahab", "premier", "evc_plus", "sahal", "bank_transfer", "manual"] as const;
 const STATUSES = ["pending", "confirmed", "failed", "refunded"] as const;
 
+/* ── Money is per currency ─────────────────────────────────────────
+ * payments.amount holds the figure IN THE ROW'S OWN CURRENCY. Evidence from
+ * the live consumers: the table defines `amount DECIMAL(12,2)` beside
+ * `currency currency_type NOT NULL` (202408010007_orders_payments_refunds.sql),
+ * so a USD-only amount would make the column dead; the integrity guard compares
+ * amount_refunded against amount on the same row (202609210001), which only
+ * holds inside one currency; payment-reconcile flips status and order sync and
+ * never re-reads amount as dollars; and recordPayment in supabase-data.ts
+ * writes amount+currency exactly as entered. So this screen stores the entered
+ * amount with the picked currency (normalized uppercase) and converts only for
+ * display: nothing on this page adds two currencies together or prints a
+ * shilling figure with a dollar sign. Every amount is summed by currency first
+ * and then shown with the matching fx.ts formatter.
+ */
+type MoneyByCurrency = Record<string, number>;
+
+/** Rows are NOT NULL; this only canonicalizes the currency CODE for display,
+ *  falling back to USD when nothing was recorded — never for conversion. */
+const currencyOf = (raw: string | null | undefined) =>
+  String(raw ?? "").trim().toUpperCase() || "USD";
+
+function formatInCurrency(amount: number, currency: string | null | undefined): string {
+  const code = currencyOf(currency);
+  if (code === "USD") return formatUsd(amount);
+  if (code === "SOS") return formatSos(amount);
+  const digits = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
+    Number.isFinite(amount) ? amount : 0
+  );
+  return `${code} ${digits}`;
+}
+
+/** Sum a set of rows without ever mixing currencies. */
+function sumByCurrency(rows: Payment[]): MoneyByCurrency {
+  const totals: MoneyByCurrency = {};
+  for (const p of rows) {
+    const code = currencyOf(p.currency);
+    totals[code] = (totals[code] ?? 0) + (Number(p.amount) || 0);
+  }
+  return totals;
+}
+
+/** USD leads and the rest follow alphabetically, so the reading order is stable. */
+function orderedCurrencies(totals: MoneyByCurrency): string[] {
+  return Object.keys(totals).sort((a, b) =>
+    a === b ? 0 : a === "USD" ? -1 : b === "USD" ? 1 : a.localeCompare(b)
+  );
+}
+
+/** "SOS 5,200,000 · $1,234.00" — one entry per currency, never a merged sum. */
+function formatByCurrency(totals: MoneyByCurrency): string {
+  const codes = orderedCurrencies(totals);
+  if (codes.length === 0) return formatUsd(0);
+  return codes.map((code) => formatInCurrency(totals[code], code)).join(" · ");
+}
+
 const emptyForm = {
   order_id: "",
   amount: "",
@@ -60,6 +118,8 @@ const emptyForm = {
 
 export default function PaymentsPage() {
   const { success, error: toastError } = useToast();
+  const perms = useAdminPermissions();
+  const canConfirm = allowed(perms, "confirmPayments");
   const [payments, setPayments] = useState<Payment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -82,6 +142,9 @@ export default function PaymentsPage() {
   const [reconcileMode, setReconcileMode] = useState(false);
   const [reconcileSelected, setReconcileSelected] = useState<Set<string>>(new Set());
 
+  // Set when a fetch returned a full 1000-row page — the read cap hides older rows.
+  const [rowCapHit, setRowCapHit] = useState(false);
+
   /* ── Fetch ──────────────────────────────────────────────────── */
 
   const fetchPayments = async () => {
@@ -90,9 +153,12 @@ export default function PaymentsPage() {
       const { data, error: err } = await supabase
         .from("payments")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(1000);
       if (err) throw err;
-      setPayments((data as Payment[]) || []);
+      const rows = (data as Payment[]) || [];
+      setPayments(rows);
+      setRowCapHit(rows.length >= 1000);
     } catch (err) {
       setFetchError(err instanceof Error ? err.message : "Failed to load payments");
     } finally {
@@ -127,29 +193,30 @@ export default function PaymentsPage() {
     const failed = payments.filter((p) => p.status === "failed");
     const refunded = payments.filter((p) => p.status === "refunded");
 
-    const totalConfirmed = confirmed.reduce((s, p) => s + p.amount, 0);
-    const totalPending = pending.reduce((s, p) => s + p.amount, 0);
-    const totalFailed = failed.reduce((s, p) => s + p.amount, 0);
-    const totalRefunded = refunded.reduce((s, p) => s + p.amount, 0);
+    const confirmedByCurrency = sumByCurrency(confirmed);
+    const pendingByCurrency = sumByCurrency(pending);
+    const failedByCurrency = sumByCurrency(failed);
+    const refundedByCurrency = sumByCurrency(refunded);
 
-    // By method
-    const byMethod: Record<string, { count: number; total: number }> = {};
+    // By method — same rule: the money inside a method is broken out per currency.
+    const byMethod: Record<string, { count: number; totals: MoneyByCurrency }> = {};
     confirmed.forEach((p) => {
-      if (!byMethod[p.method]) byMethod[p.method] = { count: 0, total: 0 };
+      if (!byMethod[p.method]) byMethod[p.method] = { count: 0, totals: {} };
       byMethod[p.method].count++;
-      byMethod[p.method].total += p.amount;
+      const code = currencyOf(p.currency);
+      byMethod[p.method].totals[code] = (byMethod[p.method].totals[code] ?? 0) + (Number(p.amount) || 0);
     });
 
     // Today
     const today = new Date().toISOString().slice(0, 10);
     const todayPayments = confirmed.filter((p) => (p.created_at || "").slice(0, 10) === today);
-    const todayTotal = todayPayments.reduce((s, p) => s + p.amount, 0);
+    const todayByCurrency = sumByCurrency(todayPayments);
 
     return {
       total, pending: pending.length, confirmed: confirmed.length,
       failed: failed.length, refunded: refunded.length,
-      totalConfirmed, totalPending, totalFailed, totalRefunded,
-      byMethod, todayTotal, todayCount: todayPayments.length,
+      confirmedByCurrency, pendingByCurrency, failedByCurrency, refundedByCurrency,
+      byMethod, todayByCurrency, todayCount: todayPayments.length,
     };
   }, [payments]);
 
@@ -192,12 +259,33 @@ export default function PaymentsPage() {
       toastError("Please fill in all required fields");
       return;
     }
+
+    /* `amount` is stored in the row's own currency, so switching the currency on
+     * an existing row would silently re-denominate the money the customer paid —
+     * a recorded 5,000 SOS becoming 5,000 USD is a 530× error. Editing may fix
+     * the reference, method or status; changing the currency of money already
+     * recorded means deleting the row and recording the payment again. */
+    if (modalMode === "edit") {
+      const original = payments.find((p) => p.id === editId);
+      if (original && currencyOf(original.currency) !== currencyOf(form.currency)) {
+        toastError(
+          `This payment is recorded in ${currencyOf(original.currency)} — ${formatInCurrency(
+            Number(original.amount),
+            original.currency
+          )}. Changing the currency would re-read the same amount as a different currency. Delete the row and record the payment again instead.`
+        );
+        return;
+      }
+    }
+
     setFormLoading(true);
     try {
       const payload = {
         order_id: form.order_id,
+        // Amount as typed, in the currency the operator picked — the row means
+        // "amount in its own currency" (see the Money-by-currency note above).
         amount: parseFloat(form.amount),
-        currency: form.currency,
+        currency: currencyOf(form.currency),
         method: form.method,
         reference: form.reference,
         status: form.status,
@@ -224,28 +312,115 @@ export default function PaymentsPage() {
 
   /* ── Status change ─────────────────────────────────────────── */
 
-  const handleStatusChange = async (paymentId: string, newStatus: string) => {
-    try {
-      const updateData: Record<string, string | null> = { status: newStatus };
-      if (newStatus === "confirmed") {
-        const { data: { user } } = await supabase.auth.getUser();
-        updateData.verified_by = user?.id ?? null;
-        updateData.verified_at = new Date().toISOString();
-      }
-      const { error: updateError } = await supabase
-        .from("payments").update(updateData).eq("id", paymentId);
-      if (updateError) throw updateError;
+  /** Local optimistic patch so a confirmed row stops spinning without refetching
+   *  the whole (potentially large) payments table on every action. */
+  const applyLocalStatus = (paymentId: string, newStatus: string, extra: Partial<Payment> = {}) => {
+    setPayments((prev) =>
+      prev.map((p) => (p.id === paymentId ? { ...p, status: newStatus as Payment["status"], ...extra } : p))
+    );
+  };
 
-      setPayments((prev) =>
-        prev.map((p) =>
-          p.id === paymentId
-            ? { ...p, status: newStatus as Payment["status"], ...(newStatus === "confirmed" ? { verified_by: updateData.verified_by as string, verified_at: updateData.verified_at as string } : {}) }
-            : p
-        )
-      );
-      success(`Payment status updated to ${newStatus}`);
+  /**
+   * Direct write — the pre-reconcile behaviour. Used as the fallback when the
+   * payment-reconcile edge function is not deployed yet (HTTP 404), and for every
+   * non-confirmation transition (which never moves money or touches an order).
+   */
+  const directStatusUpdate = async (paymentId: string, newStatus: string) => {
+    const updateData: Record<string, string | null> = { status: newStatus };
+    if (newStatus === "confirmed") {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      updateData.verified_by = user?.id ?? null;
+      updateData.verified_at = new Date().toISOString();
+    }
+    const { error: updateError } = await supabase
+      .from("payments")
+      .update(updateData)
+      .eq("id", paymentId);
+    if (updateError) throw updateError;
+    applyLocalStatus(
+      paymentId,
+      newStatus,
+      newStatus === "confirmed"
+        ? { verified_by: updateData.verified_by as string, verified_at: updateData.verified_at as string }
+        : {}
+    );
+  };
+
+  /**
+   * Confirm = the money-moving transition. Call the payment-reconcile edge fn
+   * (POST {payment_id} → {ok, order_id|error}) so the linked order's payment_status
+   * syncs server-side, instead of the old UI flipping payments.status alone and
+   * leaving the order stale.
+   *
+   * DEGRADES: ONLY a 404 (function not deployed) falls back to the direct write.
+   * A 401/403/5xx is a real rejection and is surfaced, never papered over.
+   */
+  const confirmOne = async (
+    paymentId: string
+  ): Promise<{ ok: boolean; synced: boolean; message?: string }> => {
+    if (!canConfirm) return { ok: false, synced: false, message: "Your role can’t confirm payments." };
+    try {
+      const { data, error } = await supabase.functions.invoke("payment-reconcile", {
+        body: { payment_id: paymentId },
+      });
+
+      // supabase.functions.invoke attaches the HTTP status to error.context.
+      const status = (error as unknown as { context?: { status?: number } })?.context?.status;
+
+      if (error) {
+        if (status === 404) {
+          // payment-reconcile isn't deployed in this project yet — degrade to the
+          // previous direct write so confirmation still works, honestly flagged.
+          await directStatusUpdate(paymentId, "confirmed");
+          return { ok: true, synced: false };
+        }
+        return {
+          ok: false,
+          synced: false,
+          message:
+            status === 401 || status === 403
+              ? "Confirmation rejected: your session lacks permission for payment-reconcile."
+              : `Reconciliation failed: ${(error as Error).message || "unknown error"}`,
+        };
+      }
+
+      const res = data as { ok?: boolean; order_id?: string | null; error?: string } | null;
+      if (res?.ok) {
+        applyLocalStatus(paymentId, "confirmed", { verified_at: new Date().toISOString() });
+        return { ok: true, synced: !!res.order_id };
+      }
+      return { ok: false, synced: false, message: res?.error || "Reconciliation rejected the payment" };
     } catch (err) {
-      toastError(err instanceof Error ? err.message : "Failed to update status");
+      return {
+        ok: false,
+        synced: false,
+        message: err instanceof Error ? err.message : "Failed to confirm payment",
+      };
+    }
+  };
+
+  const handleStatusChange = async (paymentId: string, newStatus: string) => {
+    if (newStatus !== "confirmed") {
+      try {
+        await directStatusUpdate(paymentId, newStatus);
+        success(`Payment status updated to ${newStatus}`);
+      } catch (err) {
+        toastError(err instanceof Error ? err.message : "Failed to update status");
+      }
+      return;
+    }
+
+    const r = await confirmOne(paymentId);
+    if (r.ok) {
+      success(
+        r.synced
+          ? "Payment confirmed and synced to its order"
+          : "Payment confirmed (order sync pending: payment-reconcile not deployed)"
+      );
+    } else {
+      toastError(r.message || "Failed to update status");
     }
   };
 
@@ -253,10 +428,28 @@ export default function PaymentsPage() {
 
   const handleBulkConfirm = async () => {
     const ids = Array.from(reconcileSelected);
+    let okCount = 0;
+    let syncedCount = 0;
+    let lastErr: string | undefined;
     for (const id of ids) {
-      await handleStatusChange(id, "confirmed");
+      const r = await confirmOne(id);
+      if (r.ok) {
+        okCount++;
+        if (r.synced) syncedCount++;
+      } else lastErr = r.message;
     }
-    success(`${ids.length} payment(s) confirmed`);
+    if (okCount === ids.length && syncedCount === ids.length) {
+      success(`${ids.length} payment(s) confirmed and synced to their orders`);
+    } else if (okCount === ids.length) {
+      const pending = ids.length - syncedCount;
+      success(
+        `${ids.length} payment(s) confirmed${pending > 0 ? ` (${pending} awaiting order sync — payment-reconcile not deployed)` : ""}`
+      );
+    } else if (okCount > 0) {
+      toastError(`${okCount}/${ids.length} confirmed${lastErr ? `; ${lastErr}` : ""}`);
+    } else {
+      toastError(lastErr || "Failed to confirm payments");
+    }
     setReconcileSelected(new Set());
     setReconcileMode(false);
   };
@@ -272,9 +465,14 @@ export default function PaymentsPage() {
     if (!deleteTarget) return;
     setDeleteLoading(true);
     try {
-      const { error: deleteError } = await supabase
-        .from("payments").delete().eq("id", deleteTarget.id);
+      const { data, error: deleteError } = await supabase
+        .from("payments").delete().eq("id", deleteTarget.id).select("id");
       if (deleteError) throw deleteError;
+      // RLS denial on delete returns 204 with 0 rows and NO error — verify rows came back.
+      if (!data || data.length === 0) {
+        toastError("Blocked by permissions — nothing was deleted");
+        return;
+      }
       success("Payment deleted successfully");
       setDeleteOpen(false);
       setDeleteTarget(null);
@@ -329,29 +527,51 @@ export default function PaymentsPage() {
         }
       />
 
-      {/* ── KPI Stats ── */}
+      {rowCapHit && <RowCapNotice noun="payments" />}
+
+      {/* ── KPI Stats ──
+          Each card lists one amount per currency instead of a single figure: SOS
+          and USD are never added together, so a shilling payment cannot masquerade
+          as dollars. */}
       <PageGrid>
-        <StatCard label="Pending Verification" value={formatUSD(kpis.totalPending)} deltaLabel={`${kpis.pending} payments awaiting review`} icon={Clock} tone="warning" delay={0} />
-        <StatCard label="Confirmed Revenue" value={formatUSD(kpis.totalConfirmed)} deltaLabel={`${kpis.confirmed} payments verified`} icon={CheckCircle2} tone="success" delay={1} />
-        <StatCard label="Failed" value={kpis.failed} deltaLabel={formatUSD(kpis.totalFailed)} icon={XCircle} tone="error" delay={2} />
-        <StatCard label="Today's Revenue" value={formatUSD(kpis.todayTotal)} deltaLabel={`${kpis.todayCount} payments today`} icon={TrendingUp} tone="brand" delay={3} />
+        <StatCard label="Pending Verification" value={formatByCurrency(kpis.pendingByCurrency)} deltaLabel={`${kpis.pending} payments awaiting review`} icon={Clock} tone="warning" delay={0} />
+        <StatCard label="Confirmed Revenue" value={formatByCurrency(kpis.confirmedByCurrency)} deltaLabel={`${kpis.confirmed} payments verified`} icon={CheckCircle2} tone="success" delay={1} />
+        <StatCard label="Failed" value={kpis.failed} deltaLabel={formatByCurrency(kpis.failedByCurrency)} icon={XCircle} tone="error" delay={2} />
+        <StatCard label="Today's Revenue" value={formatByCurrency(kpis.todayByCurrency)} deltaLabel={`${kpis.todayCount} payments today`} icon={TrendingUp} tone="brand" delay={3} />
       </PageGrid>
 
       {/* ── Revenue by Method ── */}
-      <SectionCard title="Confirmed Revenue by Method" subtitle="Where your verified revenue comes from">
+      <SectionCard title="Confirmed Revenue by Method" subtitle="Where your verified revenue comes from, listed per currency">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           {METHODS.map((m) => {
-            const data = kpis.byMethod[m] || { count: 0, total: 0 };
+            const data = kpis.byMethod[m] || { count: 0, totals: {} };
             return (
               <div key={m} className="rounded-lg bg-warm-100 px-3 py-2 text-center">
                 <p className="text-[10px] font-semibold text-dark-900/40 uppercase">{methodLabels[m]}</p>
-                <p className="text-sm font-bold text-dark-900 mt-1">{formatUSD(data.total)}</p>
+                <p className="text-sm font-bold text-dark-900 mt-1">{formatByCurrency(data.totals)}</p>
                 <p className="text-[10px] text-dark-900/30">{data.count} txns</p>
               </div>
             );
           })}
         </div>
       </SectionCard>
+
+      {/* ── Permission state (payments confirm is the money-moving action) ── */}
+      {!perms.loading && !perms.configured && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-semibold">Permissions not configured</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed">
+              The role/permission tables are empty, so every staff member can currently confirm
+              payments. Server RLS still restricts this console to staff &amp; super admins.
+            </p>
+          </div>
+        </div>
+      )}
+      {!perms.loading && perms.configured && !canConfirm && (
+        <PermissionNotice required={`${PERMISSIONS.confirmPayments.resource}:${PERMISSIONS.confirmPayments.action}`} />
+      )}
 
       {/* ── Search + Controls ── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -367,8 +587,9 @@ export default function PaymentsPage() {
               <span className="text-xs font-semibold text-brand-600">{reconcileSelected.size} selected</span>
               <button
                 onClick={handleBulkConfirm}
-                disabled={reconcileSelected.size === 0}
-                className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+                disabled={reconcileSelected.size === 0 || !canConfirm}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                title={canConfirm ? undefined : "Your role can’t confirm payments"}
               >
                 <Check className="h-3 w-3" />
                 Confirm Selected
@@ -381,7 +602,12 @@ export default function PaymentsPage() {
               </button>
             </>
           ) : (
-            <button onClick={() => setReconcileMode(true)} className="admin-btn-outline">
+            <button
+              onClick={() => setReconcileMode(true)}
+              disabled={!canConfirm}
+              className="admin-btn-outline disabled:cursor-not-allowed disabled:opacity-50"
+              title={canConfirm ? undefined : "Your role can’t confirm payments"}
+            >
               <RefreshCw className="h-3 w-3" />
               Reconcile
             </button>
@@ -458,7 +684,7 @@ export default function PaymentsPage() {
                       <span className="text-sm text-brand-500 font-mono text-xs">{payment.order_id.slice(0, 8)}...</span>
                     </td>
                     <td className="px-6 py-3.5">
-                      <span className="text-sm font-semibold text-dark-900">{formatUSD(payment.amount)}</span>
+                      <span className="text-sm font-semibold text-dark-900">{formatInCurrency(payment.amount, payment.currency)}</span>
                     </td>
                     <td className="px-6 py-3.5">
                       <span className={cn(
@@ -518,10 +744,10 @@ export default function PaymentsPage() {
           </table>
         </div>
         {filteredPayments.length > 0 && (
-          <div className="border-t border-dark-900/[0.04] px-4 py-2.5 flex items-center justify-between text-xs text-dark-400">
+          <div className="border-t border-dark-900/[0.04] px-4 py-2.5 flex items-center justify-between gap-3 text-xs text-dark-400">
             <span>Showing {filteredPayments.length} of {payments.length} payments</span>
             <span className="font-semibold text-emerald-600">
-              Total: {formatUSD(filteredPayments.reduce((s, p) => s + (p.status === "confirmed" ? p.amount : 0), 0))}
+              Confirmed total: {formatByCurrency(sumByCurrency(filteredPayments.filter((p) => p.status === "confirmed")))}
             </span>
           </div>
         )}
@@ -615,7 +841,7 @@ export default function PaymentsPage() {
         title="Delete Payment"
         message={
           deleteTarget
-            ? `Are you sure you want to delete payment ${deleteTarget.reference || "—"} for ${formatUSD(deleteTarget.amount)}? This action cannot be undone.`
+            ? `Are you sure you want to delete payment ${deleteTarget.reference || "—"} for ${formatInCurrency(deleteTarget.amount, deleteTarget.currency)}? This action cannot be undone.`
             : ""
         }
         onCancel={() => { setDeleteOpen(false); setDeleteTarget(null); }}

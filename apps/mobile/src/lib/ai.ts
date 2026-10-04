@@ -1,34 +1,19 @@
 /**
- * ChinaSuuq mobile AI client — self-contained, no shared imports.
+ * ChinaSuuq mobile AI client — routes through Supabase Edge Functions only.
  *
- * Provider resolution: AI calls PREFER the server-configured provider from
- * Mission Control (Settings → AI Provider) via the ai-vision edge function,
- * so switching/rotating providers needs no app release. When the edge
- * function is unavailable (not deployed yet, logged out, offline), calls fall
- * back to the direct fallback endpoint below.
- * OpenAI-compatible fallback verified Oct 2026 via ai.ota1245.top.
+ * NO provider key ships in this bundle anymore (the old hardcoded direct
+ * credential leaked into the APK and is being rotated). Every
+ * chat call goes to the `ai-chat` edge function via supabase-js, which
+ * attaches the signed-in user's JWT automatically; the function resolves the
+ * Mission Control provider server-side, so switching/rotating providers needs
+ * no app release. Logged-out or failed calls return null and callers fall
+ * back gracefully — nothing here ever throws.
+ *
+ * Translation goes to `ai-translate` via src/api/translate.ts (paid cache,
+ * JWT-gated).
  */
-export const AI_URL = "https://ai.ota1245.top/v1/chat/completions";
-export const AI_KEY = "sk-H5qxTgttFrT4PwtD8HSuZKHf1TPlUg6M7191U5aqqMwISEgj";
-
 import { supabase as sb } from "./supabase";
-
-/** Model tiers — measured Oct 2026:
- *  - fast (deepseek-v4-flash): 34 tokens/call, 0 reasoning — search ranking, translation
- *  - vision (gemini-3.1-flash-image): text + image understanding — photo tasks
- *  (premium Gemini stays web-admin-only to control cost)
- */
-export const AI_MODEL_FAST = "deepseek-v4-flash";
-export const AI_MODEL_VISION = "gemini-3.1-flash-image";
-
-export type AiTier = "fast" | "vision";
-
-const TIER_MODEL: Record<AiTier, string> = {
-  fast: AI_MODEL_FAST,
-  vision: AI_MODEL_VISION,
-};
-
-const TIER_MAX_TOKENS: Record<AiTier, number> = { fast: 500, vision: 600 };
+import { translateTexts } from "../api/translate";
 
 export interface AiMessage {
   role: "system" | "user" | "assistant";
@@ -38,34 +23,23 @@ export interface AiMessage {
 /** Returns assistant text, or null on any failure. Never throws. */
 export async function aiChat(
   messages: AiMessage[],
-  opts?: { tier?: AiTier; timeoutMs?: number; temperature?: number; maxTokens?: number }
+  opts?: { timeoutMs?: number }
 ): Promise<string | null> {
-  const tier = opts?.tier ?? "fast";
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 20_000);
   try {
-    const res = await fetch(AI_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${AI_KEY}`,
-      },
-      body: JSON.stringify({
-        model: TIER_MODEL[tier],
-        messages,
-        temperature: opts?.temperature ?? 0.4,
-        max_tokens: opts?.maxTokens ?? TIER_MAX_TOKENS[tier],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content;
-    return typeof content === "string" && content.trim() ? content.trim() : null;
+    const call = sb.functions
+      .invoke("ai-chat", { body: { messages } })
+      .then(({ data, error }) => {
+        if (error || !data || !(data as { ok?: boolean }).ok) return null;
+        const content = (data as { content?: unknown }).content;
+        return typeof content === "string" && content.trim() ? content.trim() : null;
+      })
+      .catch(() => null);
+    const timeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), opts?.timeoutMs ?? 25_000)
+    );
+    return await Promise.race([call, timeout]);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -87,26 +61,90 @@ export function extractJson<T = unknown>(text: string): T | null {
   }
 }
 
-/** Translate product text to EN + SO. Returns null on failure. */
+/**
+ * Translate product text to EN + SO through the ai-translate edge function
+ * (server-side provider + durable cache; JWT attached by invoke()). Returns
+ * null when nothing could be translated — logged out, offline, or the server
+ * refused — so the caller shows its honest retry message instead of a
+ * silent passthrough of the Chinese original.
+ *
+ * On top of the server's durable cache, a small in-memory TTL cache keyed by
+ * the exact source text makes repeat translations free: text translated in
+ * the last 30 minutes is answered from memory with zero edge-function round
+ * trips, and two simultaneous asks for the same text share one in-flight call
+ * instead of firing twice. Failed (null) results are deliberately NOT cached
+ * so "try again" really retries.
+ */
+const TRANSLATION_TTL_MS = 30 * 60 * 1000;
+const MAX_TRANSLATION_CACHE = 80;
+const productTranslationCache = new Map<
+  string,
+  { at: number; value: { en: string; so: string } }
+>();
+const productTranslationInflight = new Map<
+  string,
+  Promise<{ en: string; so: string } | null>
+>();
+
+function cacheProductTranslation(key: string, value: { en: string; so: string }): void {
+  productTranslationCache.delete(key);
+  productTranslationCache.set(key, { at: Date.now(), value });
+  while (productTranslationCache.size > MAX_TRANSLATION_CACHE) {
+    const oldest = productTranslationCache.keys().next();
+    if (oldest.done) break;
+    productTranslationCache.delete(oldest.value);
+  }
+}
+
 export async function aiTranslateProduct(
   title: string,
   description?: string
 ): Promise<{ en: string; so: string } | null> {
-  const raw = await aiChat(
-    [
-      {
-        role: "user",
-        content:
-          `Translate the product title${description ? " and description" : ""} to English and Somali. ` +
-          'Return JSON: {"en":"...","so":"..."}. No extra text.\n\n' +
-          (description ? `Title: ${title}\nDescription: ${description}` : `Title: ${title}`),
-      },
-    ],
-    { temperature: 0.1 }
-  );
-  const parsed = raw ? extractJson<{ en?: string; so?: string }>(raw) : null;
-  if (parsed?.en && parsed?.so) return { en: parsed.en, so: parsed.so };
-  return null;
+  const key = `${title}\u0000${description?.trim() ?? ""}`;
+  const hit = productTranslationCache.get(key);
+  if (hit) {
+    if (Date.now() - hit.at < TRANSLATION_TTL_MS) return hit.value;
+    productTranslationCache.delete(key);
+  }
+  const pending = productTranslationInflight.get(key);
+  if (pending) return pending;
+
+  const call = translateProductUncached(title, description).then((value) => {
+    if (value) cacheProductTranslation(key, value);
+    return value;
+  });
+  productTranslationInflight.set(key, call);
+  void call.finally(() => productTranslationInflight.delete(key));
+  return call;
+}
+
+async function translateProductUncached(
+  title: string,
+  description?: string
+): Promise<{ en: string; so: string } | null> {
+  const sources = description && description.trim() ? [title, description] : [title];
+  const [enMap, soMap] = await Promise.all([
+    translateTexts(sources, "en"),
+    translateTexts(sources, "so"),
+  ]);
+  const enTitle = enMap[title] ?? "";
+  const soTitle = soMap[title] ?? "";
+  if (!enTitle || !soTitle) return null;
+
+  // translateTexts maps anything it could not translate back to itself. When
+  // NEITHER language moved for ANY input the call did nothing real.
+  if (enTitle === title && soTitle === title) {
+    if (!description || (enMap[description] === description && soMap[description] === description)) {
+      return null;
+    }
+  }
+
+  const enDesc = description ? enMap[description] ?? "" : "";
+  const soDesc = description ? soMap[description] ?? "" : "";
+  return {
+    en: enDesc && enDesc !== enTitle ? `${enTitle}\n\n${enDesc}` : enTitle,
+    so: soDesc && soDesc !== soTitle ? `${soTitle}\n\n${soDesc}` : soTitle,
+  };
 }
 
 export interface RankedProduct {
@@ -129,9 +167,10 @@ export async function aiRankProducts(
           `Query: ${query}\nProducts: ${JSON.stringify(products)}`,
       },
     ],
-    { temperature: 0.2 }
+    { timeoutMs: 20_000 }
   );
   const parsed = raw ? extractJson<RankedProduct[]>(raw) : null;
-  if (parsed && Array.isArray(parsed) && parsed.length > 0) return parsed.slice(0, 5);
+  if (parsed && Array.isArray(parsed) && parsed.length > 0)
+    return parsed.slice(0, 5);
   return null;
 }

@@ -6,6 +6,12 @@
  * Every admin page composes these primitives so the whole dashboard feels
  * like one product. Brand colors come from globals.css @theme (Tailwind v4)
  * — never hardcode hex values here.
+ *
+ * DARK MODE: the console owns a manual toggle (components/admin/ThemeToggle)
+ * that sets `.dark` on <html>. Surfaces that must read from the semantic
+ * `--admin-*` variables (so they match the .admin-* utility classes) use
+ * `bg-[var(--admin-surface)]` etc; tone chips / inline badges carry explicit
+ * `dark:` variants. The two systems share one palette in globals.css.
  */
 
 import React from "react";
@@ -46,8 +52,8 @@ export function PageHeader({
       className={cn("mb-6 flex flex-wrap items-end justify-between gap-4", className)}
     >
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-dark-900">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-dark-900/50">{subtitle}</p>}
+        <h1 className="text-2xl font-bold tracking-tight text-dark-900 dark:text-neutral-100">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm text-dark-900/50 dark:text-neutral-400">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </motion.div>
@@ -56,12 +62,12 @@ export function PageHeader({
 
 /* ─── StatCard ───────────────────────────────────────────────────── */
 const TONES: Record<string, { chip: string; text: string }> = {
-  brand: { chip: "bg-brand-50 text-brand-600", text: "text-brand-600" },
-  success: { chip: "bg-emerald-50 text-emerald-600", text: "text-emerald-600" },
-  info: { chip: "bg-sky-50 text-sky-600", text: "text-sky-600" },
-  warning: { chip: "bg-amber-50 text-amber-600", text: "text-amber-600" },
-  error: { chip: "bg-rose-50 text-rose-600", text: "text-rose-600" },
-  violet: { chip: "bg-violet-50 text-violet-600", text: "text-violet-600" },
+  brand: { chip: "bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-300", text: "text-brand-600 dark:text-brand-300" },
+  success: { chip: "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400", text: "text-emerald-600 dark:text-emerald-400" },
+  info: { chip: "bg-sky-50 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400", text: "text-sky-600 dark:text-sky-400" },
+  warning: { chip: "bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400", text: "text-amber-600 dark:text-amber-400" },
+  error: { chip: "bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400", text: "text-rose-600 dark:text-rose-400" },
+  violet: { chip: "bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400", text: "text-violet-600 dark:text-violet-400" },
 };
 
 export function StatCard({
@@ -92,7 +98,7 @@ export function StatCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: delay * 0.04, duration: 0.35, ease: "easeOut" }}
       className={cn(
-        "group relative overflow-hidden rounded-2xl border border-dark-900/[0.06] bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
+        "group relative overflow-hidden rounded-2xl border border-dark-900/[0.06] bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-white/[0.08] dark:bg-dark-900",
         className
       )}
     >
@@ -100,10 +106,10 @@ export function StatCard({
       <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-brand-500/0 via-brand-500/60 to-brand-500/0 opacity-0 transition-opacity group-hover:opacity-100" />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wider text-dark-900/40">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wider text-dark-900/40 dark:text-neutral-500">
             {label}
           </p>
-          <p className="mt-1.5 truncate text-[26px] font-bold leading-none tracking-tight text-dark-900">
+          <p className="mt-1.5 truncate text-[26px] font-bold leading-none tracking-tight text-dark-900 dark:text-neutral-100">
             {value}
           </p>
           {delta === null && (
@@ -111,10 +117,10 @@ export function StatCard({
               {/* A computed metric with no comparable previous period renders as
                   an em dash. Showing 0% here would read as "flat", and showing
                   nothing reads as "not implemented" — neither is the truth. */}
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-dark-50 px-1.5 py-0.5 text-[11px] font-bold text-dark-900/40">
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-dark-50 px-1.5 py-0.5 text-[11px] font-bold text-dark-900/40 dark:bg-dark-800 dark:text-neutral-500">
                 —
               </span>
-              <span className="text-[11px] text-dark-900/40">
+              <span className="text-[11px] text-dark-900/40 dark:text-neutral-500">
                 {deltaLabel ?? "no prior period"}
               </span>
             </div>
@@ -123,13 +129,15 @@ export function StatCard({
             <div className="mt-2 flex items-center gap-1.5">
               <span
                 className={cn(
-                  "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums",
-                  delta >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                  "inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[11px] font-bold tabular-nums",
+                  delta >= 0
+                    ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"
+                    : "bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400"
                 )}
               >
                 {delta >= 0 ? "↑" : "↓"} {Math.abs(delta)}%
               </span>
-              {deltaLabel && <span className="text-[11px] text-dark-900/40">{deltaLabel}</span>}
+              {deltaLabel && <span className="text-[11px] text-dark-900/40 dark:text-neutral-500">{deltaLabel}</span>}
             </div>
           )}
         </div>
@@ -160,12 +168,12 @@ export function SectionCard({
   bodyClassName?: string;
 }) {
   return (
-    <div className={cn("rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm", className)}>
+    <div className={cn("rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm dark:border-white/[0.08] dark:bg-dark-900", className)}>
       {(title || actions) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-dark-900/[0.06] px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-dark-900/[0.06] px-5 py-4 dark:border-white/[0.08]">
           <div>
-            {title && <h2 className="text-[15px] font-bold text-dark-900">{title}</h2>}
-            {subtitle && <p className="mt-0.5 text-xs text-dark-900/45">{subtitle}</p>}
+            {title && <h2 className="text-[15px] font-bold text-dark-900 dark:text-neutral-100">{title}</h2>}
+            {subtitle && <p className="mt-0.5 text-xs text-dark-900/45 dark:text-neutral-400">{subtitle}</p>}
           </div>
           {actions && <div className="flex items-center gap-2">{actions}</div>}
         </div>
@@ -189,7 +197,7 @@ export function SearchInput({
 }) {
   return (
     <div className={cn("relative", className)}>
-      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30" />
+      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30 dark:text-neutral-500" />
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -199,7 +207,7 @@ export function SearchInput({
       {value && (
         <button
           onClick={() => onChange("")}
-          className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-dark-900/30 transition-colors hover:bg-dark-900/5 hover:text-dark-900/60"
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-dark-900/30 transition-colors hover:bg-dark-900/5 hover:text-dark-900/60 dark:text-neutral-500 dark:hover:bg-white/5 dark:hover:text-neutral-300"
           aria-label="Clear search"
         >
           <X className="h-3.5 w-3.5" />
@@ -233,7 +241,7 @@ export function FilterChips<T extends string>({
               "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all active:scale-[0.97]",
               active
                 ? "border-brand-500 bg-brand-500 text-white shadow-sm shadow-brand-500/25"
-                : "border-dark-900/10 bg-white text-dark-900/60 hover:border-dark-900/25 hover:text-dark-900"
+                : "border-dark-900/10 bg-white text-dark-900/60 hover:border-dark-900/25 hover:text-dark-900 dark:border-white/10 dark:bg-dark-900 dark:text-neutral-400 dark:hover:border-white/25 dark:hover:text-neutral-200"
             )}
           >
             {opt.label}
@@ -241,7 +249,7 @@ export function FilterChips<T extends string>({
               <span
                 className={cn(
                   "rounded-full px-1.5 py-px text-[10px] font-bold",
-                  active ? "bg-white/20 text-white" : "bg-dark-900/[0.06] text-dark-900/50"
+                  active ? "bg-white/20 text-white" : "bg-dark-900/[0.06] text-dark-900/50 dark:bg-white/10 dark:text-neutral-400"
                 )}
               >
                 {opt.count}
@@ -274,11 +282,11 @@ export function EmptyState({
       <img
         src={image}
         alt=""
-        className={cn("select-none", compact ? "h-24 w-24" : "h-40 w-40")}
+        className={cn("select-none opacity-90", compact ? "h-24 w-24" : "h-40 w-40")}
         draggable={false}
       />
-      <h3 className="mt-4 text-[15px] font-bold text-dark-900">{title}</h3>
-      {subtitle && <p className="mt-1 max-w-sm text-sm text-dark-900/45">{subtitle}</p>}
+      <h3 className="mt-4 text-[15px] font-bold text-dark-900 dark:text-neutral-100">{title}</h3>
+      {subtitle && <p className="mt-1 max-w-sm text-sm text-dark-900/45 dark:text-neutral-400">{subtitle}</p>}
       {action && <div className="mt-5">{action}</div>}
     </div>
   );
@@ -288,11 +296,11 @@ export function EmptyState({
 export function ErrorState({ message, onRetry }: { message?: string; onRetry?: () => void }) {
   return (
     <div className="flex flex-col items-center px-6 py-12 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-500">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-500 dark:bg-rose-500/15 dark:text-rose-400">
         <AlertTriangle className="h-6 w-6" />
       </div>
-      <h3 className="mt-4 text-[15px] font-bold text-dark-900">Something went wrong</h3>
-      <p className="mt-1 max-w-sm text-sm text-dark-900/45">
+      <h3 className="mt-4 text-[15px] font-bold text-dark-900 dark:text-neutral-100">Something went wrong</h3>
+      <p className="mt-1 max-w-sm text-sm text-dark-900/45 dark:text-neutral-400">
         {message || "We couldn't load this data. Check your connection and try again."}
       </p>
       {onRetry && (
@@ -311,7 +319,7 @@ export function SkeletonBlock({ className }: { className?: string }) {
 
 export function SkeletonTable({ rows = 6, cols = 5 }: { rows?: number; cols?: number }) {
   return (
-    <div className="divide-y divide-dark-900/[0.05]">
+    <div className="divide-y divide-dark-900/[0.05] dark:divide-white/[0.05]">
       {Array.from({ length: rows }).map((_, r) => (
         <div key={r} className="flex items-center gap-4 px-5 py-4">
           {Array.from({ length: cols }).map((_, c) => (
@@ -356,21 +364,21 @@ export function TableShell({
 }) {
   if (isLoading) {
     return (
-      <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+      <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm dark:border-white/[0.08] dark:bg-dark-900">
         <SkeletonTable />
       </div>
     );
   }
   if (error) {
     return (
-      <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+      <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm dark:border-white/[0.08] dark:bg-dark-900">
         <ErrorState message={error} onRetry={errorRetry} />
       </div>
     );
   }
   if (!hasData) {
     return (
-      <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm">
+      <div className="rounded-2xl border border-dark-900/[0.06] bg-white shadow-sm dark:border-white/[0.08] dark:bg-dark-900">
         <EmptyState
           image={filtered ? EMPTY_IMAGES.generic : emptyImage}
           compact={filtered}
@@ -419,21 +427,21 @@ export function SidePanel({
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             className={cn(
-              "fixed inset-y-0 right-0 z-50 flex w-full flex-col bg-warm-50 shadow-2xl",
+              "fixed inset-y-0 right-0 z-50 flex w-full flex-col bg-warm-50 shadow-2xl dark:bg-dark-950",
               width
             )}
             role="dialog"
             aria-modal="true"
           >
             {/* Header */}
-            <div className="flex items-start justify-between border-b border-dark-900/[0.06] bg-white px-6 py-4">
+            <div className="flex items-start justify-between border-b border-dark-900/[0.06] bg-white px-6 py-4 dark:border-white/[0.08] dark:bg-dark-900">
               <div>
-                <h2 className="text-lg font-bold tracking-tight text-dark-900">{title}</h2>
-                {subtitle && <p className="mt-0.5 text-xs text-dark-900/45">{subtitle}</p>}
+                <h2 className="text-lg font-bold tracking-tight text-dark-900 dark:text-neutral-100">{title}</h2>
+                {subtitle && <p className="mt-0.5 text-xs text-dark-900/45 dark:text-neutral-400">{subtitle}</p>}
               </div>
               <button
                 onClick={onClose}
-                className="rounded-xl p-2 text-dark-900/40 transition-colors hover:bg-dark-900/5 hover:text-dark-900"
+                className="rounded-xl p-2 text-dark-900/40 transition-colors hover:bg-dark-900/5 hover:text-dark-900 dark:text-neutral-500 dark:hover:bg-white/5 dark:hover:text-neutral-200"
                 aria-label="Close panel"
               >
                 <X className="h-5 w-5" />
@@ -445,7 +453,7 @@ export function SidePanel({
 
             {/* Footer */}
             {footer && (
-              <div className="border-t border-dark-900/[0.06] bg-white px-6 py-4">{footer}</div>
+              <div className="border-t border-dark-900/[0.06] bg-white px-6 py-4 dark:border-white/[0.08] dark:bg-dark-900">{footer}</div>
             )}
           </motion.aside>
         </>
@@ -473,7 +481,7 @@ export function Field({
         {required && <span className="ml-0.5 text-brand-500">*</span>}
       </label>
       {children}
-      {hint && <p className="mt-1 text-[11px] text-dark-900/40">{hint}</p>}
+      {hint && <p className="mt-1 text-[11px] text-dark-900/40 dark:text-neutral-500">{hint}</p>}
     </div>
   );
 }
@@ -483,6 +491,37 @@ export function PageGrid({ children, className }: { children: React.ReactNode; c
   return (
     <div className={cn("mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4", className)}>
       {children}
+    </div>
+  );
+}
+
+/* ─── PermissionNotice ─────────────────────────────────────────────
+ * Inline, honest banner shown where a destructive section is gated off by the
+ * RBAC model (lib/admin/permissions.ts). Explains why the controls are hidden
+ * and what role would unlock them — never a silent blank space.
+ */
+export function PermissionNotice({
+  required,
+  className,
+}: {
+  required: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
+        className
+      )}
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div>
+        <p className="font-semibold">Restricted</p>
+        <p className="mt-0.5 text-[13px] leading-relaxed">
+          Your role can’t use this section. Ask a super admin to grant the{" "}
+          <span className="font-semibold">{required}</span> permission.
+        </p>
+      </div>
     </div>
   );
 }

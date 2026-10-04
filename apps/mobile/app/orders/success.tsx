@@ -7,6 +7,7 @@ import {
   ScrollView,
   Animated,
   Easing,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -21,6 +22,7 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { whatsappOrderLink } from "@/lib/theme";
+import { formatUSD, WHATSAPP_NUMBER } from "@/lib/utils";
 import { Linking } from "react-native";
 import { Image } from "expo-image";
 
@@ -56,6 +58,15 @@ export default function OrderSuccessScreen() {
       clearCart();
     };
   }, [params.id]);
+
+  const serverSubtotal = Number(order?.subtotal_usd) || 0;
+  const serverFee = Number(order?.service_fee_usd) || 0;
+  /** The fee's share is read OFF the two server-stamped amounts shown next to it,
+   *  so the caption can never name a percentage the order was not billed at. */
+  const serverFeePct =
+    serverSubtotal > 0 && serverFee > 0
+      ? `${Math.round((serverFee / serverSubtotal) * 1000) / 10}%`
+      : null;
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
@@ -103,10 +114,38 @@ export default function OrderSuccessScreen() {
                 {locale === "en" ? "Total" : "Wadarta"}
               </Text>
               <Text style={[styles.detailValue, styles.total]}>
-                ${order.total_usd.toFixed(2)}
+                {/* For a stored order createOrder replaced this preview with
+                    the server's money echo from submit_mobile_order. */}
+                {formatUSD(Number(order.total_usd) > 0 ? Number(order.total_usd) : 0)}
               </Text>
             </View>
             <View style={styles.detailDivider} />
+            {Number(order.subtotal_usd) > 0 ? (
+              <>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>
+                    {locale === "en" ? "Subtotal (server)" : "Subtotal (server)"}
+                  </Text>
+                  <Text style={styles.detailValue}>
+                    {formatUSD(serverSubtotal)}
+                  </Text>
+                </View>
+                <View style={styles.detailDivider} />
+              </>
+            ) : null}
+            {serverFee > 0 ? (
+              <>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>
+                    {`${locale === "en" ? "Service fee" : "Kharashka adeegga"}${
+                      serverFeePct ? ` (${serverFeePct})` : ""
+                    } (server)`}
+                  </Text>
+                  <Text style={styles.detailValue}>{formatUSD(serverFee)}</Text>
+                </View>
+                <View style={styles.detailDivider} />
+              </>
+            ) : null}
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>
                 {locale === "en" ? "Shipping" : "Rarka"}
@@ -224,9 +263,16 @@ export default function OrderSuccessScreen() {
           <Pressable
             style={styles.whatsappBtn}
             onPress={() => {
-              try {
-                Linking.openURL(whatsappOrderLink(`Order ${order?.reference || ""}`));
-              } catch {}
+              // openURL rejects when WhatsApp is absent — show the number so
+              // the customer can still reach support instead of ignoring it.
+              Linking.openURL(whatsappOrderLink(`Order ${order?.reference || ""}`)).catch(() => {
+                Alert.alert(
+                  locale === "en" ? "WhatsApp is not available." : "WhatsApp lama heli karo.",
+                  locale === "en"
+                    ? `Message us directly at ${WHATSAPP_NUMBER} on WhatsApp.`
+                    : `Naga soo farriin tooska ah ${WHATSAPP_NUMBER} WhatsApp.`
+                );
+              });
             }}
           >
             <MessageCircle size={16} color={COLORS.success} />

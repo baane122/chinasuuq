@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { useCartStore } from "@/store/cart";
 import CartItem from "@/components/cart/CartItem";
 import EmptyCart from "@/components/cart/EmptyCart";
 import { formatUSD } from "@/lib/utils";
+import { refreshFx } from "@/lib/exchange";
 import type { Marketplace } from "@/types";
 import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
 import { validateCartItem } from "@/lib/cartValidation";
@@ -48,6 +49,12 @@ export default function CartScreen() {
   const getMarketplaceCount = useCartStore((s) => s.getMarketplaceCount);
   const total = getTotal();
   const marketCount = getMarketplaceCount();
+
+  // Opening the cart precedes money decisions: pull the live rate
+  // (non-blocking — a failure keeps the last good cached value).
+  useEffect(() => {
+    refreshFx().catch(() => {});
+  }, []);
 
   /**
    * Every line, re-checked against ITS OWN supplier rules. moqOrderRules() reads

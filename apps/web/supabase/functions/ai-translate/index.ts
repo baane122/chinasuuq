@@ -29,6 +29,32 @@ const MAX_CHARS = 2000;
 // this gates on authentication and not on a role).
 const ANY_SIGNED_IN_ROLE = ["super_admin", "admin", "staff", "customer", "supplier"];
 
+// Per-isolate, per-user rate limit (audit 2026-10-04, cost brake). Deliberately
+// simple like ai-chat's anonymous limiter: it is a cost brake, not a fortress —
+// Supabase scales isolates freely, so a global ledger would need a throttle
+// table; this bounds casual abuse per cold isolate. 40/min × 40 texts is still
+// far above any real browsing pattern (list refreshes hit the translation cache).
+const userHits = new Map<string, { count: number; windowStart: number }>();
+const MINUTE_MS = 60 * 1000;
+const MAX_REQUESTS_PER_MINUTE_PER_USER = 40;
+
+function rateLimited(userId: string): boolean {
+  const now = Date.now();
+  if (userHits.size > 5_000) {
+    // prune expired entries before growing unbounded
+    for (const [key, hit] of userHits) {
+      if (now - hit.windowStart > MINUTE_MS) userHits.delete(key);
+    }
+  }
+  const entry = userHits.get(userId);
+  if (!entry || now - entry.windowStart > MINUTE_MS) {
+    userHits.set(userId, { count: 1, windowStart: now });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > MAX_REQUESTS_PER_MINUTE_PER_USER;
+}
+
 type Result = { source: string; translated: string; cached: boolean };
 
 type CacheRow = {
@@ -54,6 +80,10 @@ export async function handler(req: Request) {
   try {
     const caller = await requireRole(req, ANY_SIGNED_IN_ROLE);
     if (!caller) return unauthorized("authentication_required");
+    // Per-user cost brake (40 req/min per cold isolate) — see rateLimited() note.
+    if (rateLimited(caller.userId)) {
+      return json({ ok: false, error: "rate_limited", max_per_minute: MAX_REQUESTS_PER_MINUTE_PER_USER }, 429);
+    }
 
     const body = await req.json().catch(() => null);
     const rawTexts: unknown = body?.texts;
@@ -217,8 +247,11 @@ export async function handler(req: Request) {
       counts: { requested: results.length, cached: cachedCount, translated: results.length - cachedCount },
     }, 200);
   } catch (e) {
-    const msg = (e as Error)?.message || "internal";
-    return json({ ok: false, error: msg === "TimeoutError" ? "model_timeout" : "translation_failed" }, 500);
+    // AbortSignal.timeout fires a DOMException whose NAME is "TimeoutError";
+    // e.message is "The operation was aborted", so classify by e.name (audit 2026-10-04).
+    const name = (e as Error)?.name ?? "";
+    if (name !== "TimeoutError" && name !== "AbortError") console.error("ai-translate: unhandled error", name, (e as Error)?.message);
+    return json({ ok: false, error: name === "TimeoutError" ? "model_timeout" : "translation_failed" }, 500);
   }
 }
 

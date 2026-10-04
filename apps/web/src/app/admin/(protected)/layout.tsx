@@ -31,9 +31,12 @@ import {
   ChevronRight,
   Circle,
   Sparkles,
+  ListChecks,
+  Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToastProvider } from "@/components/admin/Toast";
+import { ThemeToggle } from "@/components/admin/ThemeToggle";
 
 /* ─── Navigation items with badge counts ────────────────────────── */
 interface NavItem {
@@ -56,6 +59,8 @@ const NAV_ITEMS_BASE: Omit<NavItem, "badge">[] = [
   { href: "/admin/quotes", label: "Quotes", icon: BadgeDollarSign },
   { href: "/admin/shipments", label: "Shipments", icon: Ship },
   { href: "/admin/warehouse", label: "Warehouse", icon: Boxes },
+  { href: "/admin/queue", label: "Operational Queue", icon: ListChecks },
+  { href: "/admin/notifications", label: "Notifications", icon: Megaphone },
   { href: "/admin/staff", label: "Staff & Roles", icon: UserCog },
   { href: "/admin/settings", label: "Settings", icon: Settings },
   { href: "/admin/ai", label: "AI Copilot", icon: Sparkles },
@@ -65,9 +70,15 @@ const NAV_ITEMS_BASE: Omit<NavItem, "badge">[] = [
 const NAV_SECTIONS: { title: string; hrefs: string[] }[] = [
   { title: "Overview", hrefs: ["/admin"] },
   { title: "Commerce", hrefs: ["/admin/orders", "/admin/customers", "/admin/payments"] },
-  { title: "Operations", hrefs: ["/admin/sourcing", "/admin/shipments", "/admin/warehouse"] },
+  {
+    title: "Operations",
+    hrefs: ["/admin/sourcing", "/admin/shipments", "/admin/warehouse", "/admin/queue"],
+  },
   { title: "Catalog", hrefs: ["/admin/products", "/admin/marketplaces", "/admin/rates"] },
-  { title: "Office", hrefs: ["/admin/quotes", "/admin/staff", "/admin/settings", "/admin/ai"] },
+  {
+    title: "Office",
+    hrefs: ["/admin/quotes", "/admin/notifications", "/admin/staff", "/admin/settings", "/admin/ai"],
+  },
 ];
 
 /* ─── Search results dropdown ───────────────────────────────────── */
@@ -173,6 +184,7 @@ export default function ProtectedLayout({
           return;
         }
         setIsAuthenticated(true);
+        setAdminRole(role);
         setAdminName(
           session.user?.user_metadata?.full_name ||
             session.user?.email?.split("@")[0] ||
@@ -292,6 +304,19 @@ export default function ProtectedLayout({
             .in("status", ["pending", "in_transit"]),
         ]);
 
+        // A count query can fail (RLS/view not deployed/network) and would
+        // otherwise be silently shown as "0 pending" — a false all-clear. Warn.
+        for (const [label, res] of [
+          ["notifications", notifRes],
+          ["orders", ordersRes],
+          ["payments", paymentsRes],
+          ["sourcing", sourcingRes],
+          ["shipments", shipmentsRes],
+        ] as const) {
+          if (res.error)
+            console.warn(`[admin badges] ${label} count failed:`, res.error.message);
+        }
+
         setNotifCount(notifRes.error ? 0 : (notifRes.count ?? 0));
 
         const badgeMap: Record<string, number> = {};
@@ -310,7 +335,8 @@ export default function ProtectedLayout({
             badge: badgeMap[item.href] || null,
           }))
         );
-      } catch {
+      } catch (err) {
+        console.warn("[admin badges] count fetch failed:", err);
         setNavItems(
           NAV_ITEMS_BASE.map((item) => ({ ...item, badge: null }))
         );
@@ -324,11 +350,12 @@ export default function ProtectedLayout({
   useEffect(() => {
     if (!isAuthenticated || liveConnected) return;
     const interval = setInterval(async () => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from("notifications")
         .select("id", { count: "exact", head: true })
         .eq("read", false);
-      setNotifCount(count ?? 0);
+      if (error) console.warn("[admin badges] notification poll failed:", error.message);
+      setNotifCount(error ? 0 : (count ?? 0));
     }, 30000);
     return () => clearInterval(interval);
   }, [isAuthenticated, liveConnected]);
@@ -362,13 +389,13 @@ export default function ProtectedLayout({
 
   if (isAuthenticated === null) {
     return (
-      <div className="flex h-full items-center justify-center bg-dark-50">
+      <div className="flex h-full items-center justify-center bg-dark-50 dark:bg-dark-950">
         <div className="flex flex-col items-center gap-3">
           <div className="relative">
             <Loader2 className="h-10 w-10 animate-spin text-brand-500" />
             <div className="absolute inset-0 h-10 w-10 rounded-full border-2 border-brand-500/20" />
           </div>
-          <p className="text-sm font-medium text-dark-900/50">
+          <p className="text-sm font-medium text-dark-900/50 dark:text-neutral-400">
             Loading ChinaSuuq Mission Control…
           </p>
         </div>
@@ -399,7 +426,7 @@ export default function ProtectedLayout({
 
   return (
     <ToastProvider>
-      <div className="flex min-h-screen bg-dark-50">
+      <div className="flex min-h-screen bg-dark-50 dark:bg-dark-950">
         {/* ─── Sidebar ──────────────────────────────────────── */}
         <aside
           className={cn(
@@ -552,10 +579,10 @@ export default function ProtectedLayout({
         {/* ─── Main content ─────────────────────────────────── */}
         <main className="flex-1 overflow-auto">
           {/* Topbar */}
-          <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-dark-900/[0.06] bg-warm-50/80 px-5 backdrop-blur-md md:gap-4 md:px-8">
+          <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-dark-900/[0.06] bg-warm-50/80 px-5 backdrop-blur-md dark:border-white/[0.08] dark:bg-dark-900/80 md:gap-4 md:px-8">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-dark-900/60 transition-colors hover:bg-dark-900/5 hover:text-dark-900 md:hidden"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-dark-900/60 transition-colors hover:bg-dark-900/5 hover:text-dark-900 dark:text-neutral-400 dark:hover:bg-white/5 dark:hover:text-neutral-100 md:hidden"
               aria-label="Open menu"
             >
               <Menu className="h-5 w-5" />
@@ -563,19 +590,22 @@ export default function ProtectedLayout({
 
             {/* Breadcrumb */}
             <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
-              <span className="hidden font-medium text-dark-900/35 sm:inline">
+              <span className="hidden font-medium text-dark-900/35 dark:text-neutral-500 sm:inline">
                 Mission Control
               </span>
-              <span className="hidden text-dark-900/20 sm:inline">/</span>
-              <span className="truncate font-bold text-dark-900">
+              <span className="hidden text-dark-900/20 dark:text-neutral-600 sm:inline">/</span>
+              <span className="truncate font-bold text-dark-900 dark:text-neutral-100">
                 {currentPageTitle}
               </span>
             </div>
 
             <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+              {/* Theme toggle */}
+              <ThemeToggle />
+
               {/* Global search */}
               <div className="relative" ref={searchRef}>
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-dark-900/30 dark:text-neutral-500" />
                 <input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -585,7 +615,7 @@ export default function ProtectedLayout({
                 />
                 {/* Search dropdown */}
                 {searchFocused && searchResults.length > 0 && (
-                  <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-dark-900/10 bg-white shadow-xl shadow-dark-900/10">
+                  <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-dark-900/10 bg-white shadow-xl shadow-dark-900/10 dark:border-white/10 dark:bg-dark-900 dark:shadow-black/40">
                     {searchResults.map((r) => {
                       const Icon = r.icon;
                       return (
@@ -597,11 +627,11 @@ export default function ProtectedLayout({
                             setSearchFocused(false);
                             setSidebarOpen(false);
                           }}
-                          className="flex items-center gap-3 px-3 py-2.5 text-sm text-dark-900/70 transition-colors hover:bg-warm-100 hover:text-dark-900"
+                          className="flex items-center gap-3 px-3 py-2.5 text-sm text-dark-900/70 transition-colors hover:bg-warm-100 hover:text-dark-900 dark:text-neutral-300 dark:hover:bg-white/5 dark:hover:text-neutral-100"
                         >
                           <Icon className="h-4 w-4 shrink-0 text-brand-500" />
                           <span className="flex-1 truncate">{r.label}</span>
-                          <span className="text-[10px] font-medium uppercase tracking-wide text-dark-900/30">
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-dark-900/30 dark:text-neutral-500">
                             {r.section}
                           </span>
                           <ChevronRight className="h-3 w-3 opacity-30" />
@@ -614,13 +644,13 @@ export default function ProtectedLayout({
 
               {/* Notification bell */}
               <Link
-                href="/admin/orders"
+                href="/admin/notifications"
                 aria-label="Notifications"
-                className="relative flex h-10 w-10 items-center justify-center rounded-xl text-dark-900/50 transition-colors hover:bg-dark-900/5 hover:text-dark-900"
+                className="relative flex h-10 w-10 items-center justify-center rounded-xl text-dark-900/50 transition-colors hover:bg-dark-900/5 hover:text-dark-900 dark:text-neutral-400 dark:hover:bg-white/5 dark:hover:text-neutral-100"
               >
                 <Bell className="h-[18px] w-[18px]" />
                 {notifCount > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand-500 px-1 text-[9px] font-bold text-white ring-2 ring-warm-50">
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand-500 px-1 text-[9px] font-bold text-white ring-2 ring-warm-50 dark:ring-dark-900">
                     {notifCount > 99 ? "99+" : notifCount}
                   </span>
                 )}
@@ -635,10 +665,10 @@ export default function ProtectedLayout({
                   {adminName.charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0 leading-tight">
-                  <p className="truncate text-sm font-semibold text-dark-900">
+                  <p className="truncate text-sm font-semibold text-dark-900 dark:text-neutral-100">
                     {adminName}
                   </p>
-                  <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-dark-900/40">
+                  <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-dark-900/40 dark:text-neutral-500">
                     <Circle className="h-1.5 w-1.5 fill-current text-emerald-500" />
                     {adminRole.replace("_", " ")}
                   </p>

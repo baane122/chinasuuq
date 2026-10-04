@@ -14,11 +14,52 @@
  *    to documentElement when body is missing at inject time.
  *  - Debug counter: window.__csUsdCount = number of conversions so far.
  */
+
+/**
+ * The overlay DIVIDES every on-page ¥ figure by this rate, so a bad rate is a
+ * bad price. Only a CNY-per-USD figure inside this plausible band may drive the
+ * rewrite — the same band the FX store accepts, with room for a real
+ * revaluation — and the overlay is skipped outside it.
+ */
+export const CNY_PER_USD_FLOOR = 2;
+import { RISK_INSIDE_FN } from "./webviewScripts.risk";
+
+export const CNY_PER_USD_CEILING = 20;
+
+/**
+ * USD overlay interval: 500ms was aggressive and burned CPU on heavy SPAs.
+ * 900ms is a sweet spot — fast enough that price changes appear within a
+ * second, light enough that the MutationObserver doesn't thrash on
+ * long-scroll product lists.
+ */
+const SWEEP_INTERVAL_MS = 900;
+
+export function isUsableCnyPerUsd(raw: unknown): boolean {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= CNY_PER_USD_FLOOR && n <= CNY_PER_USD_CEILING;
+}
+
 export function usdPriceScript(cnyPerUsd: number): string {
-  const rate = Number(cnyPerUsd) > 0 ? Number(cnyPerUsd) : 7.25;
+  // cnyPerUsd = CNY per 1 USD (the exchange_rates contract), passed in by the
+  // caller from useFx(). Anything outside the plausible band is skipped below.
+  const rate = Number(cnyPerUsd);
+  // No usable rate → no overlay: the page keeps its own yuan prices instead of
+  // dollars computed off a flipped or 0.0001 figure.
+  if (!isUsableCnyPerUsd(rate)) return "";
   return `(function () {
   try {
     var RATE = ${rate};
+
+    // Idempotency guard: the app re-injects this on every page load AND on
+    // every SPA route change. When the page is already being rewritten at
+    // THIS rate, a re-inject would only stack another sweep + five extra
+    // setTimeout sweeps per navigation — the observer and interval below are
+    // window-guarded and keep working regardless. __csUsdRestore() clears
+    // these two flags, so a genuine reinstall (USD toggled back on, a new
+    // rate from the FX store, or a fresh document) still runs in full.
+    // Nothing about the conversion itself or where the rate comes from
+    // changes here — only whether an already-active overlay re-initialises.
+    if (window.__csUsdActive && window.__csUsdRate === RATE) return true;
 
     var CNY_RE = /[¥￥]\\s?([0-9０-９]+(?:[.,][0-9０-９]{1,2})?)/g;
     var FW = { "０":"0","１":"1","２":"2","３":"3","４":"4","５":"5","６":"6","７":"7","８":"8","９":"9" };
@@ -32,10 +73,13 @@ export function usdPriceScript(cnyPerUsd: number): string {
       if (isNaN(v) || v <= 0) return null;
       return "$" + (v / RATE).toFixed(2);
     }
+    ${RISK_INSIDE_FN}
+
     function inSkip(el) {
       var p = el;
       while (p) {
         if (skipTags.has(p.tagName)) return true;
+        if (__csInRisk(p)) return true;
         if (p.getAttribute && p.getAttribute("data-cs-usd") === "1") return true;
         p = p.parentElement;
       }
@@ -210,7 +254,7 @@ export function usdPriceScript(cnyPerUsd: number): string {
           if (cur && window.__csUsdTarget !== cur) attachObserver();
           sweep();
         } catch (e) {}
-      }, 500);
+      }, ${SWEEP_INTERVAL_MS});
     }
 
     window.__csUsdRestore = function () {
@@ -229,7 +273,13 @@ export function usdPriceScript(cnyPerUsd: number): string {
       }
       if (window.__csUsdTimer) { clearInterval(window.__csUsdTimer); window.__csUsdTimer = null; }
       if (window.__csUsdMO) { window.__csUsdMO.disconnect(); window.__csUsdMO = null; }
+      // Let the next inject re-install from scratch (the idempotency guard
+      // above keys off these).
+      window.__csUsdActive = false;
+      window.__csUsdRate = null;
     };
+    window.__csUsdRate = RATE;
+    window.__csUsdActive = true;
     return true;
   } catch (e) { return true; }
 })(); true;`;

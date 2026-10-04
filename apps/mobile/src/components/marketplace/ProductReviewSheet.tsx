@@ -17,12 +17,16 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { BottomSheet } from "@/components/BottomSheet";
 import { useCartStore } from "@/store/cart";
+import { useAuthStore } from "@/store/auth";
 import { useI18n } from "@/lib/i18n";
 import type { Product } from "@/types";
-import { getCnyPerUsd } from "@/lib/exchange";
+import { useFx, cnyToUsdSync } from "@/lib/exchange";
+import { formatCNY, formatUSD } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
 import { saveMoqDecision, enrichMoqWithAi } from "@/db";
 import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
 import {
@@ -69,6 +73,8 @@ export default function ProductReviewSheet({
   onMoqConfirmed,
 }: ProductReviewSheetProps) {
   const addItem = useCartStore((s) => s.addItem);
+  const authUser = useAuthStore((s) => s.user);
+  const router = useRouter();
   const { t, locale } = useI18n();
 
   // Central i18n keys (design-qa owned) with an inline English fallback if a key ever disappears
@@ -80,7 +86,9 @@ export default function ProductReviewSheet({
   const [qty, setQty] = useState(0); // 0 = uninitialized; initialized from rules below
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
-  const [rate, setRate] = useState(7.25);
+  const { cnyPerUsd: rate } = useFx();
+  /** ChinaSuuq service fee — from `settings` KV key 'service_fee_pct', default 5%. */
+  const [serviceFeeRate, setServiceFeeRate] = useState(0.05);
   /** A minimum the reviewer accepted or typed: wins over every machine reading. */
   const [manualMoq, setManualMoq] = useState<{ moq: number; raw: string | null } | null>(null);
 
@@ -113,8 +121,29 @@ export default function ProductReviewSheet({
   const resolution = order?.resolution ?? null;
   const structure = order?.structure ?? null;
 
+  // Service fee is admin-configurable in the `settings` KV table (public-read).
+  // Accepts either a fraction (0.05) or a percent (5); absent/invalid → 5%.
   useEffect(() => {
-    getCnyPerUsd().then(setRate).catch(() => {});
+    let alive = true;
+    void (async () => {
+      try {
+        const { data } = await supabase
+          .from("settings")
+          .select("value")
+          .eq("key", "service_fee_pct")
+          .maybeSingle();
+        if (!alive || !data) return;
+        const raw = (data as { value?: unknown }).value;
+        const n = typeof raw === "string" ? Number(raw) : typeof raw === "number" ? raw : null;
+        if (n === null || !Number.isFinite(n) || n <= 0 || n > 100) return;
+        setServiceFeeRate(n > 1 ? n / 100 : n);
+      } catch {
+        /* settings unreadable — keep the 5% default */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // Reset when a new product arrives
@@ -166,7 +195,7 @@ export default function ProductReviewSheet({
 
   const suggestedQty = useMemo<number[]>(() => (rules ? getSuggestedQuantities(rules) : []), [rules]);
 
-  const serviceFeeRate = 0.05; // ChinaSuuq service fee, 5% of goods
+  // serviceFeeRate comes from `settings`/default above (ChinaSuuq service fee, share of goods)
 
   /** Section 4 cost lines. Domestic shipping is known only when the product carries a real value;
    *  international shipping needs weight/volume → pending; duties depend on destination rules → pending. */
@@ -185,7 +214,7 @@ export default function ProductReviewSheet({
       { label: ts("reviewSheet.internationalShipping", "International shipping"), amountCny: null, status: "pending" },
       { label: ts("reviewSheet.duties", "Duties & destination charges"), amountCny: null, status: "pending" },
     ];
-  }, [product, basePriceCny, qty, locale]);
+  }, [product, basePriceCny, qty, locale, serviceFeeRate]);
 
   /** Only charges with real numbers go into "payable now" — pending lines are excluded, never guessed */
   const amountPayableNow = useMemo(
@@ -197,8 +226,11 @@ export default function ProductReviewSheet({
 
   if (!product || !rules) return null;
 
-  const fmtCNY = (n: number) => "$" + (n / (rate || 7.25)).toFixed(2);
-  const fmtUSD = (n: number) => "$" + (n / (rate || 7.25)).toFixed(2);
+  /** Every money figure goes through the shared formatters, so it always carries the
+   *  sign of the currency it is in. Amounts are held in yuan: `fmtUSD` converts at the
+   *  live rate, `fmtCNY` prints the supplier's own yuan price. */
+  const fmtUSD = (cny: number) => formatUSD(cnyToUsdSync(cny));
+  const fmtCNY = (cny: number) => formatCNY(cny);
 
   const unitPriceCny = tier?.priceCny ?? basePriceCny;
 
@@ -207,10 +239,32 @@ export default function ProductReviewSheet({
       Alert.alert(ts("moq.minimumNotMet", "Minimum order not met"), validation.message);
       return;
     }
+    // Cart requires login (product decision 2026-10-03): mirrors the gate in
+    // SmartProductForm so no add-to-cart path bypasses authentication.
+    if (!authUser) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        ts("auth.signInRequired", "Sign in required"),
+        ts(
+          "auth.signInToContinueCart",
+          "You need a ChinaSuuq account to add items to your cart. Sign in to continue."
+        ),
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: ts("auth.signIn", "Sign In"),
+            onPress: () => {
+              router.push("/(auth)/login");
+            },
+          },
+        ]
+      );
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     // The reviewed product carries the MOQ provenance, so the cart can repeat
     // the same verdict ("minimum 20, detected") without re-reading anything.
-    addItem(reviewedProduct!, qty, selectedOptions, { exchange_rate: rate || undefined });
+    addItem(reviewedProduct!, qty, selectedOptions, { exchange_rate: rate });
     onAddToCart?.(qty, selectedOptions);
   };
 
@@ -326,7 +380,7 @@ export default function ProductReviewSheet({
                     )}
                     <Text style={styles.variantName} numberOfLines={1}>{variant.name}</Text>
                     {typeof variant.price_cny === "number" && variant.price_cny > 0 && (
-                      <Text style={styles.variantPrice}>{fmtCNY(variant.price_cny)}</Text>
+                      <Text style={styles.variantPrice}>{fmtUSD(variant.price_cny)}</Text>
                     )}
                     <Text style={[styles.variantStock, soldOut && styles.variantStockOut]}>
                       {soldOut ? ts("reviewSheet.notAvailable", "Not available") : active ? ts("reviewSheet.selected", "Selected") : String(variant.stock)}
@@ -452,7 +506,7 @@ export default function ProductReviewSheet({
           {tier && (
             <View style={styles.tierBox}>
               <Text style={styles.tierBoxText}>
-                  💰 {tier.label ? tier.label + " · " : ""}{ts("moq.unitPrice", "Unit price")}: {fmtCNY(tier.priceCny)}
+                  💰 {tier.label ? tier.label + " · " : ""}{ts("moq.unitPrice", "Unit price")}: {fmtUSD(tier.priceCny)}
               </Text>
             </View>
           )}
@@ -467,7 +521,7 @@ export default function ProductReviewSheet({
                     {st.maxQty ? `${st.minQty}–${st.maxQty}` : `${st.minQty}+`} {ts("moq.pieces", "pieces")}
                   </Text>
                   <Text style={[styles.ladderPrice, tier?.minQty === st.minQty && styles.ladderPriceActive]}>
-                    {fmtCNY(st.priceCny)}
+                    {fmtCNY(st.priceCny)} · {fmtUSD(st.priceCny)}
                   </Text>
                 </View>
               ))}
@@ -513,7 +567,7 @@ export default function ProductReviewSheet({
                 <Text style={styles.costLabel}>{line.label}</Text>
                 {line.amountCny !== null ? (
                   <Text style={[styles.costValue, line.status === "estimated" && styles.costValueEstimated]}>
-                    {line.status === "estimated" ? "~" : ""}{fmtCNY(line.amountCny)}
+                    {line.status === "estimated" ? "~" : ""}{fmtUSD(line.amountCny)}
                   </Text>
                 ) : (
                   <View style={styles.pendingBadge}>

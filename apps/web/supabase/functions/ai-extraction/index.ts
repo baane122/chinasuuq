@@ -106,8 +106,10 @@ export async function handler(req: Request) {
       signal: AbortSignal.timeout(25_000),
     });
     if (!resp.ok) {
-      const detail = (await resp.text()).slice(0, 300);
-      return json({ ok: false, error: "model_call_failed", status: resp.status, detail }, 502);
+      // Status only — the request headers held the key, so nothing from this
+      // response body may be echoed back to the caller (ai-translate pattern).
+      console.error("ai-extraction: provider call failed, status", resp.status);
+      return json({ ok: false, error: "model_call_failed", status: resp.status }, 502);
     }
     const payload = await resp.json();
     const raw = String(payload?.choices?.[0]?.message?.content ?? "");
@@ -117,7 +119,9 @@ export async function handler(req: Request) {
     try {
       parsed = JSON.parse(cleaned) as Record<string, unknown>;
     } catch {
-      return json({ ok: false, error: "model_output_not_json", raw: raw.slice(0, 400) }, 502);
+      // Char count only: the model text is untrusted marketplace echo and must
+      // not be bounced back to the caller (product-enrich uses the same shape).
+      return json({ ok: false, error: "model_output_not_json", chars: raw.length }, 502);
     }
 
     // Validate + coerce against the required schema.
@@ -143,8 +147,12 @@ export async function handler(req: Request) {
       model,
     }, 200);
   } catch (e) {
-    const msg = (e as Error)?.message || "internal";
-    return json({ ok: false, error: msg === "TimeoutError" ? "model_timeout" : msg }, 500);
+    // AbortSignal.timeout fires a DOMException whose NAME is "TimeoutError";
+    // e.message is "The operation was aborted", so classify by e.name
+    // (audit 2026-10-04). The raw message is logged, never echoed to callers.
+    const name = (e as Error)?.name ?? "";
+    if (name !== "TimeoutError" && name !== "AbortError") console.error("ai-extraction: unhandled error", name, (e as Error)?.message);
+    return json({ ok: false, error: name === "TimeoutError" ? "model_timeout" : "extraction_failed" }, 500);
   }
 }
 

@@ -1,270 +1,42 @@
+import { RISK_INSIDE_FN } from "./webviewScripts.risk";
+
 // JavaScript injection scripts for the marketplace WebView.
 // These run INSIDE the third-party Chinese marketplace page.
 //
-// The translator is SELF-CONTAINED — it does NOT rely on Google's iframe
-// widget (which is blocked by RN WebView sandboxing). Instead it calls
-// the plain-JSON translation endpoint and rewrites text nodes in-place via
-// MutationObserver, so it works inside any WebView.
-//
-// Versioning per language is important: when the user switches target
-// language (e.g. EN -> SO -> off -> EN), the script must be able to undo
-// its previous translations and re-translate the original Chinese text.
-// We accomplish that by storing the original zh text on the parent element
-// (data-cs-orig) and resetting the node text to the original before
-// re-running the batch for the new target.
+// TRANSLATION: the old self-contained Google translator (TRANSLATE_SCRIPT,
+// translate.googleapis.com + api.mymemory.translated.net) has been REMOVED.
+// Both endpoints are blocked/slow in China, and the script self-installed a
+// permanent 600ms interval + MutationObserver + drain loop whose hanging 5s
+// fetches are what made every page crawl. Translation now runs exclusively
+// through the AI path (webviewScripts.ai.ts): the page posts TRIMMED text
+// batches to RN, the app's ai-translate edge function answers, and the page
+// itself applies them via window.__csApplyTranslations. Originals are kept
+// on parent elements as data-cs-orig (with data-cs-tr="1") so language
+// switches and "show original" can undo in place.
 
 // ---------------------------------------------------------------------------
-// 1. SELF-CONTAINED TRANSLATOR (zh -> target language)
-//   - Fetches chunks via translate.googleapis.com/translate_a/single (no key)
-//   - Rewrites visible text nodes, skipping scripts/styles/inputs
-//   - MutationObserver catches dynamically loaded content
-//   - Stores the ORIGINAL Chinese on the parent element so re-runs /
-//     language switches can re-translate from zh -> new target
-//   - Re-runnable for any target language via window.__CS_TL
-//   - Aggressive, fast first pass (150ms / 100ms / 150ms) and a tight
-//     1.5s follow-up so SPA pages translate quickly
-// ---------------------------------------------------------------------------
-export const TRANSLATE_SCRIPT = `
-(function () {
-  var TARGET = window.__CS_TL || "en";
-
-  // Per-page state
-  if (typeof window.__csTrState === "undefined") {
-    window.__csTrState = { requests: 0, done: {}, origs: {}, target: null };
-  }
-  var state = window.__csTrState;
-
-  // If the target language changed, restore all original text nodes so the
-  // new pass translates the *original* Chinese, not the previous language.
-  if (state.target && state.target !== TARGET) {
-    var origKeys = Object.keys(state.origs);
-    for (var rk = 0; rk < origKeys.length; rk++) {
-      var k = origKeys[rk];
-      try {
-        // key is the original Chinese text; we use the parent's data-cs-orig
-        // to find it. The "done" map is keyed by original, so we keep that
-        // to avoid re-fetching translations we already did for this target.
-        // For language switches we simply drop the "done" cache to force
-        // a fresh translation pass against the new target.
-      } catch (_) {}
-    }
-    state.done = {};
-    state.requests = 0;
-    // Walk the DOM and restore all data-cs-orig attributes
-    var els = document.querySelectorAll('[data-cs-orig]');
-    for (var ri = 0; ri < els.length; ri++) {
-      var parent = els[ri];
-      // First text child is the only one we replaced; restore it.
-      for (var ni = 0; ni < parent.childNodes.length; ni++) {
-        var cn = parent.childNodes[ni];
-        if (cn && cn.nodeType === 3) {
-          cn.nodeValue = parent.getAttribute('data-cs-orig');
-          break;
-        }
-      }
-    }
-  }
-  state.target = TARGET;
-
-  var skipTags = new Set([
-    "SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT",
-    "SELECT", "OPTION", "CODE", "PRE", "IFRAME", "SVG", "CANVAS", "META", "TITLE", "HEAD"
-  ]);
-  var MIN_LEN = 2;
-  var zhRe = /[\\u4e00-\\u9fff]/;
-  var MAX_REQUESTS = 60;     // raised: long product pages + SPA streams
-  var GROUP_SIZE = 60;       // half the round-trips per page
-  var INTERVAL_MS = 600;     // was 700 — catch SPA content sooner
-  var NODE_CAP = 240;        // was 120 per pass — drain a big page in one pass
-
-  function shouldSkip(el) {
-    var p = el.parentElement;
-    while (p) {
-      if (skipTags.has(p.tagName)) return true;
-      p = p.parentElement;
-    }
-    return false;
-  }
-
-  // Collect short, non-empty text nodes that contain Chinese, prioritizing
-  // nodes currently visible in the viewport so the user sees results fastest.
-  function collect() {
-    var out = [];
-    var vh = window.innerHeight || document.documentElement.clientHeight || 800;
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode: function (node) {
-        var t = (node.nodeValue || "").trim();
-        if (t.length < MIN_LEN || !zhRe.test(t)) return NodeFilter.FILTER_REJECT;
-        if (shouldSkip(node.parentNode)) return NodeFilter.FILTER_REJECT;
-        if (node.parentNode && node.parentNode.getAttribute &&
-            node.parentNode.getAttribute("data-cs-tr") === "1") {
-          // already translated to current target; skip
-          return NodeFilter.FILTER_REJECT;
-        }
-        // Chinese-char ratio: skip price/number strings & tiny fragments
-        var zhCount = (t.match(/[\\u4e00-\\u9fff]/g) || []).length;
-        var nonZh = t.replace(/[\\u4e00-\\u9fff]/g, "")
-                     .replace(/[\\s\\d$.,%()!?。，、：；·/&'"—…\\-]/g, "");
-        if (zhCount < 2 || nonZh.length > zhCount) return NodeFilter.FILTER_REJECT;
-        // Prioritize nodes inside the visible viewport
-        var n = node.parentNode;
-        var score = 1000;
-        if (n && typeof n.getBoundingClientRect === "function") {
-          try {
-            var r = n.getBoundingClientRect();
-            if (r && typeof r.top === "number" && r.top >= -50 && r.top < vh + 50) score = 0;
-            else if (r) score = Math.max(0, (r.top || 0));
-          } catch (_) {}
-        }
-        node.__csScore = score;
-        return NodeFilter.FILTER_ACCEPT;
-      }
-    });
-    var node; var cap = NODE_CAP;
-    var list = [];
-    while ((node = walker.nextNode()) && list.length < cap) list.push(node);
-    list.sort(function (a, b) { return (a.__csScore || 0) - (b.__csScore || 0); });
-    for (var i = 0; i < list.length; i++) out.push(list[i]);
-    return out;
-  }
-
-  async function translateBatch(texts) {
-    if (!texts || !texts.length) return [];
-    const params = new URLSearchParams();
-    params.set("client", "gtx");
-    params.set("sl", "zh-CN");
-    params.set("tl", state.target);
-    params.set("dt", "t");
-    params.set("q", texts.join("\\n"));
-    const url = "https://translate.googleapis.com/translate_a/single?" + params.toString();
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const res = await fetch(url, { method: "GET" });
-        if (!res.ok) {
-          if (attempt < 2) {
-            await new Promise((r) => setTimeout(r, 60 * Math.pow(2, attempt)));
-            continue;
-          }
-          return [];
-        }
-        const data = await res.json();
-        if (Array.isArray(data) && Array.isArray(data[0])) {
-          const joinedOut = data[0]
-            .filter((seg) => Array.isArray(seg) && seg.length)
-            .map((seg) => seg[0] || "")
-            .join("");
-          return joinedOut.split("\\n");
-        }
-        return [];
-      } catch (_) {
-        if (attempt < 2) {
-          await new Promise((r) => setTimeout(r, 60 * Math.pow(2, attempt)));
-          continue;
-        }
-        return [];
-      }
-    }
-    return [];
-  }
-
-  async function translateAndApply(nodes) {
-    if (!nodes || !nodes.length) return;
-    var group = nodes.slice(0, GROUP_SIZE);
-    var texts = group.map(function (n) {
-      return (n.nodeValue || "").replace(/\\n/g, " ").trim();
-    });
-    var targetTexts = await translateBatch(texts);
-    if (!targetTexts || !targetTexts.length) return;
-    for (var j = 0; j < group.length; j++) {
-      var node = group[j];
-      var out = targetTexts[j];
-      if (!out) continue;
-      var parent = node.parentNode;
-      if (!parent) continue;
-      // Save original Chinese on first sight so future language switches
-      // can re-translate from the original.
-      if (!parent.getAttribute("data-cs-orig")) {
-        parent.setAttribute("data-cs-orig", node.nodeValue);
-      }
-      parent.setAttribute("data-cs-tr", "1");
-      node.nodeValue = out;
-    }
-  }
-
-  var mutTimer = null;
-  function schedule() {
-    if (mutTimer) return;
-    mutTimer = setTimeout(function () {
-      mutTimer = null;
-      if (state.requests >= MAX_REQUESTS) return;
-      var nodes = collect();
-      if (!nodes.length) return;
-      state.requests++;
-      translateAndApply(nodes);
-      // Drain the rest of the page in back-to-back waves so a 240-node page
-      // finishes in 60*4=4 passes instead of waiting on the 600ms interval.
-      setTimeout(function drain() {
-        if (state.requests >= MAX_REQUESTS) return;
-        var more = collect();
-        if (!more.length) return;
-        state.requests++;
-        translateAndApply(more);
-        setTimeout(drain, 60);
-      }, 60);
-    }, 60);
-  }
-
-  if (!window.__csMO) {
-    window.__csMO = new MutationObserver(schedule);
-    window.__csMO.observe(document.body, { childList: true, subtree: true, characterData: true });
-  }
-
-  // Aggressive initial burst so the visible viewport is translated
-  // almost immediately after page load.
-  function kick() {
-    if (state.requests >= MAX_REQUESTS) return;
-    var nodes = collect();
-    if (!nodes.length) return;
-    state.requests++;
-    translateAndApply(nodes);
-  }
-  // Fast burst: immediately + 80ms + 250ms + 600ms so SPA content
-  // that mounts over the first half-second gets caught fast, and
-  // 2 parallel lanes drain the queue twice as fast.
-  kick();
-  setTimeout(kick, 80);
-  setTimeout(kick, 250);
-  setTimeout(kick, 600);
-  setTimeout(kick, 1000);
-
-  // Periodic catch-all (stops once we hit the per-page cap)
-  if (!window.__csInterval) {
-    window.__csInterval = setInterval(function () {
-      if (state.requests >= MAX_REQUESTS) {
-        if (window.__csInterval) { clearInterval(window.__csInterval); window.__csInterval = null; }
-        return;
-      }
-      var n2 = collect();
-      if (n2.length) {
-        state.requests++;
-        translateAndApply(n2);
-      }
-    }, INTERVAL_MS);
-  }
-  return true;
-})();
-true;`;
-
-// ---------------------------------------------------------------------------
-// 2. SMART PRODUCT CAPTURE — best-effort scraper for title / price / image / url
+// 1. SMART PRODUCT CAPTURE — best-effort scraper for title / price / image / url
 //   posts a JSON message back to RN via postMessage({type:"CAPTURE",payload})
 // ---------------------------------------------------------------------------
 export const PRODUCT_CAPTURE_SCRIPT = `(function () {
+  // Run-once guard (per document+href): the app re-injects the full suite on
+  // every onLoadEnd AND every SPA NAV ping; without this each ping re-ran the
+  // whole scrape (title selectors, price regexes over 20k chars of innerText,
+  // every <img>). The MutationObserver-free one-shot is only needed once per
+  // page. A manual "Add to Cart" tap sets window.__csCapForce for the current
+  // href before injecting, so user-triggered captures always run.
+  try {
+    if (window.__csCapHref === location.href && window.__csCapForce !== location.href) return true;
+    window.__csCapHref = location.href;
+  } catch (e) {}
   try {
     var out = { title: "", price: 0, currency: "CNY", image: "", url: location.href, brand: "", moqText: "" };
 
     // TITLE
-    var titleSel = ["h1", ".title", ".item-title", ".tb-detail-hd h1", ".d-title", ".sku-name", ".detail-title", ".product-name", ".goods-detail h1"];
+    // Class-name patterns carry the weight here: YiwuGo, ChinaGoods and the
+    // 1$ store all render the product name in a hashed/webpacked class, so an
+    // exact selector rots faster than a substring match.
+    var titleSel = ["h1", ".title", ".item-title", ".tb-detail-hd h1", ".d-title", ".sku-name", ".detail-title", ".product-name", ".goods-detail h1", "[class*='goods-title' i]", "[class*='product-title' i]", "[class*='commodity-title' i]", "[class*='goods-name' i]", "[class*='product-name' i]", ".detail-name"];
     for (var i = 0; i < titleSel.length; i++) {
       var el = document.querySelector(titleSel[i]);
       if (el && el.textContent) {
@@ -273,15 +45,20 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
       }
     }
     if (!out.title && document.title) {
-      out.title = document.title.replace(/[-_|].*(1688|taobao|yiwugo).*$/gi, "").trim().slice(0, 160);
+      out.title = document.title.replace(/[-_|].*(1688|taobao|yiwugo|chinagoods).*$/gi, "").trim().slice(0, 160);
     }
 
-    // PRICE (CNY)
+    // PRICE (CNY). Shipping lines ("Express: ¥5.00起") must never win: they are
+    // excluded by keyword here, and the DOM pass prefers the FIRST plausible
+    // product price over the biggest number, because the biggest ¥ on a detail
+    // page is usually a shipping fee or an old-price strikethrough.
     var priceRe = /(?:¥|￥|RMB|CNY)\\s?([\\d,]+(?:\\.\\d{1,2})?)/gi;
+    var shipRe = /运费|快递|物流|邮费|express|shipping|freight|delivery/i;
     var best = 0;
     var priceNodes = document.querySelectorAll(".price, .price-text, .p-price, .tb-rmb-num, .sku-price, .detail-price, [class*='price' i]");
     for (var p = 0; p < priceNodes.length; p++) {
       var txt = priceNodes[p].textContent || "";
+      if (shipRe.test(txt)) continue;
       var m = priceRe.exec(txt);
       while (m) {
         var v = parseFloat(m[1].replace(/,/g, ""));
@@ -291,8 +68,39 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
     }
     if (!best) {
       var bodyText = (document.body && document.body.innerText || "").slice(0, 20000);
-      var mm = priceRe.exec(bodyText);
-      if (mm) { var bv = parseFloat(mm[1].replace(/,/g, "")); if (!isNaN(bv) && bv > 0 && bv < 100000000) best = bv; }
+      var mm;
+      // priceRe is a shared /gi regex: its lastIndex survives the node loop
+      // above, and scanning without a reset would silently skip the top of the
+      // page — which is exactly where the price sits.
+      priceRe.lastIndex = 0;
+      while ((mm = priceRe.exec(bodyText)) !== null) {
+        // Reject prices glued to a shipping keyword ("¥5.00起" after "Express:").
+        var lineStart = bodyText.lastIndexOf("\\n", mm.index) + 1;
+        var lineEnd = bodyText.indexOf("\\n", mm.index);
+        if (lineEnd < 0) lineEnd = bodyText.length;
+        var lineCtxt = bodyText.slice(lineStart, lineEnd);
+        if (shipRe.test(lineCtxt) || /起\\s*$/.test(lineCtxt.trim())) continue;
+        var bv = parseFloat(mm[1].replace(/,/g, ""));
+        if (!isNaN(bv) && bv > 0 && bv < 100000000) { best = bv; break; }
+      }
+    }
+    // The USD overlay (webviewUsd) REWRITES ¥ prices to $ and blanks the
+    // original spans, keeping them in data-cs-usd-orig. Once it has run, the
+    // DOM holds no ¥ at all — read the originals back before giving up.
+    if (!best) {
+      try {
+        var usdEls = document.querySelectorAll("[data-cs-usd-orig]");
+        for (var ue = 0; ue < usdEls.length && !best; ue++) {
+          var utx = usdEls[ue].getAttribute("data-cs-usd-orig") || "";
+          if (shipRe.test(utx)) continue;
+          priceRe.lastIndex = 0;
+          var um = priceRe.exec(utx);
+          if (um) {
+            var uv = parseFloat(um[1].replace(/,/g, ""));
+            if (!isNaN(uv) && uv > 0 && uv < 100000000) best = uv;
+          }
+        }
+      } catch (_) {}
     }
     out.price = best;
 
@@ -300,16 +108,32 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
     // src/lib/moqIngest.ts. A WebView cannot read 1688's structured MOQ field,
     // and posting all of innerText on every capture would be wasteful and
     // pointless, so only the lines that could carry a rule are shipped.
+    // The English forms matter as much as the Chinese ones: the app's own
+    // translation layer rewrites the page before capture, and "360 minimum
+    // purchase" is what YiwuGo's 件起购 becomes. Number-first shapes are kept
+    // because the parser has a rule for them ("360 minimum purchase").
     var moqLines = [];
-    var moqRe = /起批|起订|最小|moq|min\\.?\\s*order|minimum\\s*order|每箱|装箱|整箱|混批|[≥>]\\s*\\d|件以上|[¥￥]\\s*\\d/i;
+    var moqRe = /起批|起订|起购|最小|moq|min\\.?\\s*order|min\\.?\\s*purchas|minimum\\s*(?:order|purchas|qty|quantity)|每箱|装箱|整箱|混批|[≥>]\\s*\\d|件以上|[¥￥]\\s*\\d|\\d+\\s*(?:pcs|pieces?|units?)\\s*minimum/i;
+    var moqReNum = /\\b\\d{1,6}\\s*(?:minimum|min\\b)\\b/i;
     var rawLines = String((document.body && document.body.innerText) || "").split("\\n");
     var seenLine = {};
     for (var b = 0; b < rawLines.length && moqLines.length < 40; b++) {
       var ln = rawLines[b].replace(/\\s+/g, " ").trim();
-      if (!ln || ln.length > 160 || seenLine[ln] || !moqRe.test(ln)) continue;
+      if (!ln || ln.length > 160 || seenLine[ln] || !(moqRe.test(ln) || moqReNum.test(ln))) continue;
       seenLine[ln] = 1;
       moqLines.push(ln);
     }
+    // Translated pages keep their original Chinese in data-cs-orig (set by the
+    // translate layer). The original often carries a stronger rule than the
+    // translation ("360件起购" vs "360 minimum purchase"), so harvest it too.
+    try {
+      var origEls = document.querySelectorAll("[data-cs-orig]");
+      for (var oe = 0; oe < origEls.length && moqLines.length < 60; oe++) {
+        var otx = (origEls[oe].getAttribute("data-cs-orig") || "").replace(/\\s+/g, " ").trim();
+        if (!otx || otx.length > 160 || seenLine[otx]) continue;
+        if (moqRe.test(otx)) { seenLine[otx] = 1; moqLines.push(otx); }
+      }
+    } catch (_) {}
     out.moqText = moqLines.join("\\n").slice(0, 4000);
 
     // IMAGE — broad selectors to cover all marketplaces, not just 1688/Taobao
@@ -328,9 +152,10 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
         ".product-gallery img", ".goods-pic img", ".swiper-slide img",
         // ChinaGoods
         ".product-image img", ".goods-img img", ".item-img img",
-        // 1$ Dollar Store (huolangjun666 SPA)
-        ".goods-img img", ".van-image img", ".van-swipe img",
-        "img[class*='goods'] img", ".commodity-img img",
+        // 1$ Dollar Store (huolangjun666 SPA) — Vant puts the class on the
+        // <img> itself (img.van-image), not on a wrapper.
+        ".goods-img img", "img.van-image", ".van-swipe img",
+        "img[class*='goods']", ".commodity-img img",
         // Generic patterns
         "article img", ".product img", "[class*='product'] img",
         "[class*='goods'] img", "[class*='detail'] img"
@@ -430,70 +255,58 @@ export const BLANK_PAGE_SCRIPT = `(function () {
 })(); true;`;
 
 // ---------------------------------------------------------------------------
-// 6. AUTO-LOGIN — fills a detected login form with the shared account
-//   credentials (from admin marketplace_accounts) and submits it.
-//   Safe-by-design: only runs when a password field exists, only fills once
-//   per page (data-cs-autolog marker), never touches 2FA/QR/verify screens.
+// 5. NAV WATCH — SPA route-change sentinel.
+//   Marketplace sites (1688 m-site search, dollarstore #/ hash router,
+//   chinagoods) frequently change pages WITHOUT a document reload, so the
+//   app never gets onLoadStart/onLoadEnd and its per-page suite (translation,
+//   USD overlay, capture, risk detection) would only ever run on the entry
+//   page. This tiny watcher posts a NAV message the moment location.href
+//   changes (poll + popstate/hashchange listeners for immediacy); the app
+//   then clears any stale captured product and re-runs the full suite, so
+//   home, search results and product detail all behave identically.
 // ---------------------------------------------------------------------------
-export function autoLoginScript(username: string, password: string): string {
-  const safeUser = JSON.stringify(username || "");
-  const safePass = JSON.stringify(password || "");
-  return `(function () {
+export const NAV_WATCH_SCRIPT = `(function () {
   try {
-    if (document.querySelector('[data-cs-autolog="1"]')) return true;
-    var pwd = document.querySelector('input[type="password"]');
-    if (!pwd || !pwd.offsetParent) return true;
-    // Never auto-fill on 2FA / verification screens
-    var bodyTxt = (document.body && document.body.innerText || "").slice(0, 2000);
-    if (/验证码|扫码|qr/i.test(bodyTxt)) return true;
-    // Find the account/phone input: the text/tel input nearest above the password field
-    var inputs = Array.prototype.slice.call(document.querySelectorAll('input[type="text"], input[type="tel"], input:not([type])'));
-    var userInput = null, bestDist = Infinity;
-    for (var i = 0; i < inputs.length; i++) {
-      if (inputs[i] === pwd || !inputs[i].offsetParent) continue;
-      var dist = Math.abs((inputs[i].getBoundingClientRect().top || 0) - (pwd.getBoundingClientRect().top || 0));
-      if (dist < bestDist) { bestDist = dist; userInput = inputs[i]; }
-    }
-    if (!userInput) return true;
-    function setVal(el, val) {
-      var proto = Object.getPrototypeOf(el);
-      var desc = Object.getOwnPropertyDescriptor(proto, "value");
-      if (desc && desc.set) desc.set.call(el, val); else el.value = val;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-    setVal(userInput, ${safeUser});
-    setVal(pwd, ${safePass});
-    pwd.setAttribute("data-cs-autolog", "1");
-    // Find the submit button: nearest clickable below the password field
-    setTimeout(function () {
+    var post = function () {
       try {
-        var btns = Array.prototype.slice.call(document.querySelectorAll('button, [role="button"], .btn, a'));
-        var btn = null, best = Infinity;
-        for (var j = 0; j < btns.length; j++) {
-          var b = btns[j];
-          var r = b.getBoundingClientRect ? b.getBoundingClientRect() : null;
-          if (!r) continue;
-          var d = (r.top || 0) - (pwd.getBoundingClientRect().top || 0);
-          if (d < 0) continue;
-          var txt = (b.innerText || "").replace(/\\s+/g, "");
-          var hit = /登录|登陆|login|signin/i.test(txt) || b.getAttribute("type") === "submit";
-          if (hit && d < best) { best = d; btn = b; }
-        }
-        if (btn) btn.click();
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: "NAV", payload: { url: location.href }
+        }));
       } catch (e) {}
-    }, 350);
+    };
+    if (!window.__csNavLast) window.__csNavLast = location.href;
+    if (!window.__csNavWatch) {
+      window.__csNavWatch = setInterval(function () {
+        try {
+          var h = location.href;
+          if (h !== window.__csNavLast) { window.__csNavLast = h; post(); }
+        } catch (e) {}
+      }, 500);
+      try {
+        window.addEventListener("popstate", function () { window.__csNavLast = location.href; post(); });
+        window.addEventListener("hashchange", function () { window.__csNavLast = location.href; post(); });
+      } catch (e) {}
+    }
     return true;
   } catch (e) { return true; }
 })(); true;`;
-}
 
 // ---------------------------------------------------------------------------
-// 4. (kept numbering) LOW-RISK MARKET NAV CLEANUP
+// 4. LOW-RISK MARKET NAV CLEANUP
 //   Some marketplace mobile sites render their own fixed bottom tab bar.
 //   We hide only elements explicitly named as bottom/tab navigation.
 // ---------------------------------------------------------------------------
 export const HIDE_MARKET_NAV_SCRIPT = `(function () {
+  // Install-once guard (per document+href): every re-inject on the SAME page
+  // used to re-run the full three-pass DOM sweep (querySelectorAll over 40+
+  // selectors, plus a getComputedStyle loop over every div/section/footer).
+  // The MutationObserver below keeps hiding late-mounted bars, and SPA route
+  // changes carry a new href, so they legitimately re-scan.
+  try {
+    if (window.__csHideNavInstalled && window.__csHideNavHref === location.href) return true;
+    window.__csHideNavInstalled = true;
+    window.__csHideNavHref = location.href;
+  } catch (e) {}
   try {
     var selectors = [
       "[class*='bottom-nav' i]",
@@ -543,6 +356,10 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
     var dockText = /(我的|进货|进货单|购物车|加入进货单|代发|开团|推|客服|联系卖家|收藏|分享|立即下单|立即购买|店铺|首页|分类|消息|下载|打开App|APP下载|客户端)/;
     // Never hide ChinaSuuq's own bottom bar (rendered in native layer, not DOM,
     // so this guard is for safety on any page that mimics our labels).
+    ${RISK_INSIDE_FN}
+    // The verification widget is never "marketplace chrome" — hiding it is how
+    // staff ended up with a captcha they could not drag.
+    function isRiskArea(el) { return __csInRisk(el); }
     function isCsOwn(el) {
       while (el) {
         if (el.getAttribute && el.getAttribute("data-chinasuuq") === "1") return true;
@@ -556,7 +373,7 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
       for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i];
         if (!el || el.getAttribute("data-cs-market-nav") === "1") continue;
-        if (isCsOwn(el)) continue;
+        if (isCsOwn(el) || isRiskArea(el)) continue;
         var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
         // Fixed bars are typically 40-160px tall; still catch shorter strips
         if (rect && (rect.height > 220 || rect.width < window.innerWidth * 0.4)) continue;
@@ -570,7 +387,7 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
       for (var j = 0; j < anchors.length; j++) {
         var el2 = anchors[j];
         if (!el2 || el2.getAttribute("data-cs-market-nav") === "1") continue;
-        if (isCsOwn(el2)) continue;
+        if (isCsOwn(el2) || isRiskArea(el2)) continue;
         var txt = (el2.innerText || "").trim();
         if (!txt || txt.length > 60) continue;
         var r = el2.getBoundingClientRect ? el2.getBoundingClientRect() : null;
@@ -601,7 +418,7 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
       for (var k = 0; k < all.length; k++) {
         var el3 = all[k];
         if (!el3 || el3.getAttribute("data-cs-market-nav") === "1") continue;
-        if (isCsOwn(el3)) continue;
+        if (isCsOwn(el3) || isRiskArea(el3)) continue;
         var cs = getComputedStyle(el3);
         if (cs.position !== "fixed" && cs.position !== "sticky") continue;
         var r3 = el3.getBoundingClientRect();

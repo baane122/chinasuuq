@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -32,17 +33,26 @@ import { useAuthStore } from "@/store/auth";
 
 // Lazy import to avoid crash if db module has issues
 let isBackendOnline: () => Promise<boolean> = async () => false;
-let SHIPPING_METHODS: Array<{ id: string; label: string; days: string; desc: string }> = [
-  { id: "air", label: "Air Freight", days: "5–12 days", desc: "Faster, paid on arrival" },
-  { id: "sea", label: "Sea Freight", days: "25–40 days", desc: "Economical, paid on arrival" },
+let refreshBackendState: () => Promise<{ online: boolean }> = async () => ({ online: false });
+// Canonical durations match app/profile/shipping-info.tsx (air 7–14, sea
+// 25–35) — the fallback used to show different numbers than every other
+// shipping surface in the app.
+const SHIPPING_METHODS_FALLBACK: Array<{ id: string; label: string; days: string; desc: string }> = [
+  { id: "air", label: "Air Freight", days: "7–14 days", desc: "Faster, paid on arrival" },
+  { id: "sea", label: "Sea Freight", days: "25–35 days", desc: "Economical, paid on arrival" },
 ];
-let updateProfile: (userId: string, updates: any) => Promise<void> = async () => {};
+let SHIPPING_METHODS: Array<{ id: string; label: string; days: string; desc: string }> = SHIPPING_METHODS_FALLBACK;
+let updateProfile: (userId: string, updates: any) => Promise<{ error: string | null }> = async () => ({
+  error: "Storage unavailable",
+});
 
 try {
   const db = require("@/db/index");
-  isBackendOnline = db.isBackendOnline;
-  SHIPPING_METHODS = db.SHIPPING_METHODS;
-  updateProfile = db.updateProfile;
+  if (db.isBackendOnline) isBackendOnline = db.isBackendOnline;
+  if (db.refreshBackendState) refreshBackendState = db.refreshBackendState;
+  // Deliberately NOT taking db.SHIPPING_METHODS — keep this screen aligned
+  // with the shipping-info table until the db constant carries the same days.
+  if (db.updateProfile) updateProfile = db.updateProfile;
 } catch {}
 
 type ShippingMethodId = "air" | "sea";
@@ -60,33 +70,58 @@ export default function SettingsScreen() {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [checkingBackend, setCheckingBackend] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const checkBackend = useCallback(async (force = false) => {
+    if (force) setCheckingBackend(true);
+    try {
+      const online = force ? (await refreshBackendState()).online : await isBackendOnline();
+      setBackendOnline(online);
+    } catch {
+      setBackendOnline(false);
+    } finally {
+      setCheckingBackend(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const online = await isBackendOnline();
-        if (!cancelled) setBackendOnline(online);
-      } catch {
-        if (!cancelled) setBackendOnline(false);
-      } finally {
-        if (!cancelled) setCheckingBackend(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    checkBackend();
+  }, [checkBackend]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await checkBackend(true);
+    setRefreshing(false);
+  };
 
   const handleSaveProfile = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Guests have no profile row to write — saying "Saved" was a lie.
+    if (!user?.id) {
+      Alert.alert("Sign in required", "Please sign in to save your profile.");
+      return;
+    }
+    // Never let a blank field wipe the stored name.
+    const name = fullName.trim();
+    if (!name) {
+      Alert.alert("Name required", "Please enter your full name.");
+      return;
+    }
     setSaving(true);
     try {
-      if (user?.id) {
-        // Persist to Supabase profiles table (local-first fallback in db layer)
-        await updateProfile(user.id, { full_name: fullName.trim(), phone: phone.trim() || null, city: city.trim() || null });
+      // updateProfile resolves { error } — only claim success when it is null.
+      const { error } = await updateProfile(user.id, {
+        full_name: name,
+        phone: phone.trim() || null,
+        city: city.trim() || null,
+      });
+      if (error) {
+        Alert.alert(t("common.error"), error || t("settings.saveFailed"));
+      } else {
+        Alert.alert(t("settings.savedTitle"), t("settings.savedDesc"));
       }
-      Alert.alert("Saved", "Profile updated successfully.");
     } catch {
-      Alert.alert("Error", "Could not save. Your changes were kept on this device.");
+      Alert.alert(t("common.error"), t("settings.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -153,10 +188,10 @@ export default function SettingsScreen() {
             ]}
           >
             {checkingBackend
-              ? "Checking..."
+              ? t("settings.backendChecking")
               : backendOnline
-              ? "Backend Online"
-              : "Offline — local data"}
+              ? t("settings.backendOnline")
+              : t("settings.backendOffline")}
           </Text>
         </View>
 
@@ -164,29 +199,37 @@ export default function SettingsScreen() {
           style={styles.scroll}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={COLORS.primary}
+              colors={[COLORS.primary]}
+            />
+          }
         >
           {/* Profile Edit Section */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>
-              <User size={16} color={COLORS.primary} /> Profile Information
+              <User size={16} color={COLORS.primary} /> {t("settings.profileInfo")}
             </Text>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Full Name</Text>
+              <Text style={styles.fieldLabel}>{t("settings.fullName")}</Text>
               <View style={styles.inputRow}>
                 <User size={18} color={COLORS.gray400} />
                 <TextInput
                   style={styles.input}
                   value={fullName}
                   onChangeText={setFullName}
-                  placeholder="Your full name"
+                  placeholder={t("settings.fullNamePlaceholder")}
                   placeholderTextColor={COLORS.gray400}
                 />
               </View>
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Email</Text>
+              <Text style={styles.fieldLabel}>{t("common.email")}</Text>
               <View style={styles.inputRow}>
                 <Mail size={18} color={COLORS.gray400} />
                 <TextInput
@@ -199,7 +242,7 @@ export default function SettingsScreen() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Phone</Text>
+              <Text style={styles.fieldLabel}>{t("common.phone")}</Text>
               <View style={styles.inputRow}>
                 <Text style={[styles.inputIconText, { color: COLORS.gray400 }]}>
                   +252
@@ -208,7 +251,7 @@ export default function SettingsScreen() {
                   style={styles.input}
                   value={phone}
                   onChangeText={setPhone}
-                  placeholder="Phone number"
+                  placeholder={t("settings.phonePlaceholder")}
                   placeholderTextColor={COLORS.gray400}
                   keyboardType="phone-pad"
                 />
@@ -216,14 +259,14 @@ export default function SettingsScreen() {
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>City</Text>
+              <Text style={styles.fieldLabel}>{t("settings.city")}</Text>
               <View style={styles.inputRow}>
                 <MapPin size={18} color={COLORS.gray400} />
                 <TextInput
                   style={styles.input}
                   value={city}
                   onChangeText={setCity}
-                  placeholder="e.g. Mogadishu, Hargeisa"
+                  placeholder={t("settings.cityPlaceholder")}
                   placeholderTextColor={COLORS.gray400}
                 />
               </View>
@@ -249,10 +292,10 @@ export default function SettingsScreen() {
           {/* Shipping Preference Section */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>
-              <Truck size={16} color={COLORS.primary} /> Shipping Preference
+              <Truck size={16} color={COLORS.primary} /> {t("settings.shippingPreference")}
             </Text>
             <Text style={styles.sectionSubtitle}>
-              Choose your default shipping method
+              {t("settings.chooseShippingMethod")}
             </Text>
 
             {SHIPPING_METHODS.map((method) => {
@@ -388,10 +431,10 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
   },
   backendOnline: {
-    backgroundColor: "#ECFDF5",
+    backgroundColor: COLORS.successBg,
   },
   backendOffline: {
-    backgroundColor: "#FEF2F2",
+    backgroundColor: COLORS.errorBg,
   },
   backendChecking: {
     backgroundColor: COLORS.gray100,

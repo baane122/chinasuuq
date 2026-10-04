@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
+import { useStaffStore } from "./staff";
+import { purgeUserScopedCaches } from "@/db/index";
 
 interface User {
   id: string;
@@ -8,6 +10,7 @@ interface User {
   full_name?: string;
   phone?: string;
   city?: string;
+  role?: string; // 'staff' or 'super_admin' for staff mode
 }
 
 interface AuthStore {
@@ -31,6 +34,7 @@ function mapUser(sessionUser: Session["user"], profile?: any): User {
     full_name: profile?.full_name || sessionUser.user_metadata?.full_name,
     phone: profile?.phone || sessionUser.user_metadata?.phone,
     city: profile?.city || sessionUser.user_metadata?.city,
+    role: profile?.role || null,
   };
 }
 
@@ -38,12 +42,10 @@ async function fetchProfile(userId: string) {
   try {
     const { data } = await supabase
       .from("profiles")
-      .select("id, full_name, phone, language")
+      .select("id, full_name, phone, language, role")
       .eq("id", userId)
       .maybeSingle();
     if (!data) return null;
-    // Production's `profiles` has no city; the customer's city is on
-    // customer_profiles, and a select naming a missing column fails whole.
     const { data: cp } = await supabase
       .from("customer_profiles")
       .select("city")
@@ -75,11 +77,16 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
       if (data.user) {
         const profile = await fetchProfile(data.user.id);
+        const mappedUser = mapUser(data.user, profile);
         set({
-          user: mapUser(data.user, profile),
+          user: mappedUser,
           session: data.session,
           error: null,
         });
+        // Initialize staff mode if user has staff role
+        if (mappedUser.role) {
+          useStaffStore.getState().initFromProfile(mappedUser.role);
+        }
       }
       return {};
     } catch (err) {
@@ -130,6 +137,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       // Sign out even if server call fails
     }
     set({ user: null, session: null, error: null });
+    // In-memory clear is not enough on a shared device: the AsyncStorage
+    // caches (addresses/profile — namespaced and legacy keys —, local
+    // orders, notifications, payment methods) still hold this person's
+    // data until the next login sees them. Purge them. Device-wide caches
+    // (translate cache, fx rate, product catalog) are kept.
+    await purgeUserScopedCaches().catch(() => {});
   },
 
   loadSession: async () => {
@@ -141,12 +154,17 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
       if (data.session?.user) {
         const profile = await fetchProfile(data.session.user.id);
+        const mappedUser = mapUser(data.session.user, profile);
         set({
-          user: mapUser(data.session.user, profile),
+          user: mappedUser,
           session: data.session,
           loading: false,
           initialized: true,
         });
+        // Initialize staff mode if user has staff role
+        if (mappedUser.role) {
+          useStaffStore.getState().initFromProfile(mappedUser.role);
+        }
       } else {
         set({ loading: false, initialized: true });
       }

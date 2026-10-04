@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -25,8 +25,10 @@ import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useAuthStore } from "@/store/auth";
+import { useStaffStore } from "@/store/staff";
 import { useI18n } from "@/lib/i18n";
 import { ProductCard } from "@/components/home/ProductCard";
+import { StaffEntryBanner } from "@/components/staff/StaffEntryBanner";
 import { CategoryChips } from "@/components/home/CategoryChips";
 import { WhatsAppCard } from "@/components/home/WhatsAppCard";
 import { TrendingRow, TrendingRowSkeleton } from "@/components/home/TrendingRow";
@@ -34,7 +36,7 @@ import { ProductCardSkeleton } from "@/components/ui/SkeletonLoader";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
 import { EmptyState } from "@/components/EmptyState";
-import { getProducts } from "@/db";
+import { getProducts, getUnreadNotificationCount } from "@/db";
 import { getTrendingFeed, type TrendingItem, type TrendingStatus } from "@/api/trending";
 import { MARKETPLACES } from "@/lib/marketplaces";
 import type { Product } from "@/types";
@@ -140,13 +142,32 @@ export default function HomeTab() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const { role, initFromProfile } = useStaffStore();
+
+  // Initialize staff mode when user loads
+  React.useEffect(() => {
+    // Role will be set by auth store when profile loads
+    const staffRole = user?.role || null;
+    initFromProfile(staffRole);
+  }, [user?.role]);
   const { t, locale } = useI18n();
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [notifCount] = useState(3);
+  // Real unread count — same source the tab badge polls in (tabs)/_layout.
+  // Guests have no notifications, so they see nothing.
+  const [notifCount, setNotifCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id) { setNotifCount(0); return; }
+    let cancelled = false;
+    getUnreadNotificationCount(user.id)
+      .then((n) => { if (!cancelled) setNotifCount(n); })
+      .catch(() => { if (!cancelled) setNotifCount(0); });
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   // ── Trending this week — event-ranked, read through the offline-first layer ──
   const [trendingItems, setTrendingItems] = useState<TrendingItem[]>([]);
@@ -223,10 +244,17 @@ export default function HomeTab() {
     }
   }, [trendingOnScreen]);
 
-  const catalogBySales = products
-    .filter((p) => selectedCategory === "all" || p.category === selectedCategory)
-    .slice()
-    .sort((a, b) => b.sales_count - a.sales_count);
+  // Memoized: the 200-item filter+sort must not re-run on every render
+  // (refresh spinners, notif polling, trending state…) — only when the
+  // inputs actually change.
+  const catalogBySales = useMemo(
+    () =>
+      products
+        .filter((p) => selectedCategory === "all" || p.category === selectedCategory)
+        .slice()
+        .sort((a, b) => b.sales_count - a.sales_count),
+    [products, selectedCategory]
+  );
 
   // "showAll" means: the category filter emptied the slice but the catalog
   // itself has products — so fall back to showing the whole catalog. The old
@@ -257,6 +285,9 @@ export default function HomeTab() {
           />
         }
       >
+        {/* Staff Entry Banner */}
+        <StaffEntryBanner />
+        
         {/* ── Clean App Header ── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>

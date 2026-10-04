@@ -88,15 +88,22 @@ export function CategoryChips({ selected = "all", onSelect }: CategoryChipsProps
       decelerationRate="fast"
       contentContainerStyle={styles.container}
     >
-      {CATEGORIES.map((cat) => (
-        <AnimatedChip
-          key={cat.id}
-          isActive={selected === cat.id}
-          emoji={cat.emoji}
-          label={t(`categories.${cat.id}`) || cat.labelKey}
-          onPress={() => handlePress(cat.id)}
-        />
-      ))}
+      {CATEGORIES.map((cat) => {
+        // t() echoes the key back when a translation is missing; fall back to
+        // the built-in English label in that case (this is what the earlier
+        // `t(key) || labelKey` expression could never do — a key is truthy).
+        const key = `categories.${cat.id}`;
+        const translated = t(key);
+        return (
+          <AnimatedChip
+            key={cat.id}
+            isActive={selected === cat.id}
+            emoji={cat.emoji}
+            label={translated === key ? cat.labelKey : translated}
+            onPress={() => handlePress(cat.id)}
+          />
+        );
+      })}
     </ScrollView>
   );
 }

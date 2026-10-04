@@ -29,7 +29,6 @@ export default function PersonalInfoScreen() {
   const [phone, setPhone] = useState(user?.phone || "");
   const [city, setCity] = useState(user?.city || "");
   const [businessName, setBusinessName] = useState("");
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
@@ -51,18 +50,28 @@ export default function PersonalInfoScreen() {
 
   const handleSave = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // A guest has no profile row to update — the old code still said "Saved".
+    if (!user?.id) {
+      Alert.alert("Sign in required", "Please sign in to save your details.");
+      return;
+    }
     if (!fullName.trim()) {
       Alert.alert("Name required", "Please enter your full name.");
       return;
     }
     setSaving(true);
     try {
-      if (user?.id) {
-        await updateProfile(user.id, { full_name: fullName.trim(), phone: phone.trim() || null, city: city.trim() || null });
+      // updateProfile resolves { error } — only claim success when it is null.
+      const { error } = await updateProfile(user.id, {
+        full_name: fullName.trim(),
+        phone: phone.trim() || null,
+        city: city.trim() || null,
+      });
+      if (error) {
+        Alert.alert("Error", error || "Could not save. Please try again.");
+      } else {
+        Alert.alert("Saved", "Your personal information has been updated.");
       }
-      // Also update local auth metadata name so the profile card reflects it
-      setLoading(false);
-      Alert.alert("Saved", "Your personal information has been updated.");
     } catch {
       Alert.alert("Error", "Could not save. Please try again.");
     } finally {

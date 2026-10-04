@@ -10,6 +10,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/lib/supabase";
+import { getCachedCnyPerUsdSync, subscribeFx } from "@/lib/exchange";
 import { unadaptOrder, mapMobileStatusToDb, adaptSourcing, unadaptAddress, adaptAddress, adaptFavorite } from "@/lib/supabase-adapter";
 
 // ---- safe AsyncStorage helpers (never crash the app) ----
@@ -119,6 +120,10 @@ export interface LocalOrder {
   created_at: string;
   updated_at: string;
   synced: boolean;
+  /** Server-decided breakdown (submit_mobile_order echo / orders row).
+   *  Absent on queued offline orders, which only carry the client preview. */
+  subtotal_usd?: number;
+  service_fee_usd?: number;
 }
 
 const ORDERS_KEY = "chinasuuq-local-orders";
@@ -191,7 +196,9 @@ export async function getOrderById(id: string): Promise<LocalOrder | null> {
         return local[idx >= 0 ? idx : 0];
       }
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[db]", "getOrderById remote read — falling back to cache:", e?.message);
+  }
   // Cache fallback: offline, guest, or row not visible under this policy.
   const all = await getOrders();
   return all.find((o) => o.id === id || o.reference === id) || null;
@@ -203,41 +210,60 @@ export async function getOrdersByUser(userId: string): Promise<LocalOrder[]> {
   let remote: LocalOrder[] = [];
   try {
     if (await isBackendOnline()) {
-      // Real columns only: PostgREST rejects a whole SELECT for one unknown
-      // name, which is why order history used to always come back empty.
-      const { data, error } = await supabase
+      // One round trip: `order_items(*)` rides along on the orders SELECT.
+      // The embed only resolves when PostgREST detects the FK; if it errors,
+      // fall through to the two-query path below, whose direct select on the
+      // real column list works whatever the relationship hint says.
+      const embedded = await supabase
         .from("orders")
-        .select(
-          "id, reference, status, payment_status, shipping_method, currency, subtotal_usd, service_fee_usd, total_usd, delivery_address, destination_city, notes, created_at, updated_at"
-        )
+        .select(`${ORDER_COLUMNS}, order_items(*)`)
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
         .limit(200);
-      if (!error && data) {
-        const ids = (data as any[]).map((o) => o.id).filter(Boolean);
-        // Two queries beat an orders→order_items embed: the embed only
-        // resolves if PostgREST detects the FK, and a second select on the
-        // real column list works whatever the relationship hint says.
-        const itemsByOrder: Record<string, any[]> = {};
-        if (ids.length > 0) {
-          const r = await supabase
-            .from("order_items")
-            .select(
-              "id, order_id, product_id, product_name, quantity, unit_price, unit_price_cny, exchange_rate, moq_at_purchase, variant, variant_name, marketplace_key, source_url, image_url"
-            )
-            .in("order_id", ids);
-          if (!r.error && r.data) {
-            for (const it of r.data as any[]) {
-              const key = it.order_id as string;
-              if (!itemsByOrder[key]) itemsByOrder[key] = [];
-              itemsByOrder[key].push(it);
+      if (!embedded.error && embedded.data) {
+        remote = (embedded.data as any[]).map((o) => {
+          const { order_items: items, ...row } = o;
+          return unadaptOrder(row, Array.isArray(items) ? (items as any[]) : []);
+        });
+      } else {
+        console.warn(
+          "[db]",
+          "getOrdersByUser embed rejected, retrying with two queries:",
+          embedded.error?.message
+        );
+        // Real columns only: PostgREST rejects a whole SELECT for one unknown
+        // name, which is why order history used to always come back empty.
+        const { data, error } = await supabase
+          .from("orders")
+          .select(ORDER_COLUMNS)
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(200);
+        if (!error && data) {
+          const ids = (data as any[]).map((o) => o.id).filter(Boolean);
+          const itemsByOrder: Record<string, any[]> = {};
+          if (ids.length > 0) {
+            const r = await supabase
+              .from("order_items")
+              .select(
+                "id, order_id, product_id, product_name, quantity, unit_price, unit_price_cny, exchange_rate, moq_at_purchase, variant, variant_name, marketplace_key, source_url, image_url"
+              )
+              .in("order_id", ids);
+            if (!r.error && r.data) {
+              for (const it of r.data as any[]) {
+                const key = it.order_id as string;
+                if (!itemsByOrder[key]) itemsByOrder[key] = [];
+                itemsByOrder[key].push(it);
+              }
             }
           }
+          remote = (data as any[]).map((o) => unadaptOrder(o, itemsByOrder[o.id] || []));
         }
-        remote = (data as any[]).map((o) => unadaptOrder(o, itemsByOrder[o.id] || []));
       }
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[db]", "getOrdersByUser remote read — serving local cache:", e?.message);
+  }
   // Merge: prefer remote; a queued order that has since synced shares its
   // reference with the remote row, so dedupe on id AND reference.
   const ids = new Set(remote.map((r) => r.id));
@@ -255,22 +281,60 @@ export async function saveLocalOrders(orders: LocalOrder[]): Promise<void> {
   await safeSet(ORDERS_KEY, JSON.stringify(orders));
 }
 
+/** Money the server decided for a submitted order. PostgREST numerics arrive
+ *  as strings; anything NaN or ≤0 is treated as missing, never billed. */
+export interface ServerTotals {
+  subtotal_usd?: number;
+  service_fee_usd?: number;
+  total_usd?: number;
+}
+
+function serverMoney(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Read the submit_mobile_order money echo ({subtotal_usd, service_fee_usd,
+ *  total_usd, service_fee_pct, cny_per_usd}) with numeric-string guards. */
+function readServerTotals(data: unknown): ServerTotals {
+  const d = (data ?? {}) as Record<string, unknown>;
+  const totals: ServerTotals = {};
+  const subtotal = serverMoney(d.subtotal_usd);
+  const fee = serverMoney(d.service_fee_usd);
+  const total = serverMoney(d.total_usd);
+  if (subtotal !== undefined) totals.subtotal_usd = subtotal;
+  if (fee !== undefined) totals.service_fee_usd = fee;
+  if (total !== undefined) totals.total_usd = total;
+  return totals;
+}
+
+/** Stamp the server's numbers onto a stored order so every screen that later
+ *  reads it (success, order detail) confirms what was actually billed, not
+ *  what the phone previewed. Missing echo fields keep the preview value. */
+function applyServerTotals(order: LocalOrder, totals: ServerTotals): LocalOrder {
+  return {
+    ...order,
+    subtotal_usd: totals.subtotal_usd ?? order.subtotal_usd,
+    service_fee_usd: totals.service_fee_usd ?? order.service_fee_usd,
+    total_usd: totals.total_usd ?? order.total_usd,
+  };
+}
+
 /** Result contract shared with checkout and the offline-sync screens:
  *  - ok:false           → nothing was stored anywhere; show the error, keep the cart.
  *  - ok:true stored:    → the row is in production under this (server uuid) id.
  *  - ok:true queued:    → saved on this device with synced:false, retryable via
- *                         syncPendingOrders(); the id is a device-local id. */
+ *                         syncPendingOrders(); the id is a device-local id.
+ *  `totals` is the server-decided money for the stored path. */
 export interface CreateOrderResult {
   ok: boolean;
   id?: string;
   stored?: boolean;
   error?: string;
+  totals?: ServerTotals;
 }
 
-/** The RPC multiplies the subtotal by this value, so it is a fraction: the same
- *  5% checkout.tsx previews as `subtotal * 0.05`. Passing 5 would bill 500%. */
-const SERVICE_FEE_PCT = 0.05;
-
+/** The line payload the RPC normalises into order_items. */
 function buildRpcItems(order: LocalOrder) {
   return (order.items || []).map((it) => ({
     product_id: it.product_id && UUID_RE.test(it.product_id) ? it.product_id : null,
@@ -287,23 +351,29 @@ function buildRpcItems(order: LocalOrder) {
   }));
 }
 
-/** One submit path, used by createOrder and by the offline retry queue. */
-async function submitMobileOrderRpc(order: LocalOrder): Promise<{ id: string | null; error: string | null }> {
+/** One submit path, used by createOrder and by the offline retry queue.
+ *  p_service_fee_pct is accepted by the RPC and IGNORED — since migration
+ *  202610030008 the fee comes from the admin's setting and every CNY line is
+ *  priced at the server's own live rate. We send null rather than a made-up
+ *  5% so the wire never claims the phone chose the fee. */
+async function submitMobileOrderRpc(
+  order: LocalOrder
+): Promise<{ id: string | null; error: string | null; totals: ServerTotals }> {
   const { data, error } = await supabase.rpc("submit_mobile_order", {
     p_reference: order.reference,
     p_shipping_method: order.shipping_method || null,
     p_delivery_address: order.address || null,
     p_destination_city: order.city || null,
     p_notes: order.notes || null,
-    p_service_fee_pct: SERVICE_FEE_PCT,
+    p_service_fee_pct: null,
     p_items: buildRpcItems(order),
   });
-  if (error) return { id: null, error: error.message || "Could not place the order." };
-  // The server's uuid is the only field we trust from the echo; totals are
-  // recomputed there and may legitimately differ from the preview.
+  if (error) return { id: null, error: error.message || "Could not place the order.", totals: {} };
   const id = (data as any)?.id;
-  if (!id || typeof id !== "string") return { id: null, error: "The server did not return an order id." };
-  return { id, error: null };
+  if (!id || typeof id !== "string") return { id: null, error: "The server did not return an order id.", totals: {} };
+  // The echo's money is the truth of what was billed; it may legitimately
+  // differ from the phone's preview (the rate can move between the two).
+  return { id, error: null, totals: readServerTotals(data) };
 }
 
 /**
@@ -313,6 +383,9 @@ async function submitMobileOrderRpc(order: LocalOrder): Promise<{ id: string | n
  * only path that can write order_items). Anything else is queued on the device
  * with synced:false — honestly, not as a fake success — and flushed later by
  * syncPendingOrders(). A failed RPC is reported, never swallowed.
+ * On the stored path the server's money echo is stamped onto the locally
+ * cached row (applyServerTotals), so the success screen and order detail
+ * confirm what was BILLED, not what the phone previewed.
  */
 export async function createOrder(
   draft: Omit<LocalOrder, "id" | "synced">
@@ -325,13 +398,14 @@ export async function createOrder(
 
   if (userId && (await isBackendOnline())) {
     const order: LocalOrder = { ...draft, id: "", synced: true };
-    const { id, error } = await submitMobileOrderRpc(order);
+    const { id, error, totals } = await submitMobileOrderRpc(order);
     if (error || !id) return { ok: false, error: error || "Could not place the order." };
     order.id = id;
+    const stored = applyServerTotals(order, totals);
     const orders = await getOrders();
-    orders.unshift(order);
+    orders.unshift(stored);
     await saveLocalOrders(orders);
-    return { ok: true, id, stored: true };
+    return { ok: true, id, stored: true, totals };
   }
 
   const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -350,12 +424,14 @@ export async function syncPendingOrders(userId: string): Promise<number> {
   let syncedCount = 0;
   for (const order of pending) {
     try {
-      const { id, error } = await submitMobileOrderRpc(order);
+      const { id, error, totals } = await submitMobileOrderRpc(order);
       if (error || !id) continue;
       const cur = await getOrders();
       const idx = cur.findIndex((o) => o.id === order.id);
       if (idx >= 0) {
-        cur[idx] = { ...cur[idx], synced: true };
+        // The queue flushed: replace the device's preview money with the
+        // server's numbers, same as the live submit path does.
+        cur[idx] = applyServerTotals({ ...cur[idx], synced: true }, totals);
         await saveLocalOrders(cur);
         syncedCount += 1;
       }
@@ -403,12 +479,66 @@ export async function updateOrderStatus(
 import type { Product } from "@/types";
 const PRODUCTS_KEY = "chinasuuq-local-products";
 
+/**
+ * THE ONE RATE, APPLIED HERE.
+ *
+ * `price_usd_estimated` in `source_products` is a snapshot: it was computed by
+ * whoever imported the row, at whatever the rate was that day. The admin's
+ * Settings → Currency number is the only live authority, so the dollar figure a
+ * customer sees is always re-derived from the yuan figure (`price_cny_min`),
+ * never taken from the cached column. Products with no yuan figure (a curated
+ * USD-native listing) keep their stored dollar amount — dividing by the CNY rate
+ * would turn $5 into $0.75.
+ *
+ * Rounding happens only at display; here we keep full precision and let the
+ * cent-level rounding stay in the components.
+ */
+function withLivePrice<T extends { price_cny_min?: number; price_usd_estimated?: number }>(p: T): T {
+  const cny = Number(p.price_cny_min);
+  if (!Number.isFinite(cny) || cny <= 0) return p;
+  const usd = cny / snapshotCnyPerUsd();
+  if (!Number.isFinite(usd) || usd <= 0) return p;
+  return { ...p, price_usd_estimated: usd };
+}
+
+/**
+ * The product cache is JSON, so it holds dollar figures frozen at sync time.
+ * Re-price it whenever the admin's rate lands (boot warm, app focus, pull to
+ * refresh) and persist the result, so the next read on any screen — detail,
+ * search, wishlist, cart, orders — shows the live rate rather than a stale one.
+ */
+async function repriceProductCache(): Promise<void> {
+  const raw = await safeGet(PRODUCTS_KEY);
+  if (!raw) return;
+  try {
+    const all = JSON.parse(raw) as Product[];
+    if (!Array.isArray(all)) return;
+    const next = all.map(withLivePrice);
+    const changed = next.some((p, i) => p.price_usd_estimated !== all[i]?.price_usd_estimated);
+    if (changed) await safeSet(PRODUCTS_KEY, JSON.stringify(next));
+  } catch {
+    /* corrupt cache — the next forced sync rebuilds it */
+  }
+}
+
+// One module-level subscription: the FX store is the only rate source, and this
+// is the only place the product snapshot is rewritten from it.
+subscribeFx(() => {
+  void repriceProductCache();
+});
+
 export async function getProducts(force = false): Promise<Product[]> {
   if (!force) {
     const raw = await safeGet(PRODUCTS_KEY);
     if (raw) {
       try {
-        return JSON.parse(raw);
+        const cached = JSON.parse(raw) as Product[];
+        const live = cached.map(withLivePrice);
+        // Persist only when the live rate actually moved a figure.
+        if (live.some((p, i) => p.price_usd_estimated !== cached[i]?.price_usd_estimated)) {
+          await safeSet(PRODUCTS_KEY, JSON.stringify(live));
+        }
+        return live;
       } catch {}
     }
   }
@@ -429,7 +559,7 @@ export async function getProducts(force = false): Promise<Product[]> {
     const raw = await safeGet(PRODUCTS_KEY);
     if (raw) {
       try {
-        return JSON.parse(raw);
+        return (JSON.parse(raw) as Product[]).map(withLivePrice);
       } catch {}
     }
   }
@@ -437,6 +567,29 @@ export async function getProducts(force = false): Promise<Product[]> {
 }
 
 export async function getProductById(id: string): Promise<Product | null> {
+  // Targeted read: fetching and parsing the whole 200-row catalog to find one
+  // product was the hottest path in the app. Non-uuid ids (cart/web captures)
+  // only exist locally, so they go straight to the cache.
+  if (UUID_RE.test(id)) {
+    try {
+      if (await isBackendOnline()) {
+        const { data, error } = await supabase
+          .from("source_products")
+          .select("*")
+          .eq("id", id)
+          .limit(1);
+        if (!error && data && data.length > 0) {
+          return withLivePrice(mapRowToProduct(data[0] as any));
+        }
+        if (error) {
+          console.warn("[db]", "getProductById remote read, serving from cache:", error.message);
+        }
+      }
+    } catch (e: any) {
+      console.warn("[db]", "getProductById remote read, serving from cache:", e?.message);
+    }
+  }
+  // Cache fallback: offline, or the row is not visible / not in the catalog.
   const all = await getProducts();
   return all.find((p) => p.id === id) || null;
 }
@@ -497,8 +650,14 @@ function mapRowToProduct(p: any): Product {
     moq_raw_text: typeof p.moq_raw_text === "string" && p.moq_raw_text ? p.moq_raw_text : null,
     price_cny_min: curatedPriceCny ?? 0,
     price_cny_max: firstNumber(p.price_cny_max) ?? curatedPriceCny ?? 0,
+    // The yuan figure is the fact; a row's `price_usd_estimated` only remembers
+    // whatever rate was cached when the row was written. So derive USD from CNY at
+    // the live rate and keep the stored number solely for CNY-less (USD-native)
+    // rows — the same model src/store/cart.ts uses.
     price_usd_estimated:
-      firstNumber(p.price_usd_estimated) ?? (curatedPriceCny !== null ? curatedPriceCny / 7.25 : 0),
+      curatedPriceCny !== null
+        ? curatedPriceCny / snapshotCnyPerUsd()
+        : firstNumber(p.price_usd_estimated) ?? 0,
     domestic_shipping_cny: firstNumber(p.domestic_shipping_cny) ?? 0,
     // stock_status is the curated three-state flag; in_stock is the boolean the
     // importers write. 202609250004 keeps them in step by trigger, but a row
@@ -533,6 +692,16 @@ function firstNumber(...values: unknown[]): number | null {
  */
 function positiveOr(value: number | null): number | null {
   return value !== null && value > 0 ? value : null;
+}
+
+/**
+ * Rate used when deriving USD from a row's yuan price: clamped into the plausible
+ * CNY-per-USD band (2–20) so a stale or flipped snapshot rate can never make ¥1
+ * read as $10,000 on a card. The FX store already guards this range; rows mapped
+ * before it warms must not escape it.
+ */
+function snapshotCnyPerUsd(): number {
+  return Math.min(Math.max(getCachedCnyPerUsdSync(), 2), 20);
 }
 
 /** A CHECK constraint keeps new rows honest; old rows and other generations do not. */
@@ -823,7 +992,30 @@ export interface CustomerProfile {
   tier?: string | null;
 }
 
-const PROFILE_KEY = "chinasuuq-local-profile";
+/**
+ * User-scoped cache keys. These used to be bare device-wide constants, which
+ * meant account B on a shared device read account A's cached profile and
+ * addresses. They are now `${base}:${userId}`. The legacy un-namespaced value
+ * is still read ONCE (and then removed) so existing installs keep their data.
+ */
+const PROFILE_KEY_BASE = "chinasuuq-local-profile";
+const ADDRESSES_KEY_BASE = "chinasuuq-local-addresses";
+const profileKey = (userId: string) => `${PROFILE_KEY_BASE}:${userId}`;
+const addressesKey = (userId: string) => `${ADDRESSES_KEY_BASE}:${userId}`;
+
+/** Read a namespaced user key, migrating once from the legacy bare key. */
+async function readUserScopedKey(key: string, legacyKey: string): Promise<string | null> {
+  const raw = await safeGet(key);
+  if (raw !== null) return raw;
+  const legacy = await safeGet(legacyKey);
+  if (legacy !== null) {
+    // Move, don't copy: after this the bare key is gone, so the next account
+    // signing in on this device cannot read the previous one's data.
+    await safeSet(key, legacy);
+    await safeRemove(legacyKey);
+  }
+  return legacy;
+}
 
 /** Fetch the user's profile from Supabase `profiles`, falling back to cache. */
 export async function getProfile(userId: string): Promise<UserProfile | null> {
@@ -840,12 +1032,14 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
           .maybeSingle();
         if (!c.error) city = (c.data as any)?.city ?? null;
         const merged = { ...data, city } as UserProfile;
-        await safeSet(PROFILE_KEY, JSON.stringify(merged));
+        await safeSet(profileKey(userId), JSON.stringify(merged));
         return merged;
       }
     }
-  } catch {}
-  const cached = await safeGet(PROFILE_KEY);
+  } catch (e: any) {
+    console.warn("[db]", "getProfile remote read — serving cache:", e?.message);
+  }
+  const cached = await readUserScopedKey(profileKey(userId), PROFILE_KEY_BASE);
   if (cached) {
     try { return JSON.parse(cached); } catch {}
   }
@@ -858,31 +1052,46 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
  *  `customer_profiles`. Sending city to `profiles` would make Postgres reject
  *  the whole UPDATE (one unknown name fails the statement), so the payload is
  *  split across the two tables it actually belongs to.
+ *
+ *  Returns `{ error }` instead of throwing: call sites that ignore the result
+ *  keep working, and ones that care can finally detect a failed write instead
+ *  of being told everything was fine. The local optimistic cache is still
+ *  written either way, so the app remains usable offline.
  */
-export async function updateProfile(userId: string, updates: Partial<UserProfile>): Promise<void> {
+export async function updateProfile(
+  userId: string,
+  updates: Partial<UserProfile>
+): Promise<{ error: string | null }> {
   const { city, ...profileFields } = updates;
+  let error: string | null = null;
   try {
     if (await isBackendOnline()) {
       if (Object.keys(profileFields).length > 0) {
-        const { error } = await supabase
+        const { error: nameError } = await supabase
           .from("profiles")
           .update({ ...profileFields, updated_at: new Date().toISOString() })
           .eq("id", userId);
-        if (error) throw error;
+        if (nameError) error = nameError.message;
       }
-      if (city !== undefined) {
-        const { error } = await supabase
+      if (city !== undefined && error === null) {
+        const { error: cityError } = await supabase
           .from("customer_profiles")
           .upsert({ user_id: userId, city, updated_at: new Date().toISOString() });
-        if (error) throw error;
+        if (cityError) error = cityError.message;
       }
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[db]", "updateProfile remote write:", e?.message);
+    error = e?.message || "Could not save the profile.";
+  }
   // Local optimistic cache
   try {
     const cur = await getProfile(userId) || { full_name: "" };
-    await safeSet(PROFILE_KEY, JSON.stringify({ ...cur, ...updates }));
-  } catch {}
+    await safeSet(profileKey(userId), JSON.stringify({ ...cur, ...updates }));
+  } catch (e: any) {
+    console.warn("[db]", "updateProfile cache write:", e?.message);
+  }
+  return { error };
 }
 
 // =====================================================================
@@ -904,20 +1113,20 @@ export interface SavedAddress {
   updated_at?: string;
 }
 
-const ADDRESSES_KEY = "chinasuuq-local-addresses";
-
 export async function getAddresses(userId: string): Promise<SavedAddress[]> {
   try {
     if (await isBackendOnline()) {
       const { data, error } = await supabase.from("addresses").select("*").eq("user_id", userId).order("is_default", { ascending: false });
       if (!error && data) {
         const mapped = data.map((r: any) => unadaptAddress(r));
-        await safeSet(ADDRESSES_KEY, JSON.stringify(mapped));
+        await safeSet(addressesKey(userId), JSON.stringify(mapped));
         return mapped as SavedAddress[];
       }
     }
-  } catch {}
-  const cached = await safeGet(ADDRESSES_KEY);
+  } catch (e: any) {
+    console.warn("[db]", "getAddresses remote read — serving cache:", e?.message);
+  }
+  const cached = await readUserScopedKey(addressesKey(userId), ADDRESSES_KEY_BASE);
   if (cached) {
     try { return JSON.parse(cached); } catch {}
   }
@@ -936,7 +1145,7 @@ export async function saveAddress(addr: SavedAddress): Promise<SavedAddress> {
     result = { ...addr, id: `addr-${Date.now()}`, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
     all.unshift(result);
   }
-  await safeSet(ADDRESSES_KEY, JSON.stringify(all));
+  await safeSet(addressesKey(addr.user_id), JSON.stringify(all));
   // Sync to Supabase (the row is `addresses`, owned by user_id)
   try {
     if (await isBackendOnline()) {
@@ -955,20 +1164,28 @@ export async function saveAddress(addr: SavedAddress): Promise<SavedAddress> {
       const { data, error } = isUuid
         ? await supabase.from("addresses").update(row).eq("id", result.id).select().single()
         : await supabase.from("addresses").insert(row).select().single();
+      if (error) {
+        console.warn("[db]", "saveAddress remote sync:", error.message);
+      }
       if (!error && data?.id) result = { ...result, id: data.id };
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[db]", "saveAddress remote sync:", e?.message);
+  }
   return result;
 }
 
 export async function deleteAddress(id: string, userId: string): Promise<void> {
   const all = await getAddresses(userId);
-  await safeSet(ADDRESSES_KEY, JSON.stringify(all.filter((a) => a.id !== id)));
+  await safeSet(addressesKey(userId), JSON.stringify(all.filter((a) => a.id !== id)));
   try {
     if (await isBackendOnline()) {
-      await supabase.from("addresses").delete().eq("id", id);
+      const { error } = await supabase.from("addresses").delete().eq("id", id);
+      if (error) console.warn("[db]", "deleteAddress remote sync:", error.message);
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[db]", "deleteAddress remote sync:", e?.message);
+  }
 }
 
 // =====================================================================
@@ -1019,34 +1236,60 @@ export async function getFavorites(userId: string): Promise<Product[]> {
         .select("*, source_products(*)")
         .eq("user_id", userId);
       if (!error && data) {
-        return (data as any[])
-          .map((f: any) => mapRowToProduct(f.source_products))
-          .filter(Boolean);
+        // Per-row guard: one favorite pointing at a deleted product (an
+        // orphan row whose source_products embed is null) used to throw in
+        // mapRowToProduct and take the whole wishlist down with it.
+        const rows: Product[] = [];
+        for (const f of data as any[]) {
+          try {
+            rows.push(mapRowToProduct(f.source_products));
+          } catch {
+            /* orphan favorite — drop this row, keep the rest */
+          }
+        }
+        return rows;
       }
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[db]", "getFavorites:", e?.message);
+  }
   return [];
 }
 
 export async function toggleFavorite(userId: string, productId: string): Promise<boolean> {
   try {
     if (await isBackendOnline()) {
-      const { data } = await supabase
+      const { data, error: findError } = await supabase
         .from("favorites")
         .select("id")
         .eq("user_id", userId)
         .eq("product_id", productId)
         .maybeSingle();
+      if (findError) {
+        console.warn("[db]", "toggleFavorite lookup:", findError.message);
+        return false;
+      }
       if (data) {
-        await supabase.from("favorites").delete().eq("id", data.id);
+        const { error: deleteError } = await supabase.from("favorites").delete().eq("id", data.id);
+        if (deleteError) {
+          console.warn("[db]", "toggleFavorite delete:", deleteError.message);
+        }
         return false;
       } else {
         const row = adaptFavorite(userId, productId);
-        await supabase.from("favorites").insert(row);
+        const { error: insertError } = await supabase.from("favorites").insert(row);
+        if (insertError) {
+          // An unverified insert must not report "favorited": the caller's
+          // heart would fill while the row stayed empty.
+          console.warn("[db]", "toggleFavorite insert:", insertError.message);
+          return false;
+        }
         return true;
       }
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[db]", "toggleFavorite:", e?.message);
+  }
   return false;
 }
 
@@ -1140,3 +1383,238 @@ export async function getUnreadNotificationCount(userId: string): Promise<number
   return 0;
 }
 
+
+// =====================================================================
+// NOTIFICATIONS — screen-facing reads/writes (offline-first)
+// =====================================================================
+export interface AppNotification {
+  id: string;
+  title: string;
+  body: string | null;
+  type: string;
+  read: boolean;
+  created_at: string;
+}
+
+const NOTIFICATIONS_CACHE_KEY = "chinasuuq-notifications-cache";
+
+async function readNotificationCache(): Promise<Record<string, AppNotification[]>> {
+  const raw = await safeGet(NOTIFICATIONS_CACHE_KEY);
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {}
+  }
+  return {};
+}
+
+/**
+ * Newest notifications for a user. Supabase first; on any failure the last
+ * server response cached on the device is served instead of an empty list.
+ */
+export async function getNotifications(
+  userId: string,
+  limit = 50
+): Promise<AppNotification[]> {
+  try {
+    if (await isBackendOnline()) {
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("id, title, body, type, read, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (!error && data) {
+        const rows = data as AppNotification[];
+        const cache = await readNotificationCache();
+        cache[userId] = rows;
+        await safeSet(NOTIFICATIONS_CACHE_KEY, JSON.stringify(cache));
+        return rows;
+      }
+    }
+  } catch {}
+  const cache = await readNotificationCache();
+  return (cache[userId] || []).slice(0, limit);
+}
+
+/** Mark every unread notification read. Mirrors the change into the local
+ *  cache so the offline view agrees with what the server was told — but the
+ *  caller only gets `ok:true` when the WRITE actually landed. Offline is
+ *  `ok:false`: the local flip is cosmetic, and pretending otherwise tells
+ *  the user their server state changed when it did not. */
+export async function markAllNotificationsRead(
+  userId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const cache = await readNotificationCache();
+  if (cache[userId]) {
+    cache[userId] = cache[userId].map((n) => ({ ...n, read: true }));
+    await safeSet(NOTIFICATIONS_CACHE_KEY, JSON.stringify(cache));
+  }
+  try {
+    if (await isBackendOnline()) {
+      const { error } = await supabase
+        .from("notifications")
+        .update({ read: true })
+        .eq("user_id", userId)
+        .eq("read", false);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true };
+    }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "Could not mark notifications read." };
+  }
+  return { ok: false, error: "Backend unreachable — marked read on this device only." };
+}
+
+// =====================================================================
+// SAVED PAYMENT METHODS — customer_payment_methods (offline-first)
+// =====================================================================
+export interface SavedPaymentMethod {
+  id: string;
+  method: string;
+  identifier: string;
+  label: string | null;
+  is_default: boolean;
+}
+
+const PAYMENT_METHODS_CACHE_KEY = "chinasuuq-payment-methods-cache";
+
+async function readPaymentMethodsCache(): Promise<Record<string, SavedPaymentMethod[]>> {
+  const raw = await safeGet(PAYMENT_METHODS_CACHE_KEY);
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {}
+  }
+  return {};
+}
+
+async function writePaymentMethodsCache(
+  cache: Record<string, SavedPaymentMethod[]>
+): Promise<void> {
+  await safeSet(PAYMENT_METHODS_CACHE_KEY, JSON.stringify(cache));
+}
+
+/** Saved payment methods for a profile, defaults first. */
+export async function getSavedPaymentMethods(
+  profileId: string
+): Promise<SavedPaymentMethod[]> {
+  try {
+    if (await isBackendOnline()) {
+      const { data, error } = await supabase
+        .from("customer_payment_methods")
+        .select("id, method, identifier, label, is_default")
+        .eq("profile_id", profileId)
+        .order("is_default", { ascending: false });
+      if (!error && data) {
+        const rows = data as SavedPaymentMethod[];
+        const cache = await readPaymentMethodsCache();
+        cache[profileId] = rows;
+        await writePaymentMethodsCache(cache);
+        return rows;
+      }
+    }
+  } catch {}
+  const cache = await readPaymentMethodsCache();
+  return cache[profileId] || [];
+}
+
+/** Add a saved method; offline it is kept locally (id prefixed `local-`)
+ *  so checkout still sees the customer's choice until the backend returns. */
+export async function addSavedPaymentMethod(input: {
+  profileId: string;
+  method: string;
+  identifier: string;
+  label: string | null;
+  isDefault: boolean;
+}): Promise<{ row?: SavedPaymentMethod; error?: string }> {
+  try {
+    if (await isBackendOnline()) {
+      const { data, error } = await supabase
+        .from("customer_payment_methods")
+        .insert({
+          profile_id: input.profileId,
+          method: input.method,
+          identifier: input.identifier,
+          label: input.label,
+          is_default: input.isDefault,
+        })
+        .select("id, method, identifier, label, is_default")
+        .single();
+      if (error) return { error: error.message };
+      const row = data as SavedPaymentMethod;
+      const cache = await readPaymentMethodsCache();
+      cache[input.profileId] = [row, ...(cache[input.profileId] || [])];
+      await writePaymentMethodsCache(cache);
+      return { row };
+    }
+  } catch (e: any) {
+    return { error: e?.message || "Could not save payment method." };
+  }
+  const row: SavedPaymentMethod = {
+    id: `local-${Date.now()}`,
+    method: input.method,
+    identifier: input.identifier,
+    label: input.label,
+    is_default: input.isDefault,
+  };
+  const cache = await readPaymentMethodsCache();
+  cache[input.profileId] = [row, ...(cache[input.profileId] || [])];
+  await writePaymentMethodsCache(cache);
+  return { row };
+}
+
+/** Delete a saved method; local-only rows are simply dropped from the cache. */
+export async function deleteSavedPaymentMethod(
+  profileId: string,
+  id: string
+): Promise<{ ok: boolean; error?: string }> {
+  const cache = await readPaymentMethodsCache();
+  cache[profileId] = (cache[profileId] || []).filter((m) => m.id !== id);
+  await writePaymentMethodsCache(cache);
+  if (id.startsWith("local-")) return { ok: true };
+  try {
+    if (await isBackendOnline()) {
+      const { error } = await supabase
+        .from("customer_payment_methods")
+        .delete()
+        .eq("id", id);
+      if (error) return { ok: false, error: error.message };
+    }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "Could not remove payment method." };
+  }
+  return { ok: true };
+}
+
+// =====================================================================
+// SIGN-OUT — purge everything that belongs to a PERSON, not the device
+// =====================================================================
+/**
+ * Remove every user-scoped AsyncStorage cache on signOut: queued/synced
+ * orders, profile + addresses (namespaced AND the legacy bare keys),
+ * notifications, payment methods. Favorites are server-only (no local
+ * cache exists here), so nothing to purge for them.
+ *
+ * Deliberately NOT touched: the product cache, marketplace translate cache
+ * and fx rate — those are device-wide, non-personal data.
+ */
+export async function purgeUserScopedCaches(): Promise<void> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const personal = keys.filter(
+      (k) =>
+        k === ORDERS_KEY ||
+        k === NOTIFICATIONS_CACHE_KEY ||
+        k === PAYMENT_METHODS_CACHE_KEY ||
+        k === SOURCING_KEY ||
+        k === PROFILE_KEY_BASE ||
+        k === ADDRESSES_KEY_BASE ||
+        k.startsWith(`${PROFILE_KEY_BASE}:`) ||
+        k.startsWith(`${ADDRESSES_KEY_BASE}:`)
+    );
+    if (personal.length > 0) await AsyncStorage.multiRemove(personal);
+  } catch (e: any) {
+    console.warn("[db]", "purgeUserScopedCaches:", e?.message);
+  }
+}
