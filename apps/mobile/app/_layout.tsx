@@ -80,44 +80,44 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
-      <I18nProvider>
-        <View style={styles.container}>
-          <StatusBar style="dark" />
-          <AuthRedirect />
+      <View style={styles.container}>
+        <StatusBar style="dark" />
+        <AuthRedirect />
+        <I18nProvider>
           <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="onboarding" options={{ presentation: "card" }} />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="(auth)" options={{ presentation: "card" }} />
-          <Stack.Screen name="product/[id]" options={{ presentation: "card" }} />
-          <Stack.Screen name="marketplace/[marketplace]" options={{ presentation: "card" }} />
-          <Stack.Screen name="cart/index" options={{ presentation: "card" }} />
-          <Stack.Screen name="cart/checkout" options={{ presentation: "card" }} />
-          <Stack.Screen name="search/index" options={{ presentation: "card" }} />
-          <Stack.Screen name="orders/[id]" options={{ presentation: "card" }} />
-          <Stack.Screen name="orders/tracking" options={{ presentation: "card" }} />
-          <Stack.Screen name="orders/success" options={{ presentation: "card" }} />
-          <Stack.Screen name="settings/index" options={{ presentation: "card" }} />
-          <Stack.Screen name="support/index" options={{ presentation: "card" }} />
-          {/* Profile subscreens */}
-          <Stack.Screen name="profile/personal-info" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/addresses" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/add-address" options={{ presentation: "modal" }} />
-          <Stack.Screen name="profile/payment-methods" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/order-history" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/wishlist" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/referral" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/help" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/about" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/terms" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/privacy" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/returns" options={{ presentation: "card" }} />
-          <Stack.Screen name="profile/shipping-info" options={{ presentation: "card" }} />
-          <Stack.Screen name="notifications/index" options={{ presentation: "card" }} />
-          <Stack.Screen name="notifications/settings" options={{ presentation: "card" }} />
-          <Stack.Screen name="+not-found" />
-        </Stack>
+            <Stack.Screen name="onboarding" options={{ presentation: "card" }} />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(auth)" options={{ presentation: "card" }} />
+            <Stack.Screen name="product/[id]" options={{ presentation: "card" }} />
+            <Stack.Screen name="marketplace/[marketplace]" options={{ presentation: "card" }} />
+            <Stack.Screen name="cart/index" options={{ presentation: "card" }} />
+            <Stack.Screen name="cart/checkout" options={{ presentation: "card" }} />
+            <Stack.Screen name="search/index" options={{ presentation: "card" }} />
+            <Stack.Screen name="orders/[id]" options={{ presentation: "card" }} />
+            <Stack.Screen name="orders/tracking" options={{ presentation: "card" }} />
+            <Stack.Screen name="orders/success" options={{ presentation: "card" }} />
+            <Stack.Screen name="settings/index" options={{ presentation: "card" }} />
+            <Stack.Screen name="support/index" options={{ presentation: "card" }} />
+            {/* Profile subscreens */}
+            <Stack.Screen name="profile/personal-info" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/addresses" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/add-address" options={{ presentation: "modal" }} />
+            <Stack.Screen name="profile/payment-methods" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/order-history" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/wishlist" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/referral" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/help" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/about" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/terms" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/privacy" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/returns" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/shipping-info" options={{ presentation: "card" }} />
+            <Stack.Screen name="notifications/index" options={{ presentation: "card" }} />
+            <Stack.Screen name="notifications/settings" options={{ presentation: "card" }} />
+            <Stack.Screen name="+not-found" />
+          </Stack>
+        </I18nProvider>
       </View>
-      </I18nProvider>
     </ErrorBoundary>
   );
 }
