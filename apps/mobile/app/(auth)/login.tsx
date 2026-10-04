@@ -11,10 +11,10 @@ import {
   ActivityIndicator,
   ScrollView,
 } from "react-native";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, Link } from "expo-router";
 import { useAuthStore } from "@/store/auth";
-import { COLORS, SPACING, RADIUS } from "@/lib/theme";
+import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import * as Haptics from "expo-haptics";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Image } from "expo-image";
@@ -26,108 +26,191 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const { signIn, error, clearError } = useAuthStore();
   const router = useRouter();
+  const passwordInputRef = useRef<TextInput>(null);
+
+  // Load saved email
+  useEffect(() => {
+    const saved = localStorage.getItem("chinasuuq-login-email");
+    if (saved) setEmail(saved);
+  }, []);
 
   const handleLogin = useCallback(async () => {
     if (!email.trim() || !password.trim()) {
-      Alert.alert("Missing fields", "Please enter both email and password.");
+      Alert.alert(
+        platformText("Missing fields", "Buuxi dhammaan go'aanka"),
+        platformText("Please enter both email and password.", "Fadlan geli email iyo code-xufis.")
+      );
       return;
     }
     setLoading(true);
+    setErrorMsg(null);
+    clearError();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const result = await signIn(email.trim(), password);
-    setLoading(false);
-    if (result.error) {
+
+    try {
+      const result = await signIn(email.trim(), password);
+      if (result.error) {
+        const msg = result.error.toLowerCase();
+        if (msg.includes("invalid") || msg.includes("credentials")) {
+          setErrorMsg(platformText("Invalid email or password. Please try again.", "Email ama code-xufis khaldan. Fadlan isku day mar kale."));
+        } else if (msg.includes("network") || msg.includes("fetch")) {
+          setErrorMsg(platformText("Network error. Please check your connection and try again.", "Khalad shabaakad. Fadlan hubi isku xirkaaga."));
+        } else {
+          setErrorMsg(platformText("Sign in failed. Please try again.", "Gal wax khasaare ah. Fadlan isku day mar kale."));
+        }
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Remember email for next time
+        try { localStorage.setItem("chinasuuq-login-email", email.trim()); } catch {}
+      }
+    } catch (e: any) {
+      setErrorMsg(platformText("Connection error. Please try again.", "Khalad xiriir. Fadlan isku day mar kale."));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert("Sign In Failed", result.error);
-    } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } finally {
+      setLoading(false);
     }
-  }, [email, password, signIn]);
+  }, [email, password, signIn, clearError]);
+
+  const platformText = (en: string, so: string) => {
+    // Will be overridden by i18n in production; this is a fallback
+    return en;
+  };
 
   return (
     <ErrorBoundary>
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.outerContainer}>
+      {/* Decorative gradient background */}
+      <View style={styles.bgOrb1} />
+      <View style={styles.bgOrb2} />
+
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardView}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.card}>
-          <Image source={require("../../assets/images/logo.jpg")} style={styles.authLogo} resizeMode="contain" />
-          <Text style={styles.brand}>ChinaSuuq</Text>
-          <Text style={styles.sub}>Your trusted bridge from China to Somalia</Text>
-          <View style={styles.welcomeStrip}><Text style={styles.welcomeText}>Shop smarter · ship confidently</Text></View>
-          <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.helper}>Sign in to track orders, save products and checkout faster.</Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Brand Header */}
+          <View style={styles.brandSection}>
+            <Image source={LOGO} style={styles.authLogo} resizeMode="contain" />
+            <Text style={styles.brandName}>ChinaSuuq</Text>
+            <Text style={styles.brandTagline}>Your trusted bridge from China to Somalia</Text>
+          </View>
 
-          {error ? (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorText}>{error}</Text>
-              <TouchableOpacity onPress={clearError}>
-                <Text style={styles.errorDismiss}>✕</Text>
-              </TouchableOpacity>
+          {/* Login Card */}
+          <View style={styles.card}>
+            <Text style={styles.title}>Welcome Back</Text>
+            <Text style={styles.helper}>Sign in to track orders, save products and checkout faster.</Text>
+
+            {errorMsg ? (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorText}>{errorMsg}</Text>
+                <TouchableOpacity onPress={() => setErrorMsg(null)} style={styles.errorDismiss}>
+                  <Text style={styles.errorDismissText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ) : error ? (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity onPress={clearError} style={styles.errorDismiss}>
+                  <Text style={styles.errorDismissText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {/* Email Input */}
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputLabel}>Email</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="you@example.com"
+                placeholderTextColor={COLORS.gray400}
+                value={email}
+                onChangeText={(v) => { setEmail(v); setErrorMsg(null); }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+                returnKeyType="next"
+                onSubmitEditing={() => passwordInputRef.current?.focus()}
+              />
             </View>
-          ) : null}
 
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor={COLORS.gray400}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoComplete="email"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={COLORS.gray400}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPass}
-            autoComplete="password"
-          />
+            {/* Password Input */}
+            <View style={styles.inputWrap}>
+              <View style={styles.inputLabelRow}>
+                <Text style={styles.inputLabel}>Password</Text>
+                <Link href="/(auth)/forgot-password" asChild>
+                  <TouchableOpacity style={styles.forgotBtn} activeOpacity={0.7}>
+                    <Text style={styles.forgotText}>Forgot?</Text>
+                  </TouchableOpacity>
+                </Link>
+              </View>
+              <View style={styles.passwordWrap}>
+                <TextInput
+                  ref={passwordInputRef}
+                  style={styles.input}
+                  placeholder="Enter your password"
+                  placeholderTextColor={COLORS.gray400}
+                  value={password}
+                  onChangeText={(v) => { setPassword(v); setErrorMsg(null); }}
+                  secureTextEntry={!showPass}
+                  autoComplete="password"
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPass(!showPass)}
+                  style={styles.showPassBtn}
+                >
+                  <Text style={styles.showPassText}>{showPass ? "Hide" : "Show"}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
 
-          <TouchableOpacity onPress={() => setShowPass(!showPass)} style={styles.showPassBtn}>
-            <Text style={styles.showPassText}>{showPass ? "Hide" : "Show"} Password</Text>
-          </TouchableOpacity>
-
-          <Link href="/(auth)/forgot-password" asChild>
-            <TouchableOpacity style={styles.forgotBtn} activeOpacity={0.7}>
-              <Text style={styles.forgotText}>Forgot password?</Text>
+            {/* Sign In Button */}
+            <TouchableOpacity
+              style={[styles.btn, loading && styles.btnDisabled]}
+              onPress={handleLogin}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <Text style={styles.btnText}>Sign In</Text>
+              )}
             </TouchableOpacity>
-          </Link>
 
-          <TouchableOpacity
-            style={[styles.btn, loading && styles.btnDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            {loading ? (
-              <ActivityIndicator color={COLORS.white} />
-            ) : (
-              <Text style={styles.btnText}>Sign In</Text>
-            )}
-          </TouchableOpacity>
+            {/* Sign Up Link */}
+            <Link href="/(auth)/signup" asChild>
+              <TouchableOpacity style={styles.link} activeOpacity={0.7}>
+                <Text style={styles.linkText}>
+                  Don't have an account? {" "}
+                  <Text style={styles.linkHighlight}>Sign Up</Text>
+                </Text>
+              </TouchableOpacity>
+            </Link>
 
-          <Link href="/(auth)/signup" asChild>
-            <TouchableOpacity style={styles.link} activeOpacity={0.7}>
-              <Text style={styles.linkText}>Don't have an account? Sign Up</Text>
+            {/* Guest Skip */}
+            <TouchableOpacity
+              style={styles.skipBtn}
+              onPress={() => router.replace("/(tabs)/home")}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.skipText}>Continue as Guest</Text>
             </TouchableOpacity>
-          </Link>
+          </View>
 
-          <TouchableOpacity
-            style={styles.skipBtn}
-            onPress={() => router.replace("/(tabs)/home")}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.skipText}>Skip — Continue as Guest</Text>
-          </TouchableOpacity>
-        </View>
+          {/* Trust Footer */}
+          <View style={styles.trustFooter}>
+            <Text style={styles.trustText}>🔒 Secure · 🌍 Somalia-wide · ⚡ Fast Support</Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -135,41 +218,191 @@ export default function LoginScreen() {
   );
 }
 
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.darkSurface },
-  keyboardView: { flex: 1, paddingHorizontal: SPACING.xl },
-  scrollContent: { flexGrow: 1, justifyContent: "center", paddingVertical: SPACING.xl },
-  card: { backgroundColor: COLORS.white, borderRadius: RADIUS.xxl, padding: SPACING.xl, width: "100%", alignItems: "center", shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 8 },
-  brandOrb: { width: 76, height: 76, borderRadius: 26, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", marginBottom: SPACING.md, transform: [{ rotate: "-6deg" }] },
-  logoWrap: { width: 64, height: 64, borderRadius: 32, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", marginBottom: SPACING.md },
-  authLogo: { width: 110, height: 96, borderRadius: RADIUS.xl, marginBottom: SPACING.md },
-  logo: { fontSize: 28, fontWeight: "800", color: COLORS.white },
-  brand: { fontSize: 24, fontWeight: "800", color: COLORS.black },
-  sub: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.md, textAlign: "center" },
-  welcomeStrip: { backgroundColor: COLORS.softOrange, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderRadius: RADIUS.pill, marginBottom: SPACING.xl },
-  welcomeText: { color: COLORS.primaryDark, fontSize: 12, fontWeight: "700" },
-  title: { fontSize: 24, fontWeight: "800", color: COLORS.black, marginBottom: SPACING.xs, alignSelf: "flex-start" },
-  helper: { fontSize: 13, color: COLORS.textSecondary, marginBottom: SPACING.lg, alignSelf: "flex-start", lineHeight: 19 },
-  input: { width: "100%", height: 52, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: SPACING.lg, fontSize: 15, marginBottom: SPACING.md, color: COLORS.black, backgroundColor: COLORS.white },
-  btn: { width: "100%", height: 52, borderRadius: RADIUS.lg, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center", marginTop: SPACING.md },
-  btnDisabled: { opacity: 0.6 },
-  btnText: { color: COLORS.white, fontSize: 16, fontWeight: "700" },
-  link: { marginTop: SPACING.lg, minHeight: 44, justifyContent: "center" },
-  linkText: { color: COLORS.primary, fontSize: 14, fontWeight: "600" },
-  showPassBtn: { alignSelf: "flex-end", marginBottom: SPACING.sm, minHeight: 32, justifyContent: "center" },
-  showPassText: { color: COLORS.textSecondary, fontSize: 13 },
-  forgotBtn: { alignSelf: "flex-end", marginBottom: SPACING.md, minHeight: 32, justifyContent: "center", paddingVertical: SPACING.xs },
-  forgotText: { color: COLORS.primary, fontSize: 13, fontWeight: "600" },
-  skipBtn: {
+  outerContainer: {
+    flex: 1,
+    backgroundColor: COLORS.darkSurface,
+    overflow: "hidden",
+  },
+  bgOrb1: {
+    position: "absolute",
+    top: -80,
+    left: -80,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: "rgba(255, 90, 10, 0.15)",
+  },
+  bgOrb2: {
+    position: "absolute",
+    bottom: -60,
+    right: -60,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: "rgba(255, 140, 60, 0.12)",
+  },
+  keyboardView: {
+    flex: 1,
+    paddingHorizontal: SPACING.xl,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingVertical: SPACING.xl,
+  },
+  brandSection: {
+    alignItems: "center",
+    marginBottom: SPACING.xl,
+  },
+  authLogo: {
+    width: 120,
+    height: 104,
+    borderRadius: RADIUS.xl,
+    marginBottom: SPACING.md,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  brandName: {
+    fontSize: 32,
+    fontFamily: FONTS.bold,
+    color: COLORS.white,
+    letterSpacing: 0.5,
+  },
+  brandTagline: {
+    fontSize: 13,
+    fontFamily: FONTS.medium,
+    color: "rgba(255,255,255,0.55)",
+    marginTop: 4,
+  },
+  card: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.xxl,
+    padding: SPACING.xl,
+    width: "100%",
+    shadowColor: COLORS.black,
+    shadowOpacity: 0.25,
+    shadowRadius: 32,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 12,
+  },
+  title: {
+    fontSize: 26,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+    marginBottom: 6,
+  },
+  helper: {
+    fontSize: 13,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.lg,
+    lineHeight: 19,
+  },
+  inputWrap: {
+    marginBottom: SPACING.md,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontFamily: FONTS.semibold,
+    color: COLORS.gray600,
+    marginBottom: 6,
+  },
+  inputLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  input: {
+    width: "100%",
+    height: 52,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    paddingHorizontal: SPACING.lg,
+    fontSize: 15,
+    color: COLORS.black,
+    backgroundColor: COLORS.gray50,
+  },
+  passwordWrap: {
+    position: "relative",
+  },
+  showPassBtn: {
+    position: "absolute",
+    right: SPACING.md,
+    top: 14,
+    minHeight: 24,
+    justifyContent: "center",
+  },
+  showPassText: {
+    fontSize: 13,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
+  },
+  forgotBtn: {
+    minHeight: 24,
+    justifyContent: "center",
+  },
+  forgotText: {
+    fontSize: 13,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
+  },
+  btn: {
+    width: "100%",
+    height: 54,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: SPACING.md,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  btnText: {
+    color: COLORS.white,
+    fontSize: 16,
+    fontFamily: FONTS.bold,
+    letterSpacing: 0.3,
+  },
+  link: {
     marginTop: SPACING.lg,
     minHeight: 44,
     justifyContent: "center",
-    paddingHorizontal: SPACING.xl,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    alignItems: "center",
   },
-  skipText: { color: COLORS.textSecondary, fontSize: 15, fontWeight: "600" },
+  linkText: {
+    fontSize: 14,
+    fontFamily: FONTS.medium,
+    color: COLORS.textSecondary,
+  },
+  linkHighlight: {
+    color: COLORS.primary,
+    fontFamily: FONTS.bold,
+  },
+  skipBtn: {
+    marginTop: SPACING.md,
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: SPACING.sm,
+  },
+  skipText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontFamily: FONTS.medium,
+  },
   errorBanner: {
     width: "100%",
     flexDirection: "row",
@@ -182,6 +415,28 @@ const styles = StyleSheet.create({
     padding: SPACING.md,
     marginBottom: SPACING.md,
   },
-  errorText: { color: COLORS.error, fontSize: 13, flex: 1 },
-  errorDismiss: { color: COLORS.error, fontSize: 18, marginLeft: SPACING.sm, fontWeight: "700" },
+  errorText: {
+    color: COLORS.error,
+    fontSize: 13,
+    flex: 1,
+    paddingRight: SPACING.sm,
+  },
+  errorDismiss: {
+    minHeight: 24,
+    justifyContent: "center",
+  },
+  errorDismissText: {
+    color: COLORS.error,
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  trustFooter: {
+    marginTop: SPACING.xl,
+    alignItems: "center",
+  },
+  trustText: {
+    fontSize: 12,
+    fontFamily: FONTS.medium,
+    color: "rgba(255,255,255,0.45)",
+  },
 });

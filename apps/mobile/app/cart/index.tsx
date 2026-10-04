@@ -15,6 +15,7 @@ import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS, whatsappOrderLink } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useCartStore } from "@/store/cart";
+import { useAuthStore } from "@/store/auth";
 import CartItem from "@/components/cart/CartItem";
 import EmptyCart from "@/components/cart/EmptyCart";
 import { formatUSD } from "@/lib/utils";
@@ -41,6 +42,7 @@ const MARKET_COLORS: Record<string, string> = {
 
 export default function CartScreen() {
   const router = useRouter();
+  const user = useAuthStore((s) => s.user);
   const { t, locale } = useI18n();
   const items = useCartStore((s) => s.items);
   const updateQuantity = useCartStore((s) => s.updateQuantity);

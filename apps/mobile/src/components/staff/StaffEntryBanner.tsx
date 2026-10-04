@@ -19,7 +19,7 @@ export function StaffEntryBanner() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>🛠 Staff Account Detected</Text>
+      <Text style={styles.title}>Staff Access Available</Text>
       <TouchableOpacity
         style={styles.button}
         onPress={() => {
@@ -28,7 +28,7 @@ export function StaffEntryBanner() {
         }}
       >
         <Cookie size={16} color="#FFFFFF" />
-        <Text style={styles.buttonText}>Enter Staff Mode</Text>
+        <Text style={styles.buttonText}>Manage Marketplaces</Text>
         <LogIn size={14} color="#FFFFFF" />
       </TouchableOpacity>
     </View>
