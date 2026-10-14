@@ -814,7 +814,9 @@ across SQL, both apps and the edge functions, also with a negative control. `den
 edge functions shows zero new errors versus the committed baseline; the CI workflow parses with
 4 jobs, the 13-step `mobile-config` job runs every mobile gate as a hard step, and the 13-step
 `web-build` job (12 hard) runs the enrichment, AI-client, tracking and admin-guardrail gates
-between typecheck and build.
+between typecheck and build. After the push that stopped being a prediction: GitHub Actions ran
+the workflow on `d75318c` and all four jobs concluded `success`, including the Metro bundle step
+that is this repo's only trustworthy mobile check (§6.2).
 
 **Not verified — open gaps:**
 1. No on-device run. The scheduler's behaviour *is* now proven in simulation (§1), and the
@@ -836,10 +838,15 @@ between typecheck and build.
    migrations/source, not production.
 4. **The edge-function fixes in §5 are repo-only.** They change how the server answers, so
    they do nothing for customers until deployed (`ai-chat`, `ai-translate`,
-   `marketplace-session-sync`, `payment-reconcile`, `_shared/auth.ts`).
-5. Carried-over release actions are still open: rotate the `sk-H5qx` AI key and the
-   dollarstore password, re-sync dollarstore cookies, rebuild the web bundle and APK.
-6. `apps/mobile` version is still `1.0.3`; nothing is committed yet.
+   `marketplace-session-sync`, `payment-reconcile`, `_shared/auth.ts`). The web app was
+   deployed on 2026-10-14; the functions were not (§8.3 is still gated on Supabase access —
+   the connector went unavailable for this session entirely, so the deploy path itself is
+   unverified).
+5. Carried-over release actions: rotate the `sk-H5qx` AI key and the
+   dollarstore password, re-sync dollarstore cookies, build the mobile binary. **The web bundle
+   is no longer on this list — it was published to `chinasuuq.com` on 2026-10-14 (§8.7).**
+6. `apps/mobile` version is still `1.0.3` (§8.8). The audit itself is committed and pushed
+   (`d75318c` on `origin/main`, §8.2), so there is now a "before" to revert to.
 7. Cosmetic debt deliberately not churned right before a release: ~40 unused local
    imports/vars flagged by `tsc --noUnusedLocals` (mostly `React` under the automatic JSX
    runtime, which is this codebase's convention), and 11 pre-existing `deno check` errors.
@@ -874,26 +881,64 @@ between typecheck and build.
     as "zero grants" and hands every signed-in staff member AI-key editing and payment
     verification. Nothing changes for operators until `verify:admin`'s module is actually in a
     served bundle — the gate proves the code is right, not that it is live.
+11. **FOUND AFTER THE 2026-10-14 PRODUCTION DEPLOY — the site's HTML pages are served without
+    the security headers the repo believes they have.** `vercel.json` is the authoritative
+    header source (with `output: "export"` Next emits no `headers()` and never runs `proxy.ts`,
+    as `next.config.ts` says in its own comment), and measured against the live deployment the
+    `/:path*` block that carries CSP, `X-Frame-Options`, `X-Content-Type-Options`,
+    `Referrer-Policy` and `Permissions-Policy` **does reach asset routes but not page routes**:
+    `/app/chinasuuq.apk`, `/images/*` and `/_next/static/*` all answer with the full CSP, while
+    `/`, `/quote/`, `/track/` and `/admin/staff/` answer with none of it — only Vercel's own
+    `strict-transport-security: max-age=63072000` (not the repo's
+    `includeSubDomains; preload` value) and no `X-Robots-Tag`. `/admin/staff/` additionally
+    came back `cache-control: public, max-age=0, must-revalidate` instead of the declared
+    `no-store, no-cache, must-revalidate, private`, and `/track/` took the last matching rule's
+    `s-maxage=86400`. The exact precedence rule is NOT settled by this evidence: `/track/`
+    clearly took the last matching block (the public-page `Cache-Control`), while
+    `/admin/staff/` matches only the generic and the admin blocks yet answered with neither
+    block's cache value — which suggests a framework default outranks `vercel.json` on some HTML
+    routes. Either way the conclusion is the same: a generic `/:path*` block cannot be relied on
+    to decorate page routes. What this costs today: the admin console and login pages have no
+    `frame-ancestors` / `X-Frame-Options` (a clickjacking surface on the page that takes a staff
+    password), no CSP on any HTML document, and admin HTML is cacheable and indexable instead of
+    `no-store` + `noindex`. The fix is mechanical — give every rule that matches a page its own
+    copy of the security headers — and it has to be verified the way this was found, by reading
+    response headers off a deployed page (if `vercel.json` still loses to the framework, the
+    headers move to the Vercel project's own configuration). Needs another production deploy,
+    so it is not attempted here.
+
+**Closed by the 2026-10-14 deploy (this list used to include it as gap 10):** "the
+admin-console fix is repo-only". The deployed console used to read a dropped permissions call
+as "zero grants" and hand every signed-in staff member AI-key editing and payment
+verification; `vercel deploy --prod` shipped the fail-closed loader together with the `/track`
+failure classifier, and §8.7 records the proof taken off the served chunks rather than the
+repo.
 
 ---
 
 ## 8. Ship order — the gated actions, in dependency order
 
-**None of this was executed by this audit.** Every step below changes a live system, an
-installed device, or a credential, and each one needs the owner's go-ahead. The order is not
-cosmetic: deploying the server fixes before the device pass means testing code that is not
-running, and rebuilding the web bundle before rotating the exposed key ships a bundle that
-still contains a published secret's consequences.
+**Status at the end of 2026-10-14:** the owner authorised "commit, push, Vercel the website", so
+**8.1, 8.2 and 8.7 are DONE** and each records its evidence below. Everything else on this list
+still needs a separate go-ahead or a physical device — 8.3 (edge functions), 8.4 (phone pass),
+8.5/8.6 (credentials), 8.8 (binary), and the header fix that 8.7's verification uncovered (§7
+gap 11). The order is not cosmetic: deploying the server fixes before the device pass means
+testing code that is not running, and rebuilding the web bundle before rotating the exposed key
+ships a bundle that still carries a published secret's consequences.
 
-**8.1 Re-prove the repo (safe, read-only, 2 minutes).** From the root: `npm run verify:roles`;
-in `apps/mobile`: `npm run verify` then `npx expo export --platform android`; in `apps/web`:
-`npm run verify`, `npx tsc --noEmit`, `npm run build`. Expected: exit 0 everywhere, 108 + 62 +
-9 behaviours, a Hermes bundle under `dist/`, 29/29 exported pages. This is the last point at
-which a failure is still only a code problem.
+**8.1 DONE — repo re-proved before shipping.** `npm run verify:roles` (9), `apps/mobile`
+`npm run verify` (typecheck + 7 gates, 108 behaviours), `apps/web` `npm run verify` (62
+behaviours) all exit 0. On GitHub after the push, CI ran the whole chain as the authoritative
+check — `Mobile — Expo typecheck + Metro bundle`, `Web — typecheck, lint, build`,
+`Supabase Edge Functions — parse gate`, `Repo hygiene guard` — and all four jobs concluded
+`success` (run `38600610155`).
 
-**8.2 Commit the audit.** Nothing is committed; `git status` is the surface described in §6.1.
-A commit before deploying is what makes a bad deploy revertible — without it there is no
-"before" to go back to.
+**8.2 DONE — committed and pushed.** `d75318c` ("fix: deep audit — WebView speed, AI
+translation, honest failures, staff RBAC"), 89 files, +9,193/−786, pushed to `origin/main`.
+Before committing, the staged diff was scanned for credentials: the only key-shaped strings
+added are a fake `…\.sig` test JWT inside a gate fixture and reads of
+`process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY`, and no `.env`, service-account or PEM path is
+tracked. This commit is the "before" a bad deploy gets reverted to.
 
 **8.3 Deploy the five changed functions** — `ai-chat`, `ai-translate`,
 `marketplace-session-sync`, `payment-reconcile`, plus the shared gate `_shared/auth.ts`.
@@ -929,14 +974,25 @@ different way.
 session, so syncing first and rotating second re-creates the exact logout this step is meant
 to fix. Staff → marketplaces screen, then repeat 8.4's second-visit check for dollarstore.
 
-**8.7 Rebuild and publish the web bundle.** `cd apps/web && npm run build` produces the static
-export in `apps/web/out`; the root `vercel.json` is what the deployment actually serves (with
-`output: "export"`, Next emits no `headers()` and never runs `proxy.ts` — CSP, HSTS, the admin
-`no-store` and the www→apex redirect live there, so keep them in sync in that file only).
-**Cache caveat that will otherwise look like a failed deploy:** only `/admin/*` is `no-store`;
-public routes are served with `must-revalidate, s-maxage=86400`, so the CDN can answer with
-the previous `/track` HTML for hours. Verify gap 10 and the `/track` classifier with a
-cache-busted request (or a purge), not by reloading the page you had already opened.
+**8.7 DONE — web bundle rebuilt and published to production, and verified as actually live.**
+`vercel deploy --prod` built and aliased the static export (deployment
+`chinasuuq-dw375gffp`, `https://chinasuuq.com` ready in ~3 min, exit 0, 29 routes exported).
+The project has **no** Vercel environment variables, which is fine only because
+`next.config.ts` hardcodes the public Supabase URL and anon key — worth remembering if a real
+secret ever needs to reach the bundle. Verification was done against the served bytes, not the
+repo: a cache-busted `GET /track/` came back `x-vercel-cache: MISS` with
+`last-modified: 14 Oct 2026 16:47:52 GMT` (the new build), and its page chunk
+`/_next/static/chunks/app/(public)/track/page-aab5245935e37d6b.js` contains both
+`We could not reach the server` and `Order not found` — the two states gap 10 says a customer
+used to get conflated. `admin/(protected)/staff/page-a7c207dcadede4b9.js` contains the
+fail-closed notice wording, so the permission loader that denies on a dropped read is the code
+operators now get. **What this step's own verification then discovered is §7 gap 11**: the same
+headers say every *page* route is served without the `vercel.json` CSP / `X-Frame-Options` /
+`nosniff` block that the assets do get, so fixing the header rules is an open deploy of its own.
+Cache behaviour measured as expected for public pages (`max-age=0, must-revalidate,
+s-maxage=86400, stale-while-revalidate=604800`), which is why any future check of a page change
+must be a cache-busted request or a purge — reloading a tab that is already open can show the
+old bundle for hours.
 
 **8.8 Bump the mobile version and build the binaries — and understand what the bump does.**
 `apps/mobile/package.json` and `app.json` both still say `1.0.3`; `runtimeVersion.policy` is
@@ -946,8 +1002,7 @@ someone installs the new binary. Pick the profile by what you need to hand out: 
 builds an **APK** (`distribution: internal`) — that is the file to replace at the site's
 `/app/chinasuuq.apk` — while `production` builds an **AAB** for Play with `autoIncrement`, and
 `eas.json` sets `cli.appVersionSource: "remote"`, so build numbers live in the EAS project
-rather than in this repo. Then say in the staff group which version fixes the shared-device
-basket (§4.7) — the fix is only felt after an install.
+rather than in this repo. Then say in the staff group which version fixes the shared-device basket (§4.7) — the fix is only felt after an install.
 
 **8.9 After any staff change:** the role vocabulary is checked by `npm run verify:roles`, and
 the permission loader's cache is per signed-in user id, so a role edit is seen by that user on
