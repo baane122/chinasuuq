@@ -183,7 +183,8 @@ export default function HomeTab() {
     try {
       const data = await getProducts(force);
       setProducts(data);
-    } catch {
+    } catch (e) {
+      console.warn("[home] products failed", e);
       setError(true);
     } finally {
       setLoading(false);
@@ -195,7 +196,8 @@ export default function HomeTab() {
       const feed = await getTrendingFeed({ force });
       setTrendingItems(feed.items);
       setTrendingStatus(feed.status);
-    } catch {
+    } catch (e) {
+      console.warn("[home] trending feed failed", e);
       // A trending feed must never be why home failed to render.
       setTrendingStatus("unavailable");
     } finally {

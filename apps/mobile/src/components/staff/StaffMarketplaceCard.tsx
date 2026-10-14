@@ -11,7 +11,8 @@ import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { COLORS, SPACING, RADIUS } from "@/lib/theme";
 import { Cookie } from "lucide-react-native";
-import { getMarketplaceSession } from "@/lib/supabase";
+import { fetchMarketplaceSession } from "@/lib/supabase";
+import type { MarketplaceSessionResult } from "@/lib/supabase";
 import type { Marketplace } from "@/lib/marketplaces";
 
 interface Props {
@@ -20,7 +21,7 @@ interface Props {
 
 export function StaffMarketplaceCard({ marketplace }: Props) {
   const router = useRouter();
-  const [session, setSession] = useState<any>(null);
+  const [result, setResult] = useState<MarketplaceSessionResult | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -29,8 +30,12 @@ export function StaffMarketplaceCard({ marketplace }: Props) {
 
   async function loadSession() {
     setLoading(true);
-    const data = await getMarketplaceSession(marketplace.id);
-    setSession(data);
+    // Returns a result rather than null so a network failure cannot be drawn
+    // as "No Session": that wording tells a staff member their shared login is
+    // gone, and they will re-log-in or escalate over a read that simply timed
+    // out. "Unknown" is the honest answer, and it is tappable.
+    const data = await fetchMarketplaceSession(marketplace.id);
+    setResult(data);
     setLoading(false);
   }
 
@@ -43,16 +48,29 @@ export function StaffMarketplaceCard({ marketplace }: Props) {
     router.push(`/marketplace/${marketplace.id}`);
   }
 
+  const session = result?.session ?? null;
+  const failed = result?.failed === true;
+
+  const statusLabel = loading
+    ? "..."
+    : !session
+      ? failed
+        ? "Unknown"
+        : "No Session"
+      : failed
+        ? "Last known"
+        : "Active";
+
   const getStatusColor = () => {
-    if (!session) return "#D92D20";
-    if (!session.cookies) return "#F79009";
-    return "#12B76A";
+    if (loading) return "#6B7280";
+    if (!session) return failed ? "#F79009" : "#D92D20";
+    return failed ? "#F79009" : "#12B76A";
   };
 
   const getStatusIcon = () => {
-    if (!session) return "🔴";
-    if (!session.cookies) return "🟡";
-    return "🟢";
+    if (loading) return "⚪";
+    if (!session) return failed ? "🟠" : "🔴";
+    return failed ? "🟠" : "🟢";
   };
 
   return (
@@ -62,13 +80,17 @@ export function StaffMarketplaceCard({ marketplace }: Props) {
           <Text style={styles.name}>{marketplace.name}</Text>
           <Text style={styles.domain}>{marketplace.id}.com</Text>
         </View>
-        
-        <View style={[styles.status, { backgroundColor: getStatusColor() + '20' }]}>
+
+        <TouchableOpacity
+          style={[styles.status, { backgroundColor: getStatusColor() + "20" }]}
+          onPress={loadSession}
+          disabled={loading}
+        >
           <Text style={styles.statusText}>{getStatusIcon()}</Text>
           <Text style={[styles.statusText, { color: getStatusColor() }]}>
-            {loading ? "..." : session ? "Active" : "No Session"}
+            {statusLabel}
           </Text>
-        </View>
+        </TouchableOpacity>
       </View>
 
       <TouchableOpacity style={styles.syncButton} onPress={handleOpen}>
@@ -79,6 +101,14 @@ export function StaffMarketplaceCard({ marketplace }: Props) {
       <Text style={styles.syncHint}>
         Open marketplace, log in, then tap Sync in the header
       </Text>
+
+      {failed && !loading && (
+        // Says which of the two it is: the read failed, or the login really is
+        // missing. Tapping the chip above retries without leaving the screen.
+        <Text style={styles.syncHint}>
+          Couldn’t check the shared session{session ? " — showing the last one read" : ""}. Tap the status to retry.
+        </Text>
+      )}
 
       {session?.cookiesUpdatedAt && (
         <Text style={styles.timestamp}>

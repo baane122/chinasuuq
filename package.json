@@ -12,7 +12,8 @@
     "build": "cd apps/web && npm run build",
     "typecheck": "cd apps/web && npx tsc --noEmit",
     "lint": "turbo lint",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "verify:roles": "node --experimental-strip-types scripts/verify-role-vocabulary.mjs"
   },
   "devDependencies": {
     "turbo": "^2.0.0"

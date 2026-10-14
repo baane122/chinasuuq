@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { hasAdminFallbackSession, isDevBuild } from "@/lib/adminSession";
+import { isStaffRole, isNetworkError } from "@/lib/roles";
 import { bumpLive, setLiveConnected, useLiveConnected, useLiveVersion } from "@/lib/admin/live-store";
 import Link from "next/link";
 import {
@@ -125,6 +126,11 @@ export default function ProtectedLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  // Verified session, but the role could not be established. Distinct from
+  // isAuthenticated=false so the UI says WHY instead of silently looping the
+  // staff member back through the login screen.
+  const [roleError, setRoleError] = useState<string | null>(null);
+  const roleRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   // Starting empty meant one failed head-count (or a slow first batch) left the
@@ -171,18 +177,60 @@ export default function ProtectedLayout({
         // Role gate: a valid customer/supplier session must NOT reach the
         // admin shell. RLS still protects the data; this keeps non-staff out
         // of the UI entirely.
-        const { data: profile } = await supabase
+        const { data: profile, error } = await supabase
           .from("profiles")
           .select("role")
           .eq("id", session.user.id)
           .maybeSingle();
+
+        // A transport failure is not a verdict about this person's role. It
+        // used to fall into the same branch as "not staff", which signed the
+        // staff member out and bounced them to /admin/login — the classic
+        // "Mission Control keeps kicking me out" symptom on flaky links.
+        if (error) {
+          if (isNetworkError(error)) {
+            console.warn("[admin] role check unreachable, retrying:", error.message);
+            setOnline(false);
+            if (roleRetryRef.current == null) {
+              roleRetryRef.current = setTimeout(() => {
+                roleRetryRef.current = null;
+                setOnline(true);
+                checkAuth();
+              }, 4000);
+            }
+            return;
+          }
+          console.warn("[admin] role check rejected by the server:", error.code, error.message);
+          // RLS answered but hid the row (missing SELECT policy on profiles is
+          // a real, previously-shipped failure mode) → do not sign out, show
+          // the honest state instead of an infinite login loop.
+          setIsAuthenticated(null);
+          setRoleError(
+            "Your session is valid but the server won't reveal your role. " +
+              "Ask an admin to check the profiles read policy."
+          );
+          return;
+        }
+
         const role = (profile?.role as string | undefined) ?? "";
-        // The live user_role enum is (customer, staff, super_admin).
-        if (!["staff", "super_admin"].includes(role)) {
+        // Mirrors is_staff_or_admin(): staff, super_admin and the legacy admin.
+        if (!isStaffRole(role)) {
+          if (!profile) {
+            // Authenticated, no error, no row → the profile record is missing
+            // for this user id. Signing out hides that data bug behind a
+            // login wall the staff member keeps re-passing.
+            setIsAuthenticated(null);
+            setRoleError(
+              "No profile row exists for this account, so its role can't be verified. " +
+                "An admin needs to create the profile before this login can open Mission Control."
+            );
+            return;
+          }
           await supabase.auth.signOut();
           handleUnauthorized();
           return;
         }
+        setRoleError(null);
         setIsAuthenticated(true);
         setAdminRole(role);
         setAdminName(
@@ -191,7 +239,20 @@ export default function ProtectedLayout({
             "Admin"
         );
         setAdminEmail(session.user?.email || "");
-      } catch {
+      } catch (e) {
+        if (isNetworkError(e)) {
+          console.warn("[admin] role check threw a network error:", e);
+          setOnline(false);
+          if (roleRetryRef.current == null) {
+            roleRetryRef.current = setTimeout(() => {
+              roleRetryRef.current = null;
+              setOnline(true);
+              checkAuth();
+            }, 4000);
+          }
+          return;
+        }
+        console.error("[admin] role check failed:", e);
         handleUnauthorized();
       }
     };
@@ -202,7 +263,13 @@ export default function ProtectedLayout({
       if (!session && !(isDevBuild && hasAdminFallbackSession()))
         router.replace("/admin/login");
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      if (roleRetryRef.current) {
+        clearTimeout(roleRetryRef.current);
+        roleRetryRef.current = null;
+      }
+    };
   }, [router]);
 
   /* ─── Connectivity ───────────────────────────────────────── */
@@ -388,6 +455,41 @@ export default function ProtectedLayout({
   }, []);
 
   if (isAuthenticated === null) {
+    if (roleError) {
+      return (
+        <div className="flex h-full items-center justify-center bg-dark-50 p-6 dark:bg-dark-950">
+          <div className="w-full max-w-md rounded-2xl border border-amber-500/30 bg-white p-6 text-center shadow-sm dark:bg-dark-900">
+            <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+              Signed in, but access could not be confirmed
+            </p>
+            <p className="mt-3 text-sm leading-relaxed text-dark-900/70 dark:text-neutral-300">
+              {roleError}
+            </p>
+            <div className="mt-5 flex items-center justify-center gap-3">
+              <button
+                onClick={() => {
+                  setRoleError(null);
+                  setIsAuthenticated(null);
+                  window.location.reload();
+                }}
+                className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white"
+              >
+                Try again
+              </button>
+              <button
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                  router.replace("/admin/login");
+                }}
+                className="rounded-lg border border-dark-200 px-4 py-2 text-sm font-medium text-dark-700 dark:border-dark-700 dark:text-neutral-300"
+              >
+                Switch account
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full items-center justify-center bg-dark-50 dark:bg-dark-950">
         <div className="flex flex-col items-center gap-3">
@@ -396,7 +498,7 @@ export default function ProtectedLayout({
             <div className="absolute inset-0 h-10 w-10 rounded-full border-2 border-brand-500/20" />
           </div>
           <p className="text-sm font-medium text-dark-900/50 dark:text-neutral-400">
-            Loading ChinaSuuq Mission Control…
+            {online ? "Loading ChinaSuuq Mission Control…" : "Reconnecting to the server…"}
           </p>
         </div>
       </div>

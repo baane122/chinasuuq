@@ -54,7 +54,7 @@ export default function AddAddressScreen() {
     }
     setSaving(true);
     try {
-      await saveAddress({
+      const result = await saveAddress({
         id: editingId,
         user_id: user.id,
         label,
@@ -66,7 +66,17 @@ export default function AddAddressScreen() {
         address_line2: addressLine2.trim() || undefined,
         is_default: isDefault,
       });
-      Alert.alert("Saved", editingId ? "Address updated." : "Address added.", [{ text: "OK", onPress: () => router.back() }]);
+      // The result is the sync verdict, not a formality: saveAddress used to
+      // swallow its own remote error and return nothing, so the catch below
+      // could never fire and every attempt — saved on the device or not — was
+      // announced as "Saved". A refused write now keeps the customer on the
+      // form with the reason instead of a list that will not match the account.
+      if (result.ok) {
+        Alert.alert("Saved", editingId ? "Address updated." : "Address added.", [{ text: "OK", onPress: () => router.back() }]);
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert("Could not save", result.error || "Could not save address. Please try again.");
+      }
     } catch {
       Alert.alert("Error", "Could not save address. Please try again.");
     } finally {

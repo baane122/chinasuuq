@@ -6,7 +6,7 @@ import { cn, formatDate, formatDateTime } from "@/lib/utils";
 import { formatSos, formatUsd } from "@/lib/fx";
 import {
   Loader2, CheckCircle2, XCircle, Clock, Plus, Pencil, Trash2,
-  TrendingUp, Download, Check, RefreshCw
+  TrendingUp, Download, Check, RefreshCw, AlertTriangle
 } from "lucide-react";
 import type { Payment } from "@/types";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
@@ -14,7 +14,7 @@ import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
 import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel, PermissionNotice } from "@/components/admin/ui";
 import { RowCapNotice } from "@/components/admin/RowCapNotice";
-import { useAdminPermissions, allowed, PERMISSIONS } from "@/lib/admin/permissions";
+import { useAdminPermissions, allowed, permissionCheckFailureNotice, PERMISSIONS } from "@/lib/admin/permissions";
 
 /* ── Constants ─────────────────────────────────────────────────── */
 
@@ -120,6 +120,15 @@ export default function PaymentsPage() {
   const { success, error: toastError } = useToast();
   const perms = useAdminPermissions();
   const canConfirm = allowed(perms, "confirmPayments");
+  /** A failed permission read is NOT a denial: can() fails closed for it, and
+   *  the operator has to be told which of the two blocked the button — one
+   *  answer means "ask for a grant", the other means "check again". */
+  const permissionCheckFailed = !perms.loading && perms.checksFailed && !canConfirm;
+  const confirmBlockedReason = canConfirm
+    ? null
+    : permissionCheckFailed
+      ? "Confirmation is unavailable until the permission check can be completed."
+      : "Your role can’t confirm payments.";
   const [payments, setPayments] = useState<Payment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -360,7 +369,7 @@ export default function PaymentsPage() {
   const confirmOne = async (
     paymentId: string
   ): Promise<{ ok: boolean; synced: boolean; message?: string }> => {
-    if (!canConfirm) return { ok: false, synced: false, message: "Your role can’t confirm payments." };
+    if (!canConfirm) return { ok: false, synced: false, message: confirmBlockedReason ?? "Your role can’t confirm payments." };
     try {
       const { data, error } = await supabase.functions.invoke("payment-reconcile", {
         body: { payment_id: paymentId },
@@ -557,7 +566,7 @@ export default function PaymentsPage() {
       </SectionCard>
 
       {/* ── Permission state (payments confirm is the money-moving action) ── */}
-      {!perms.loading && !perms.configured && (
+      {!perms.loading && !perms.configured && !perms.checksFailed && (
         <div className="flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
           <RefreshCw className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
@@ -571,6 +580,20 @@ export default function PaymentsPage() {
       )}
       {!perms.loading && perms.configured && !canConfirm && (
         <PermissionNotice required={`${PERMISSIONS.confirmPayments.resource}:${PERMISSIONS.confirmPayments.action}`} />
+      )}
+      {permissionCheckFailed && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-semibold">Couldn’t check your permissions</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed">
+              {permissionCheckFailureNotice(perms)}
+            </p>
+            <button onClick={perms.reload} className="admin-btn-outline mt-3 h-8 px-3 text-xs">
+              <RefreshCw className="h-3.5 w-3.5" /> Check again
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── Search + Controls ── */}
@@ -589,7 +612,7 @@ export default function PaymentsPage() {
                 onClick={handleBulkConfirm}
                 disabled={reconcileSelected.size === 0 || !canConfirm}
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-                title={canConfirm ? undefined : "Your role can’t confirm payments"}
+                title={confirmBlockedReason ?? undefined}
               >
                 <Check className="h-3 w-3" />
                 Confirm Selected
@@ -606,7 +629,7 @@ export default function PaymentsPage() {
               onClick={() => setReconcileMode(true)}
               disabled={!canConfirm}
               className="admin-btn-outline disabled:cursor-not-allowed disabled:opacity-50"
-              title={canConfirm ? undefined : "Your role can’t confirm payments"}
+              title={confirmBlockedReason ?? undefined}
             >
               <RefreshCw className="h-3 w-3" />
               Reconcile

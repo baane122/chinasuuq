@@ -16,6 +16,8 @@ import {
   Check,
   Link2,
   Mail,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
@@ -33,6 +35,7 @@ import {
 import {
   useAdminPermissions,
   allowed,
+  permissionCheckFailureNotice,
   PERMISSIONS,
 } from "@/lib/admin/permissions";
 
@@ -90,6 +93,16 @@ export default function StaffPage() {
   const { toast } = useToast();
   const perms = useAdminPermissions();
   const canDelete = allowed(perms, "deleteStaff");
+  /** WHY a destructive control is unavailable, stated to the operator. "The
+   *  grant is missing" and "the grant could not be read" are different answers;
+   *  a staff member who cannot tell them apart either assumes the console is
+   *  broken or believes a dead network call was a denial. */
+  const permissionCheckFailed = !perms.loading && perms.checksFailed && !canDelete;
+  const deleteBlockedReason = canDelete
+    ? null
+    : permissionCheckFailed
+      ? "Deleting staff stays unavailable until the permission check can be completed."
+      : `Your role can’t delete staff. Ask a super admin to grant the ${PERMISSIONS.deleteStaff.resource}:${PERMISSIONS.deleteStaff.action} permission.`;
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -366,8 +379,9 @@ export default function StaffPage() {
 
       {/* RBAC affordance banners (lib/admin/permissions.ts). These gate the UI;
           server RLS still admits any staff/super_admin, so it is an affordance,
-          not a security wall. */}
-      {!perms.loading && !perms.configured && (
+          not a security wall. Three states, kept distinct: nothing seeded, the
+          grant is missing, or the check itself failed (fail closed). */}
+      {!perms.loading && !perms.configured && !perms.checksFailed && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
@@ -386,6 +400,20 @@ export default function StaffPage() {
           required={`${PERMISSIONS.deleteStaff.resource}:${PERMISSIONS.deleteStaff.action}`}
           className="mb-6"
         />
+      )}
+      {permissionCheckFailed && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-semibold">Couldn’t check your permissions</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed">
+              {permissionCheckFailureNotice(perms)}
+            </p>
+            <button onClick={perms.reload} className="admin-btn-outline mt-3 h-8 px-3 text-xs">
+              <RefreshCw className="h-3.5 w-3.5" /> Check again
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Stats */}
@@ -516,15 +544,25 @@ export default function StaffPage() {
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
-                        {canDelete && (
-                          <button
-                            onClick={() => setDeleteStaff(member)}
-                            className="rounded-lg p-1.5 text-dark-900/40 transition-all hover:bg-rose-50 hover:text-rose-600"
-                            aria-label="Delete staff"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
+                        {/* Unavailable, not invisible: same convention as the
+                            Payments console's confirm button. Hiding the control
+                            made a failed permission read indistinguishable from
+                            "this screen has no delete" — so it stays in place,
+                            disabled, and the tooltip says which of the two it is. */}
+                        <button
+                          onClick={() => setDeleteStaff(member)}
+                          disabled={!canDelete}
+                          title={deleteBlockedReason ?? undefined}
+                          className={cn(
+                            "rounded-lg p-1.5 transition-all",
+                            canDelete
+                              ? "text-dark-900/40 hover:bg-rose-50 hover:text-rose-600"
+                              : "cursor-not-allowed text-dark-900/20"
+                          )}
+                          aria-label="Delete staff"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>

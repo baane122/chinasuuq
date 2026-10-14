@@ -28,6 +28,7 @@ import { getOrders, getOrdersByUser } from "@/db/index";
 import type { LocalOrder } from "@/db/index";
 import { useAuthStore } from "@/store/auth";
 import { OrderCardSkeleton } from "@/components/ui/SkeletonLoader";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { useCartStore } from "@/store/cart";
 import { formatUSD } from "@/lib/utils";
@@ -80,6 +81,8 @@ export default function OrdersScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [orderFilter, setOrderFilter] = useState<OrderFilter>("all");
+  // A failed read must not look like "you have no orders" — see ErrorState.
+  const [loadError, setLoadError] = useState<any>(null);
 
   const cartItems = useCartStore((s) => s.items);
   const cartGetTotal = useCartStore((s) => s.getTotal);
@@ -98,8 +101,10 @@ export default function OrdersScreen() {
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       setOrders(sorted);
+      setLoadError(null);
     } catch (e) {
-      console.error("Failed to load orders", e);
+      console.warn("[orders] load failed", e);
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
@@ -301,6 +306,15 @@ export default function OrdersScreen() {
                 <OrderCardSkeleton />
                 <OrderCardSkeleton />
               </>
+            ) : loadError && orders.length === 0 ? (
+              <ErrorState
+                error={loadError}
+                body={l(
+                  "Your orders are still on this device — this is the connection, not your account.",
+                  "Dalabyadaada weli waxay ku jiraan taleefanka — waa xiriirka, ma aha akoonkaaga."
+                )}
+                onRetry={loadOrders}
+              />
             ) : orders.length === 0 ? (
               <View style={styles.emptyState}>
                 <View style={styles.emptyIconWrap}>

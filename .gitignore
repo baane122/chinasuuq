@@ -91,6 +91,12 @@ supabase/.status
 plans/
 screenshots/
 
+# Verification-gate scratch: type-stripped copies of real modules that the
+# node:--experimental-strip-types harnesses import. Removed by the harness on
+# exit; ignored so a crash can never show up as repo junk in the guard job.
+apps/mobile/.cs-gate-tmp/
+apps/web/.cs-gate-tmp/
+
 # local asset-generation tooling (contains no repo history)
 scripts/gen_image.py
 scripts/gen_admin_assets.sh

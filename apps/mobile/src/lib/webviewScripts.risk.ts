@@ -75,10 +75,22 @@ export const RISK_WATCH_SCRIPT = `(function () {
       var hard = /_____tmd_____\\/punish|x5secdata|punish\\?x5sec/i.test(href);
       var sliders = q(SLIDER);
       var frames = q(FRAME);
-      var dialogs = q(DIALOG);
-      var txt = "";
-      try { txt = (document.body && document.body.innerText || "").slice(0, 3000); } catch (e) {}
+      var dialogs = [];
+      // Cheap pre-filter: with no widget in the DOM and no punish URL, the
+      // only remaining signal is the page's own verification wording. Reading
+      // body.innerText here used to force a full layout of the page every
+      // 700ms for the life of the session — the shared runtime hands us one
+      // cached, layout-free text snapshot per tick instead.
+      var txt = window.__cs ? window.__cs.text(3000) : (document.body && document.body.innerText || "").slice(0, 3000);
       var words = /安全验证|拖动.{0,8}滑块|滑块.{0,8}验证|请完成.{0,8}验证|环境异常|验证失败/.test(txt);
+      if (!hard && !sliders.length && !frames.length && !words) {
+        if (window.__csRiskSig !== "000") {
+          window.__csRiskSig = "000";
+          post(false, false, false, href);
+        }
+        return 0;
+      }
+      if (!dialogs.length) dialogs = q(DIALOG);
       var present = hard || sliders.length > 0 || frames.length > 0 || (dialogs.length > 0 && words);
       if (present) {
         for (var i = 0; i < sliders.length; i++) unhide(sliders[i]);
@@ -108,23 +120,36 @@ export const RISK_WATCH_SCRIPT = `(function () {
       var sig = (present ? 1 : 0) + "" + (interactive ? 1 : 0) + "" + (hard ? 1 : 0);
       if (window.__csRiskSig !== sig) {
         window.__csRiskSig = sig;
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: "PUNISH",
-            payload: {
-              url: href, hard: hard, present: present,
-              slide: interactive, interactive: interactive
-            }
-          }));
-        }
+        post(present, interactive, hard, href);
       }
-      return true;
-    } catch (e) { return true; }
+      return present ? 1 : 0;
+    } catch (e) { return 0; }
+  }
+  function post(present, interactive, hard, href) {
+    try {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: "PUNISH",
+          payload: {
+            url: href, hard: hard, present: present,
+            slide: interactive, interactive: interactive
+          }
+        }));
+      }
+    } catch (e) {}
   }
   run();
   // The wall mounts after injection (right after the SMS code is sent), so a
-  // watcher is the only way React learns about it in time. 700ms of a few
-  // querySelectors is cheaper than the page's own polling.
+  // watcher is the only way React learns about it in time. Driven by the
+  // shared runtime heartbeat (with mutation wake-up) instead of a private
+  // 700ms setInterval that survived every navigation for the app's lifetime.
+  if (window.__cs) {
+    window.__cs.add("risk", {
+      every: 700, maxEvery: 3000, firstDelay: 0, watches: true,
+      fn: function () { return run(); }
+    });
+    return true;
+  }
   if (!window.__csRiskWatch) {
     window.__csRiskWatch = setInterval(run, 700);
   }

@@ -28,8 +28,9 @@ import { WHATSAPP_NUMBER } from "@/lib/utils";
 import { ORDER_STATUS_LABELS } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
 import { getOrders, getOrderById } from "@/db/index";
-import type { LocalOrder } from "@/db/index";
+import type { LocalOrder, OrderLookupState } from "@/db/index";
 import { Timeline, TimelineEvent } from "@/components/orders/Timeline";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 const TRACKING_IMG = require("../../assets/screens/tracking.png");
 
@@ -119,6 +120,11 @@ export default function TrackingScreen() {
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  // "We could not check" — kept separate from `notFound` on purpose. This
+  // screen is opened straight from orders/[id] for a PAID order, so a read that
+  // failed must never be drawn as "Order Not Found": that tells the customer
+  // they lost an order that exists, and the next move becomes a support ticket.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // If an id was passed from the detail screen, load it directly
@@ -131,16 +137,22 @@ export default function TrackingScreen() {
   const loadById = async (orderId: string) => {
     setLoading(true);
     setNotFound(false);
+    setLoadFailed(false);
     try {
-      const data = await getOrderById(orderId);
+      // getOrderById guards its own failures and returns null, so it reports
+      // "could not ask" through the out-param instead of an exception.
+      const lookup: OrderLookupState = { readFailed: false };
+      const data = await getOrderById(orderId, lookup);
       if (data) {
         setOrder(data);
+      } else if (lookup.readFailed) {
+        setLoadFailed(true);
       } else {
         setNotFound(true);
       }
     } catch (e) {
       console.error("Failed to load tracking order", e);
-      setNotFound(true);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -151,9 +163,11 @@ export default function TrackingScreen() {
     if (!query) return;
     setSearching(true);
     setNotFound(false);
+    setLoadFailed(false);
     try {
       // Try by id first, then by reference
-      let data = await getOrderById(query);
+      const lookup: OrderLookupState = { readFailed: false };
+      let data = await getOrderById(query, lookup);
       if (!data) {
         const all = await getOrders();
         data = all.find((o) => o.reference.toLowerCase() === query.toLowerCase()) || null;
@@ -162,11 +176,17 @@ export default function TrackingScreen() {
         setOrder(data);
       } else {
         setOrder(null);
-        setNotFound(true);
+        // Same split as the load path: a failed lookup is not a missing order.
+        if (lookup.readFailed) {
+          setLoadFailed(true);
+        } else {
+          setNotFound(true);
+        }
       }
     } catch (e) {
       console.error("Tracking search failed", e);
-      setNotFound(true);
+      setOrder(null);
+      setLoadFailed(true);
     } finally {
       setSearching(false);
     }
@@ -183,6 +203,16 @@ export default function TrackingScreen() {
   };
 
   const timeline = order ? buildTrackingTimeline(order) : [];
+
+  /** Retry exactly what the customer last asked for: the deep-linked id, or the
+   *  reference typed into the box. */
+  const retryLoad = () => {
+    if (id) {
+      void loadById(id);
+    } else if (searchQuery.trim()) {
+      void handleSearch();
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -223,6 +253,9 @@ export default function TrackingScreen() {
               onChangeText={(text) => {
                 setSearchQuery(text);
                 setNotFound(false);
+                // A new question replaces the last answer, including a read
+                // that failed — the error card must not linger over fresh text.
+                setLoadFailed(false);
               }}
               onSubmitEditing={handleSearch}
               returnKeyType="search"
@@ -252,8 +285,23 @@ export default function TrackingScreen() {
           </View>
         )}
 
+        {/* The read failed: an unknown answer, never drawn as a missing order. */}
+        {loadFailed && !loading && (
+          <View style={styles.errorWrap}>
+            <ErrorState
+              kind="network"
+              body={tt(
+                "We couldn't reach the server to load this order. Check your connection and try again.",
+                "Hubi isku xirka internetka kadibna isku day mar kale."
+              )}
+              onRetry={retryLoad}
+              retryLabel={tt("Try again", "Isku day mar kale")}
+            />
+          </View>
+        )}
+
         {/* Not Found */}
-        {notFound && !loading && (
+        {notFound && !loading && !order && (
           <View style={styles.notFoundContainer}>
             <Package size={48} color={COLORS.gray300} />
             <Text style={styles.notFoundTitle}>Order Not Found</Text>
@@ -347,7 +395,7 @@ export default function TrackingScreen() {
         )}
 
         {/* Empty state when no id provided and no search yet */}
-        {!order && !loading && !notFound && !searching && !id && (
+        {!order && !loading && !notFound && !loadFailed && !searching && !id && (
           <View style={styles.emptyState}>
             <Image source={TRACKING_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
             <Text style={styles.emptyTitle}>Track Your Order</Text>
@@ -407,6 +455,8 @@ const styles = StyleSheet.create({
   searchButtonText: { color: COLORS.white, fontSize: 15, fontWeight: "600", fontFamily: FONTS.semibold },
   buttonDisabled: { opacity: 0.5 },
   loadingContainer: { paddingVertical: SPACING.xxxl * 2, alignItems: "center" },
+  // ErrorState brings its own card; this only keeps it off the screen edges.
+  errorWrap: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
   notFoundContainer: { alignItems: "center", paddingTop: SPACING.xxxl * 2, paddingHorizontal: SPACING.lg },
   notFoundTitle: { fontSize: 18, fontFamily: FONTS.semibold, color: COLORS.black, marginTop: SPACING.lg, marginBottom: SPACING.sm },
   notFoundText: { fontSize: 14, color: COLORS.textSecondary, textAlign: "center", fontFamily: FONTS.regular },

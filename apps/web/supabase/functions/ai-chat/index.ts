@@ -34,7 +34,11 @@ const ANON_MAX_BODY_BYTES = 8_192; // ~8 KB request body
 const ANON_MAX_TOTAL_CHARS = 4_000; // sum of all message content
 const ANON_MAX_REQUESTS_PER_HOUR = 20;
 
-const SIGNED_IN_ROLES = ["customer", "staff", "super_admin"];
+// Must stay the FULL live vocabulary. It used to be
+// ["customer","staff","super_admin"], which 401'd the legacy "admin" role that
+// RLS and every other AI function accepts, and "supplier" — both could see the
+// chat UI and got "unauthorized" only when they sent a message.
+const SIGNED_IN_ROLES = ["customer", "staff", "admin", "supplier", "super_admin"];
 
 // Per-isolate rate limit for anonymous callers. Deliberately simple: it is a
 // cost brake, not a fortress — Supabase scales isolates freely, so a global

@@ -18,6 +18,7 @@ import {
   X,
   SlidersHorizontal,
   ArrowUpDown,
+  RefreshCw,
 } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -25,6 +26,7 @@ import * as Haptics from "expo-haptics";
 import { getProducts } from "@/db";
 import { ProductCard } from "@/components/home/ProductCard";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { RouteErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Image } from "expo-image";
 import { aiRankProducts } from "@/lib/ai";
 import { Sparkles } from "lucide-react-native";
@@ -68,7 +70,22 @@ function matchesQuery(p: Product, tokens: string[]): boolean {
   return tokens.every((token) => target.includes(token));
 }
 
+/**
+ * Search sits between the customer and the buy button and had no boundary of
+ * its own: one product row the grid could not render (a null title, a bad
+ * image) used to take the whole app to the root fallback. Wrapping the
+ * component covers every render path — skeleton, no-results, results — without
+ * changing any of them.
+ */
 export default function SearchScreen() {
+  return (
+    <RouteErrorBoundary>
+      <SearchScreenContent />
+    </RouteErrorBoundary>
+  );
+}
+
+function SearchScreenContent() {
   const router = useRouter();
   const params = useLocalSearchParams<{ marketplace?: string; q?: string }>();
 
@@ -86,16 +103,25 @@ export default function SearchScreen() {
   const [showSort, setShowSort] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  // An unreadable catalogue is NOT an empty shop. Without this the customer
+  // whose request failed saw "No products found / Try adjusting your search",
+  // so they retype the query instead of retrying and conclude the store has no
+  // stock. Separate flag, separate screen, separate button.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setLoadFailed(false);
     getProducts()
       .then((data) => {
         if (active) setProducts(data);
       })
       .catch(() => {
-        if (active) setProducts([]);
+        if (!active) return;
+        setProducts([]);
+        setLoadFailed(true);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -103,7 +129,7 @@ export default function SearchScreen() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadTick]);
 
   // Update marketplace when the home screen navigates here with a param.
   useEffect(() => {
@@ -394,7 +420,9 @@ export default function SearchScreen() {
             <View style={styles.resultRow}>
               <SlidersHorizontal size={14} color={COLORS.textSecondary} />
               <Text style={styles.resultText}>
-                {filteredProducts.length} {filteredProducts.length === 1 ? "product" : "products"}
+                {loadFailed
+                  ? "Catalogue unavailable"
+                  : `${filteredProducts.length} ${filteredProducts.length === 1 ? "product" : "products"}`}
                 {aiState === "loading" && (
                   // In-flight AI must be cancellable — without this the only
                   // escape is an up-to-8s spinner with no way out.
@@ -418,7 +446,7 @@ export default function SearchScreen() {
                     </Text>
                   </TouchableOpacity>
                 )}
-                {debouncedQuery.trim().length >= 3 && aiState !== "loading" && (
+                {debouncedQuery.trim().length >= 3 && aiState !== "loading" && !loadFailed && (
                   <TouchableOpacity
                     onPress={aiState === "done" ? clearAi : runAiSearch}
                     style={{
@@ -443,7 +471,38 @@ export default function SearchScreen() {
               </Text>
             </View>
 
-            {filteredProducts.length === 0 ? (
+            {loadFailed ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>Couldn’t load products</Text>
+                <Text style={styles.emptySubtitle}>
+                  The catalogue didn’t answer. Nothing you saved was lost — check
+                  your connection and try again.
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setReloadTick((t) => t + 1);
+                  }}
+                  activeOpacity={0.8}
+                  style={{
+                    marginTop: SPACING.md,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderRadius: RADIUS.pill,
+                    borderWidth: 1,
+                    borderColor: COLORS.primary,
+                  }}
+                >
+                  <RefreshCw size={15} color={COLORS.primary} />
+                  <Text style={{ fontSize: 14, fontFamily: FONTS.bold, color: COLORS.primary }}>
+                    Try again
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : filteredProducts.length === 0 ? (
               <View style={styles.emptyState}>
                 <Image source={EMPTY_SEARCH_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
                 <Text style={styles.emptyTitle}>No products found</Text>

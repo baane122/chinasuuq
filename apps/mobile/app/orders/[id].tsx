@@ -9,6 +9,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { isStaffRole } from "@/lib/roles";
 import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import {
   ArrowLeft,
@@ -37,6 +38,7 @@ import { useAuthStore } from "@/store/auth";
 import { supabase } from "@/lib/supabase";
 import { Timeline, TimelineEvent } from "@/components/orders/Timeline";
 import { StatusBadge } from "@/components/orders/StatusBadge";
+import { RouteErrorBoundary } from "@/components/ui/ErrorBoundary";
 
 /** Queued (never-synced) orders carry a synthetic `local-…` id with no
  *  production row to check ownership against; anything that looks like a
@@ -113,7 +115,22 @@ function toBadgeStatus(s: string): "pending" | "processing" | "warehouse" | "shi
   return "pending";
 }
 
+/**
+ * A paid order's detail screen is the one place the customer checks what they
+ * bought, so it needs its own boundary: a throw while rendering the timeline or
+ * the money block used to reach the root fallback and take the tab bar with it.
+ * Wrapping the component (not one return) covers the loading, locked and error
+ * renders too, and leaves what the screen shows on success untouched.
+ */
 export default function OrderDetailScreen() {
+  return (
+    <RouteErrorBoundary>
+      <OrderDetailScreenContent />
+    </RouteErrorBoundary>
+  );
+}
+
+function OrderDetailScreenContent() {
   const { t } = useI18n();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -141,7 +158,7 @@ export default function OrderDetailScreen() {
         return;
       }
       const storeRole = String(user.role ?? "");
-      if (storeRole === "staff" || storeRole === "super_admin") {
+      if (isStaffRole(storeRole)) {
         if (alive) { setIsStaff(true); setRoleChecked(true); }
         return;
       }
@@ -152,7 +169,7 @@ export default function OrderDetailScreen() {
           .eq("id", user.id)
           .maybeSingle();
         const role = String((data as any)?.role ?? "");
-        if (alive) setIsStaff(role === "staff" || role === "super_admin");
+        if (alive) setIsStaff(isStaffRole(role));
       } catch {
         if (alive) setIsStaff(false);
       } finally {

@@ -7,15 +7,16 @@ import {
   RefreshControl,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ArrowLeft, Bell, Package, Truck, CheckCircle2, Sparkles, Receipt } from "lucide-react-native";
+import { ArrowLeft, Bell, AlertTriangle, Package, Truck, CheckCircle2, Sparkles, Receipt } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { getNotifications, markAllNotificationsRead, type AppNotification } from "@/db/index";
+import { getNotifications, markAllNotificationsRead, isBackendOnline, type AppNotification } from "@/db/index";
 import { EmptyState } from "@/components/EmptyState";
 
 const EMPTY_NOTIF_IMG = require("../../assets/screens/empty_notifications.png");
@@ -33,11 +34,21 @@ const TYPE_ICONS: Record<string, any> = {
 export default function NotificationsScreen() {
   const router = useRouter();
   const { locale } = useI18n();
+  // Same helper the sibling settings.tsx uses: new strings here are bilingual,
+  // matching the rest of this screen.
+  const tt = (en: string, so: string) => (locale === "en" ? en : so);
   const user = useAuthStore((s) => s.user);
 
   const [items, setItems] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  /**
+   * "Nothing to show because the read failed" kept apart from "this account
+   * has no notifications" — the shape wishlist.tsx already uses. The resilient
+   * read in db/ never throws (it serves the device cache, then an empty list),
+   * so an empty result alone cannot be trusted as an answer.
+   */
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -47,10 +58,16 @@ export default function NotificationsScreen() {
         return;
       }
       // Resilient read (Supabase first, device cache as fallback) in db/.
-      setItems(await getNotifications(user.id, 50));
+      const rows = await getNotifications(user.id, 50);
+      setItems(rows);
+      // No cached rows AND no reachable server is not the same statement as
+      // "no notifications yet"; the server probe is cached for 60s so this
+      // costs nothing extra on a pull to refresh.
+      setLoadFailed(rows.length === 0 && !(await isBackendOnline()));
     } catch (e) {
       console.warn("Failed to load notifications", e);
       setItems([]);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -75,9 +92,18 @@ export default function NotificationsScreen() {
     const result = await markAllNotificationsRead(user.id);
     if (result.ok) {
       setItems((prev) => prev.map((n) => ({ ...n, read: true })));
-    } else {
-      console.warn("Failed to mark notifications read", result.error);
+      return;
     }
+    console.warn("Failed to mark notifications read", result.error);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    // The rows are marked read on the device by db/ even on this path, so the
+    // customer needs to hear that the server — and therefore their other
+    // devices — still shows them unread.
+    Alert.alert(
+      tt("Error", "Khalad"),
+      result.error ||
+        tt("Check your connection and try again.", "Hubi isku xirka internetka kadibna isku day mar kale.")
+    );
   };
 
   const formatDate = (iso: string) => {
@@ -165,6 +191,23 @@ export default function NotificationsScreen() {
         <View style={styles.center}>
           <ActivityIndicator color={COLORS.primary} />
         </View>
+      ) : loadFailed ? (
+        // A failed read gets its own message and a retry — never the "we'll
+        // let you know when your order ships" illustration, which promised a
+        // healthy account that had simply not been reachable.
+        <EmptyState
+          icon={<AlertTriangle size={40} color={COLORS.error} />}
+          title={tt("Couldn't load your notifications", "Ogeysiisyada lama soo dejin karin")}
+          subtitle={tt(
+            "Check your connection and try again.",
+            "Hubi isku xirka internetka kadibna isku day mar kale."
+          )}
+          actionLabel={tt("Try again", "Isku day mar kale")}
+          onAction={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            load();
+          }}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           image={EMPTY_NOTIF_IMG}

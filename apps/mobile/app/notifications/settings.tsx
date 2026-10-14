@@ -87,7 +87,9 @@ export default function NotificationSettingsScreen() {
       try {
         const stored = await AsyncStorage.getItem(NOTIF_KEY);
         if (stored) setSettings(JSON.parse(stored));
-      } catch {}
+      } catch (e) {
+        console.warn("[notifications:settings] stored preferences unreadable, using defaults", e);
+      }
     })();
   }, []);
 
@@ -113,9 +115,26 @@ export default function NotificationSettingsScreen() {
   }, [user?.id]);
 
   const toggle = async (key: keyof NotifSettings) => {
+    const previous = settings;
     const next = { ...settings, [key]: !settings[key] };
     setSettings(next);
-    await AsyncStorage.setItem(NOTIF_KEY, JSON.stringify(next));
+    try {
+      await AsyncStorage.setItem(NOTIF_KEY, JSON.stringify(next));
+    } catch (e) {
+      // Roll the switch back. Left as it was, the screen would advertise a
+      // preference the device refused to keep — and it silently reverted on
+      // the next open, with the rejection itself going nowhere (an await with
+      // no catch is an unhandled rejection on Hermes).
+      setSettings(previous);
+      console.warn("[notifications:settings] preference not saved", e);
+      Alert.alert(
+        tt("Error", "Khalad"),
+        tt(
+          "Could not save your preference. Please try again.",
+          "Lama kaydin karin doorashadaada. Fadlan mar kale isku day."
+        )
+      );
+    }
   };
 
   const formatHistoryDate = (iso: string) => {

@@ -13,6 +13,7 @@ import { MARKETPLACES } from "@/lib/marketplaces";
 import { StaffMarketplaceCard } from "@/components/staff/StaffMarketplaceCard";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
+import { isStaffRole } from "@/lib/roles";
 import { supabase } from "@/lib/supabase";
 
 export default function StaffMarketplacesScreen() {
@@ -45,7 +46,7 @@ export default function StaffMarketplacesScreen() {
         return;
       }
       const storeRole = String(authUser.role ?? "");
-      if (storeRole === "staff" || storeRole === "super_admin") {
+      if (isStaffRole(storeRole)) {
         if (alive) { setIsStaff(true); setRoleChecked(true); }
         return;
       }
@@ -71,7 +72,7 @@ export default function StaffMarketplacesScreen() {
           }
         } else {
           const role = String((data as any)?.role ?? "");
-          setIsStaff(role === "staff" || role === "super_admin");
+          setIsStaff(isStaffRole(role));
         }
       } catch {
         if (alive) {

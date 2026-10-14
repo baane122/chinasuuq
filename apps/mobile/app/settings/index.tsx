@@ -53,7 +53,9 @@ try {
   // Deliberately NOT taking db.SHIPPING_METHODS — keep this screen aligned
   // with the shipping-info table until the db constant carries the same days.
   if (db.updateProfile) updateProfile = db.updateProfile;
-} catch {}
+} catch (e) {
+  console.warn("[settings] db module unavailable, using fallbacks", e);
+}
 
 type ShippingMethodId = "air" | "sea";
 

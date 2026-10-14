@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { supabase } from "@/lib/supabase";
 import type { Session } from "@supabase/supabase-js";
 import { useStaffStore } from "./staff";
+import { setCartScope } from "./cart";
 import { purgeUserScopedCaches } from "@/db/index";
 
 interface User {
@@ -38,21 +39,37 @@ function mapUser(sessionUser: Session["user"], profile?: any): User {
   };
 }
 
+// `profiles` and `customer_profiles` are independent reads, and this runs
+// behind the splash gate on every cold start. Awaited in series the user waits
+// for both round-trips before the app lets them in; in parallel it costs the
+// slower of the two.
 async function fetchProfile(userId: string) {
   try {
-    const { data } = await supabase
-      .from("profiles")
-      .select("id, full_name, phone, language, role")
-      .eq("id", userId)
-      .maybeSingle();
+    const [profile, customer] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id, full_name, phone, language, role")
+        .eq("id", userId)
+        .maybeSingle(),
+      supabase
+        .from("customer_profiles")
+        .select("city")
+        .eq("user_id", userId)
+        .maybeSingle(),
+    ]);
+    const { data, error } = profile;
+    if (error) {
+      console.warn("[auth] fetchProfile: profiles read failed", error.message);
+      return null;
+    }
     if (!data) return null;
-    const { data: cp } = await supabase
-      .from("customer_profiles")
-      .select("city")
-      .eq("user_id", userId)
-      .maybeSingle();
+    // A failed city read leaves the field blank, which is honest; it must not
+    // discard the name/role that did load (role decides staff mode).
+    const { data: cp, error: cpError } = customer;
+    if (cpError) console.warn("[auth] fetchProfile: city read failed", cpError.message);
     return { ...data, city: cp?.city ?? null };
-  } catch {
+  } catch (e: any) {
+    console.warn("[auth] fetchProfile threw:", e?.message);
     return null;
   }
 }
@@ -78,6 +95,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       if (data.user) {
         const profile = await fetchProfile(data.user.id);
         const mappedUser = mapUser(data.user, profile);
+        // Move the cart to this account's namespace BEFORE the session is
+        // published, so no screen can render "signed in" while still showing
+        // whoever used this phone last.
+        await setCartScope(mappedUser.id);
         set({
           user: mappedUser,
           session: data.session,
@@ -115,7 +136,16 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           await supabase
             .from("profiles")
             .upsert({ id: data.user.id, full_name: name, updated_at: new Date().toISOString() });
-        } catch {}
+        } catch (e) {
+          // A missing profiles row means no role, and RLS then hides every
+          // staff-scoped table from this account — the classic "admin console
+          // is empty" symptom. Never let that fail silently.
+          console.warn("[auth] profile upsert after signup failed", e);
+        }
+        // Same namespace move as signIn. A brand-new account has no basket of
+        // its own; the guest namespace is left alone, so signing back out
+        // restores whatever was there.
+        await setCartScope(data.user.id);
         set({
           user: mapUser(data.user, { full_name: name }),
           session: data.session,
@@ -136,12 +166,20 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     } catch {
       // Sign out even if server call fails
     }
+    // Point the cart back at the guest namespace BEFORE the session is dropped:
+    // that blanks memory, so the next person on this device reads an empty cart
+    // instead of these lines. The basket itself is NOT deleted — it stays under
+    // `chinasuuq-cart:<this user id>` until this same person signs back in,
+    // because losing a basket on logout is what the owner ruled against.
+    await setCartScope(null);
     set({ user: null, session: null, error: null });
     // In-memory clear is not enough on a shared device: the AsyncStorage
     // caches (addresses/profile — namespaced and legacy keys —, local
     // orders, notifications, payment methods) still hold this person's
     // data until the next login sees them. Purge them. Device-wide caches
-    // (translate cache, fx rate, product catalog) are kept.
+    // (translate cache, fx rate, product catalog) are kept. The cart is not
+    // on this list: it is namespaced per account, not device-wide, and it is
+    // the one cache a customer expects to find again after logging in.
     await purgeUserScopedCaches().catch(() => {});
   },
 
@@ -155,6 +193,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       if (data.session?.user) {
         const profile = await fetchProfile(data.session.user.id);
         const mappedUser = mapUser(data.session.user, profile);
+        // Cold start with a stored session: load this account's cart (and drop
+        // any guest basket still in memory) before the app lets a screen render.
+        await setCartScope(mappedUser.id);
         set({
           user: mappedUser,
           session: data.session,
@@ -166,6 +207,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           useStaffStore.getState().initFromProfile(mappedUser.role);
         }
       } else {
+        // No session: stay in the guest namespace. A cart left here by a
+        // previous signed-in account is impossible — sign-out moved it.
+        await setCartScope(null);
         set({ loading: false, initialized: true });
       }
     } catch {

@@ -7,11 +7,14 @@ import Header from "@/components/landing/Header";
 import Footer from "@/components/landing/Footer";
 import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { supabase } from "@/lib/supabase";
+// Lives in src/lib so the transport-vs-genuine-miss rule can be executed by
+// `npm run verify:track` — a page component cannot be imported from Node.
+import { isTransportError } from "@/lib/track/errors";
 import AiShipmentConcierge from "@/components/ai/AiShipmentConcierge";
 import {
   Search, Package, MessageCircle, CheckCircle2, Circle, Loader2,
   ClipboardCheck, Boxes, Ship, Plane, MapPin, ShieldCheck, Home,
-  Truck, CalendarClock, Sparkles,
+  Truck, CalendarClock, Sparkles, RefreshCw,
 } from "lucide-react";
 
 
@@ -97,11 +100,14 @@ function etaText(order: TrackedOrder): string {
 }
 
 /* ─── Page ───────────────────────────────────────────────────────── */
+
 export default function TrackPage() {
   const [query, setQuery] = useState("");
   const [order, setOrder] = useState<TrackedOrder | null>(null);
   const [searching, setSearching] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  // "We could not check" — deliberately not the same state as "no such order".
+  const [unreachable, setUnreachable] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
 
   const runSearch = async () => {
@@ -109,7 +115,11 @@ export default function TrackPage() {
     if (!ref || searching) return;
     setSearching(true);
     setNotFound(false);
+    setUnreachable(false);
     setOrder(null);
+    // Set while probing schema generations: one failed round trip is enough to
+    // know the answer is unknowable right now, but not enough to say "not found".
+    let sawTransportFailure = false;
     try {
       // The live orders schema uses `reference` + `total_usd` (20260813
       // migration); older generations used `order_number` + `total`. Try the
@@ -139,26 +149,42 @@ export default function TrackPage() {
           .select(cols)
           .ilike(col, ref)
           .maybeSingle();
-        if (error) return null; // wrong schema for these columns
+        if (error) {
+          if (isTransportError(error)) sawTransportFailure = true;
+          return null; // wrong schema for these columns — try the other shape
+        }
         return (data as TrackedRow | null) ?? null;
       };
 
-      row =
-        (await attempt(COLS_LIVE, "reference")) ??
-        (await attempt(COLS_LEGACY, "order_number"));
+      // Probe the two schema generations in order, and stop the moment one
+      // answers — a dead network must not cost a second doomed round trip.
+      const shapes: Array<[string, "reference" | "order_number"]> = [
+        [COLS_LIVE, "reference"],
+        [COLS_LEGACY, "order_number"],
+      ];
+      for (const [cols, col] of shapes) {
+        row = await attempt(cols, col);
+        if (row || sawTransportFailure) break;
+      }
 
       // Raw UUID fallback (app deep-links share the raw id)
-      if (!row && isUuid) {
+      if (!row && isUuid && !sawTransportFailure) {
         const byId = async (cols: string) => {
           const { data, error } = await supabase
             .from("orders")
             .select(cols)
             .eq("id", ref)
             .maybeSingle();
-          if (error) return null;
+          if (error) {
+            if (isTransportError(error)) sawTransportFailure = true;
+            return null;
+          }
           return (data as TrackedRow | null) ?? null;
         };
-        row = (await byId(COLS_LIVE)) ?? (await byId(COLS_LEGACY));
+        for (const [cols] of shapes) {
+          row = await byId(cols);
+          if (row || sawTransportFailure) break;
+        }
       }
 
       if (row) {
@@ -174,11 +200,15 @@ export default function TrackPage() {
           items_count: 0,
         });
         setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+      } else if (sawTransportFailure) {
+        setUnreachable(true);
       } else {
         setNotFound(true);
       }
     } catch {
-      setNotFound(true);
+      // The query never completed. Say so, and let them try again — never tell
+      // a customer their order does not exist because the network did.
+      setUnreachable(true);
     } finally {
       setSearching(false);
     }
@@ -223,7 +253,7 @@ export default function TrackPage() {
                 <Search className="h-4.5 w-4.5 shrink-0 text-dark-900/35" />
                 <input
                   value={query}
-                  onChange={(e) => { setQuery(e.target.value); setNotFound(false); }}
+                  onChange={(e) => { setQuery(e.target.value); setNotFound(false); setUnreachable(false); }}
                   onKeyDown={(e) => e.key === "Enter" && runSearch()}
                   placeholder="e.g. CS-2026-00125"
                   className="w-full bg-transparent text-sm font-medium text-dark-900 outline-none placeholder:text-dark-900/35"
@@ -252,6 +282,29 @@ export default function TrackPage() {
                   <p className="mt-1 text-xs text-dark-900/55">
                     No order matches that reference. Double-check it or contact support on WhatsApp.
                   </p>
+                </motion.div>
+              )}
+
+              {unreachable && !searching && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  role="status"
+                  className="mx-auto mt-6 max-w-md rounded-2xl border border-warning/25 bg-warning/5 p-4"
+                >
+                  <p className="text-sm font-semibold text-warning">We could not reach the server</p>
+                  <p className="mt-1 text-xs text-dark-900/55">
+                    Your order reference was not checked — this is a connection problem, not a
+                    missing order. Check your internet and try again.
+                  </p>
+                  <button
+                    onClick={runSearch}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-warning/30 bg-white px-4 py-2 text-xs font-semibold text-warning transition-colors hover:bg-warning/5"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Try again
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -419,7 +472,7 @@ export default function TrackPage() {
           )}
 
           {/* Empty state */}
-          {!order && !searching && !notFound && (
+          {!order && !searching && !notFound && !unreachable && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}

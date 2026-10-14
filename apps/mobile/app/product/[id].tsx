@@ -27,7 +27,7 @@ import { formatUSD, formatCNY } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
 import { useCartStore } from "@/store/cart";
-import { getProductById, toggleFavorite, getFavorites } from "@/db";
+import { getProductById, toggleFavorite, isFavorite as isFavoriteOnServer } from "@/db";
 import type { Product, ProductVariant } from "@/types";
 import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
 import type { ResolvedMoq } from "@/lib/moqIngest";
@@ -36,6 +36,7 @@ import AiTranslateCard from "@/components/product/AiTranslateCard";
 import ImageCarousel from "@/components/product/ImageCarousel";
 import QuantitySelector from "@/components/product/QuantitySelector";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { RouteErrorBoundary } from "@/components/ui/ErrorBoundary";
 
 /**
  * The MOQ evidence a stored product carries: the marketplace wording its MOQ was
@@ -66,7 +67,23 @@ function moqSourceLine(r: ResolvedMoq, locale: "en" | "so"): string {
   return locale === "so" ? "Dalabka ugu yar laguma sheegin bogga" : "Not stated on the listing";
 }
 
+/**
+ * The product screen is where a customer lands from a shared link with a row
+ * that may be half-populated (no images, no title, a MOQ the importer never
+ * read), and it had no boundary: the throw escaped to the root fallback and
+ * took the tab bar with it. Wrapping the component rather than one return also
+ * covers the not-found and loading renders, and changes nothing it shows on
+ * success.
+ */
 export default function ProductDetailScreen() {
+  return (
+    <RouteErrorBoundary>
+      <ProductDetailScreenContent />
+    </RouteErrorBoundary>
+  );
+}
+
+function ProductDetailScreenContent() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { t, locale } = useI18n();
@@ -154,9 +171,14 @@ export default function ProductDetailScreen() {
         return;
       }
       try {
-        const favs = await getFavorites(user.id);
-        setIsFavorite(favs.some((p) => p.id === id));
-      } catch {}
+        // One indexed lookup for a yes/no question. This used to download the
+        // customer's entire wishlist — every saved row with its full product
+        // embed — on every product open, just to answer whether the heart
+        // should be filled.
+        setIsFavorite(await isFavoriteOnServer(user.id, id));
+      } catch (e) {
+        console.warn("[product] favorite state read failed", e);
+      }
     })();
   }, [id, user?.id]);
 

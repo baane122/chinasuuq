@@ -27,7 +27,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { isMissingColumnError } from "@/lib/admin/supabase-data";
+import { isMissingColumnError, sanitizeOrFilter } from "@/lib/admin/supabase-data";
 import {
   PageHeader,
   SectionCard,
@@ -35,6 +35,7 @@ import {
   EmptyState,
   EMPTY_IMAGES,
 } from "@/components/admin/ui";
+import { PartialJoinNotice } from "@/components/admin/PartialJoinNotice";
 import { useToast } from "@/components/admin/Toast";
 import {
   Send,
@@ -47,6 +48,7 @@ import {
   Info,
   Check,
   KeyRound,
+  AlertTriangle,
 } from "lucide-react";
 
 type Audience = "all" | "customer" | "id";
@@ -63,6 +65,15 @@ const TYPES: { value: string; label: string }[] = [
   { value: "payment_update", label: "Payment update" },
 ];
 
+/**
+ * How many recipient ids one broadcast read is allowed to pull. It is a real
+ * ceiling, not a page size: above it the send would build an even larger
+ * per-batch statement set, so the read stops and the screen must SAY it stopped.
+ * `count: "exact"` still reports the true audience beside the capped rows, so a
+ * truncated "All customers" send is never presented as a complete one.
+ */
+const RECIPIENT_READ_CAP = 5000;
+
 interface CustomerHit {
   id: string;
   full_name: string | null;
@@ -78,6 +89,8 @@ interface SentLog {
   audience: string;
   delivered: number;
   failed: number;
+  /** Non-null when the recipient read was capped — the log row must keep saying so. */
+  cappedNote: string | null;
 }
 
 export default function NotificationsComposerPage() {
@@ -96,6 +109,9 @@ export default function NotificationsComposerPage() {
 
   const [sending, setSending] = useState(false);
   const [log, setLog] = useState<SentLog[]>([]);
+  // Set when "All customers" could not enumerate the whole audience (read cap),
+  // so the send is reported as partial instead of looking complete.
+  const [capNotice, setCapNotice] = useState<string | null>(null);
 
   const canSend =
     title.trim().length > 0 &&
@@ -115,11 +131,17 @@ export default function NotificationsComposerPage() {
       const { data, error } = await supabase
         .from("admin_customers_view")
         .select("id, full_name, email")
-        .or(`full_name.ilike.%${q}%,email.ilike.%${q}%`)
+        // `.or()` is its own grammar, not a bound parameter: a comma in a real
+        // name ("Hadija, Co") used to open a second, invalid predicate and the
+        // search answered 400. Same sanitizer the order/product searches use.
+        .or(`full_name.ilike.%${sanitizeOrFilter(q)}%,email.ilike.%${sanitizeOrFilter(q)}%`)
         .limit(15);
       if (error) throw error;
       setCustomerResults((data as CustomerHit[]) || []);
     } catch (e) {
+      // A failed search must not leave the PREVIOUS matches on screen under the
+      // new query — staff would send to whoever is still listed.
+      setCustomerResults([]);
       toastError(e instanceof Error ? e.message : "Customer search failed");
     } finally {
       setCustomerSearching(false);
@@ -163,21 +185,44 @@ export default function NotificationsComposerPage() {
       return;
     }
     setSending(true);
+    setCapNotice(null);
 
     // Resolve the recipient set.
     let recipients: string[] = [];
     let audienceLabel = "";
+    // Local copy of the cap warning: setState is async, so the log row and the
+    // toast below must read the value this send produced, not the render-time one.
+    let cappedNote: string | null = null;
     try {
       if (audience === "all") {
         // admin_customers_view is guaranteed staff-readable (the Customers screen
         // uses it), so it's a safer enumeration than guessing profiles RLS.
-        const { data, error } = await supabase
+        // `count: "exact"` reports the TRUE audience next to the capped rows
+        // (same head-count convention the badges and settings screen use), so a
+        // truncated read can never be shown as "everyone got it".
+        const { data, count, error } = await supabase
           .from("admin_customers_view")
-          .select("id")
-          .limit(5000);
+          .select("id", { count: "exact" })
+          .limit(RECIPIENT_READ_CAP);
         if (error) throw error;
         recipients = ((data as any[]) || []).map((r) => r.id).filter(Boolean);
-        audienceLabel = `All customers (${recipients.length})`;
+
+        // A count that didn't come back is NOT "zero customers" — combined with a
+        // read that filled the cap it means the audience size is unverified.
+        const totalCustomers = typeof count === "number" ? count : null;
+        const truncated =
+          totalCustomers === null ? recipients.length >= RECIPIENT_READ_CAP : recipients.length < totalCustomers;
+        if (truncated) {
+          const missed = totalCustomers === null ? null : totalCustomers - recipients.length;
+          cappedNote =
+            totalCustomers === null
+              ? `Broadcast capped read: only the first ${RECIPIENT_READ_CAP} customer ids came back and the total customer count did not, so some customers may not have received this — the audience size is unverified.`
+              : `Broadcast capped read: this send covered ${recipients.length} of ${totalCustomers} customers, so ${missed} received nothing. The recipient list stops at ${RECIPIENT_READ_CAP} — this is not a complete broadcast to all customers.`;
+          setCapNotice(cappedNote);
+          audienceLabel = `All customers (${recipients.length} of ${totalCustomers ?? "?"})`;
+        } else {
+          audienceLabel = `All customers (${recipients.length})`;
+        }
       } else if (audience === "customer") {
         if (!selectedCustomer) throw new Error("Select a customer first.");
         recipients = [selectedCustomer.id];
@@ -209,46 +254,57 @@ export default function NotificationsComposerPage() {
     // schema is missing one this project's migrations don't carry.
     let shape: "live" | "legacy" = "live";
     const BATCH = 200;
-    for (let i = 0; i < recipients.length; i += BATCH) {
-      const chunk = recipients.slice(i, i + BATCH);
-      // Keep this batch on a single concrete column shape (any[]) so the typed
-      // insert() overload doesn't widen a live|legacy union it can't check.
-      let rows: any[] =
-        shape === "live" ? chunk.map(buildLiveRow) : chunk.map(buildLegacyRow);
-      let res = await supabase.from("notifications").insert(rows).select("id");
+    try {
+      for (let i = 0; i < recipients.length; i += BATCH) {
+        const chunk = recipients.slice(i, i + BATCH);
+        // Keep this batch on a single concrete column shape (any[]) so the typed
+        // insert() overload doesn't widen a live|legacy union it can't check.
+        let rows: any[] =
+          shape === "live" ? chunk.map(buildLiveRow) : chunk.map(buildLegacyRow);
+        let res = await supabase.from("notifications").insert(rows).select("id");
 
-      // Older schema: flip the shape once and retry this batch in legacy columns.
-      if (res.error && shape === "live" && isMissingColumnError(res.error)) {
-        shape = "legacy";
-        rows = chunk.map(buildLegacyRow);
-        res = await supabase.from("notifications").insert(rows).select("id");
-      }
+        // Older schema: flip the shape once and retry this batch in legacy columns.
+        if (res.error && shape === "live" && isMissingColumnError(res.error)) {
+          shape = "legacy";
+          rows = chunk.map(buildLegacyRow);
+          res = await supabase.from("notifications").insert(rows).select("id");
+        }
 
-      if (res.error) {
-        // A batch insert is atomic: one bad row rejects all 200 and would
-        // under-report. Fall back to per-row inserts for JUST this batch so a
-        // single bad recipient can't hide the other 199, counting each honestly.
-        const perRow = await Promise.all(
-          rows.map((row) => supabase.from("notifications").insert(row).select("id"))
-        );
-        for (const r of perRow) {
-          if (r.error) {
-            failed++;
-            if (!firstError) firstError = r.error.message;
-          } else delivered += r.data?.length ?? 0;
-        }
-      } else {
-        const n = res.data?.length ?? 0;
-        delivered += n;
-        const missing = chunk.length - n;
-        if (missing > 0) {
-          failed += missing;
-          if (!firstError) firstError = "Some recipients were rejected by the server.";
+        if (res.error) {
+          // A batch insert is atomic: one bad row rejects all 200 and would
+          // under-report. Fall back to per-row inserts for JUST this batch so a
+          // single bad recipient can't hide the other 199, counting each honestly.
+          const perRow = await Promise.all(
+            rows.map((row) => supabase.from("notifications").insert(row).select("id"))
+          );
+          for (const r of perRow) {
+            if (r.error) {
+              failed++;
+              if (!firstError) firstError = r.error.message;
+            } else delivered += r.data?.length ?? 0;
+          }
+        } else {
+          const n = res.data?.length ?? 0;
+          delivered += n;
+          const missing = chunk.length - n;
+          if (missing > 0) {
+            failed += missing;
+            if (!firstError) firstError = "Some recipients were rejected by the server.";
+          }
         }
       }
+    } catch (e) {
+      // A request that THREW (a dead transport, not an answered error) used to
+      // escape the whole function, leaving the send button spinning forever with
+      // no result either way. Count everything we did not account for as failed
+      // — an unverified write is never a delivered one.
+      if (!firstError) firstError = e instanceof Error ? e.message : "The send request never completed.";
+      const unaccounted = recipients.length - delivered - failed;
+      if (unaccounted > 0) failed += unaccounted;
+    } finally {
+      setSending(false);
     }
 
-    setSending(false);
     if (delivered > 0) {
       setLog((prev) => [
         {
@@ -263,17 +319,26 @@ export default function NotificationsComposerPage() {
           audience: audienceLabel,
           delivered,
           failed,
+          cappedNote,
         },
         ...prev,
       ]);
     }
 
-    if (failed === 0) {
+    if (failed === 0 && !cappedNote) {
       success(`Sent to ${delivered} recipient${delivered === 1 ? "" : "s"}.`);
       setTitle("");
       setBody("");
+    } else if (failed === 0 && cappedNote) {
+      // Delivered to every recipient we were ALLOWED to read — which is not the
+      // same claim, so it must not print as a clean broadcast.
+      success(`Sent to ${delivered} recipient${delivered === 1 ? "" : "s"} — see the capped-read warning above.`);
+      setTitle("");
+      setBody("");
     } else if (delivered > 0) {
-      toastError(`${delivered} sent, ${failed} failed${firstError ? `: ${firstError}` : ""}`);
+      toastError(
+        `${delivered} sent, ${failed} failed${firstError ? `: ${firstError}` : ""}${cappedNote ? " — and the recipient read was capped, see the warning above" : ""}`
+      );
     } else {
       // Whole send rejected — almost always a missing INSERT policy.
       toastError(
@@ -310,6 +375,10 @@ export default function NotificationsComposerPage() {
           here. See the file header for the backend grants a durable audit trail needs.
         </p>
       </div>
+
+      {/* Amber role="status" cap warning — the same one-signal style the list
+          screens use (RowCapNotice / PartialJoinNotice) for a truncated read. */}
+      {capNotice && <PartialJoinNotice messages={[capNotice]} />}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Composer */}
@@ -375,7 +444,9 @@ export default function NotificationsComposerPage() {
             {/* Audience-specific inputs */}
             {audience === "all" && (
               <p className="rounded-xl bg-warm-100 px-3 py-2 text-xs text-dark-900/60 dark:bg-dark-800 dark:text-neutral-400">
-                Sends to every customer returned by the admin customers view.
+                Sends to every customer returned by the admin customers view. The recipient read
+                stops at {RECIPIENT_READ_CAP} ids — if the audience is larger, a capped-read
+                warning appears above and the send is counted as partial, not as all customers.
               </p>
             )}
 
@@ -497,6 +568,14 @@ export default function NotificationsComposerPage() {
                     <span className={cn(entry.failed > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400", "font-semibold")}>
                       · {entry.delivered} delivered{entry.failed > 0 ? `, ${entry.failed} failed` : ""}
                     </span>
+                    {/* A capped broadcast must stay marked as partial in the log,
+                        so re-reading it tomorrow can't recall it as "everyone". */}
+                    {entry.cappedNote && (
+                      <span className="flex w-full items-start gap-1.5 rounded-lg bg-amber-50 px-2 py-1 font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                        {entry.cappedNote}
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}

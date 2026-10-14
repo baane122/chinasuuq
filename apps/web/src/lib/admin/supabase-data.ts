@@ -6,6 +6,7 @@
 // the production database.
 
 import { supabase } from "../supabase";
+import { partialJoinNotice, runInBatches } from "./batched-join";
 
 // ─── Status mappers (mirror the mobile adapter) ───────────────────
 const MOBILE_TO_DB: Record<string, string> = {
@@ -170,6 +171,115 @@ export async function getOrderItems(orderId: string) {
   }
 }
 
+// ─── Decorated follow-up lookups ──────────────────────────────────
+/**
+ * The batching rules live in ./batched-join.ts (and are verified there); this
+ * is the Supabase-shaped wrapper the admin pages call. See that file's header
+ * for why a `.in()` join inherited the size of the list it followed and how the
+ * resulting silent 400 rendered as "no customer recorded".
+ */
+type BatchedJoinResult<T> = { rows: T[]; failedBatches: number; batches: number };
+
+async function selectInBatches<T = any>({
+  table,
+  columns,
+  column,
+  values,
+  label,
+}: {
+  table: string;
+  columns: string;
+  column: string;
+  values: string[];
+  label: string;
+}): Promise<BatchedJoinResult<T>> {
+  return runInBatches<string, T>({
+    values,
+    // The builder is awaited rather than cast: its `data`/`error` generics are
+    // keyed to the select string, and this file deliberately queries columns
+    // the checked-in types predate.
+    query: async (batch) => {
+      const res = await supabase.from(table).select(columns).in(column, batch);
+      return {
+        data: (res.data as unknown as T[] | null) ?? null,
+        error: res.error ? { message: res.error.message } : null,
+      };
+    },
+    onBatchError: (idx, total, message) =>
+      console.warn(`[admin join] ${label} batch ${idx}/${total} failed:`, message),
+  });
+}
+
+/**
+ * Order id → display reference for the Shipments console.
+ *
+ * This used to be a single `.in("id", …)` against up to 1 000 ids straight from
+ * the page. PostgREST puts those ids in the query string, so the request line
+ * grew to ~37 KB and the server answered 400 — then the base-table fallback
+ * failed on the same oversized URL, `data` came back null, and every shipment
+ * rendered with no order link at all. Staff read that as "these shipments were
+ * never linked to an order". Enrichment now happens in URL-sized batches, and
+ * the view→base-table step-down is per batch so one drifted view column can't
+ * blank the whole map.
+ */
+export async function getOrderRefsByIds(ids: string[]) {
+  const unique = [...new Set(ids.filter(Boolean) as string[])];
+  if (!unique.length) return { rows: [] as any[], failedBatches: 0, batches: 0 };
+
+  const view = await selectInBatches<any>({
+    table: "admin_orders_view",
+    columns: "id, order_number, reference",
+    column: "id",
+    values: unique,
+    label: "shipment order references",
+  });
+  if (!view.failedBatches) return view;
+
+  // Something failed against the view — retry only the ids the view did not
+  // resolve, against the base table, before declaring the join partial.
+  const found = new Set(view.rows.map((r) => r?.id));
+  const missing = unique.filter((id) => !found.has(id));
+  const base = await selectInBatches<any>({
+    table: "orders",
+    columns: "id, reference",
+    column: "id",
+    values: missing,
+    label: "shipment order references (base table)",
+  });
+  return {
+    rows: [...view.rows, ...base.rows],
+    failedBatches: base.failedBatches,
+    batches: base.batches,
+  };
+}
+
+// ─── Search filter safety ────────────────────────────────────────
+/**
+ * `.or()` is NOT a bound parameter: PostgREST parses the string with its own
+ * filter grammar, in which `,` ends one predicate and starts the next, `.`
+ * separates column / operator / value, and `(` `)` open nested groups. So a
+ * genuine business name ("Hadija, Co") used to split into a second, invalid
+ * predicate and the whole list answered 400 → "Failed to load", and typed input
+ * could append filter terms of its own (`shoes%,status.eq.active`).
+ *
+ * The structural characters are backslash-escaped — the same way the catalog
+ * search at the bottom of this file has always neutralised them, and a literal
+ * backslash has to go first so `\,` cannot be re-read as an escape pair.
+ *
+ * `%` is deliberately left alone: the caller's `%…%` IS the wildcard it means
+ * to send. `*` is left alone too — nothing here builds a `*` glob, so escaping
+ * it would change how an ordinary search for "spare part *" behaves for no
+ * grammar reason. Spaces and plain text pass through untouched.
+ */
+export function sanitizeOrFilter(term: string): string {
+  return term.replace(/[\\,.()]/g, (c) => `\\${c}`);
+}
+
+/** One search box → the `%term%` ILIKE pattern shared by every field in an `.or()`. */
+function orLike(search: string): string {
+  return `%${sanitizeOrFilter(search)}%`;
+}
+
 // ─── Orders CRUD ──────────────────────────────────────────────────
 /**
  * listOrders reads the admin view first (rich customer fields), and falls back
@@ -199,6 +309,8 @@ export async function listOrders({
   page?: number;
   pageSize?: number;
 } = {}) {
+  // Decorated joins that only partly resolved, described in staff-facing words.
+  const notices: string[] = [];
   try {
     let q = supabase
       .from("admin_orders_view")
@@ -211,8 +323,9 @@ export async function listOrders({
     if (status) q = q.eq("status", status);
     if (payment_status) q = q.eq("payment_status", payment_status);
     if (search) {
+      const like = orLike(search);
       q = q.or(
-        `order_number.ilike.%${search}%,reference.ilike.%${search}%,recipient_name.ilike.%${search}%,phone.ilike.%${search}%`
+        `order_number.ilike.${like},reference.ilike.${like},recipient_name.ilike.${like},phone.ilike.${like}`
       );
     }
     let { data, error, count } = await q;
@@ -234,8 +347,9 @@ export async function listOrders({
       if (status) fb = fb.eq("status", status);
       if (payment_status) fb = fb.eq("payment_status", payment_status);
       if (search) {
+        const like = orLike(search);
         fb = fb.or(
-          `reference.ilike.%${search}%,destination_city.ilike.%${search}%,delivery_address.ilike.%${search}%`
+          `reference.ilike.${like},destination_city.ilike.${like},delivery_address.ilike.${like}`
         );
       }
       const res = await fb;
@@ -245,6 +359,7 @@ export async function listOrders({
           error: adminErrorMessage(error, res.error.message),
           orders: [],
           total: 0,
+          notices: [],
         };
       }
       total = res.count ?? (res.data as any[] | undefined)?.length ?? 0;
@@ -264,10 +379,15 @@ export async function listOrders({
       // Fill customer contact for the page's user_ids (profiles.id = auth uid).
       const uids = [...new Set(orders.map((o) => o.user_id).filter(Boolean))];
       if (uids.length) {
-        const { data: profs } = await supabase
-          .from("profiles")
-          .select("id, full_name, phone")
-          .in("id", uids);
+        const { rows: profs, failedBatches, batches } = await selectInBatches({
+          table: "profiles",
+          columns: "id, full_name, phone",
+          column: "id",
+          values: uids,
+          label: "customer names",
+        });
+        const notice = partialJoinNotice("Customer names", failedBatches, batches);
+        if (notice) notices.push(notice);
         const byId = new Map(((profs as any[]) || []).map((p) => [p.id, p]));
         for (const o of orders) {
           const p = byId.get(o.user_id);
@@ -285,27 +405,30 @@ export async function listOrders({
     // unavailable items view just leaves apps empty.
     const ids = orders.map((o) => o.id).filter(Boolean);
     if (ids.length) {
-      const { data: lines, error: linesError } = await supabase
-        .from("admin_order_items_view")
-        .select("order_id, marketplace_key")
-        .in("order_id", ids);
-      if (!linesError) {
-        const byOrder = new Map<string, Set<string>>();
-        for (const line of (lines as any[]) || []) {
-          if (!line?.order_id) continue;
-          const set = byOrder.get(line.order_id) || new Set<string>();
-          set.add(line.marketplace_key);
-          byOrder.set(line.order_id, set);
-        }
-        for (const order of orders) {
-          const set = byOrder.get(order.id);
-          order.apps = set ? [...set].sort() : [];
-        }
+      const { rows: lines, failedBatches, batches } = await selectInBatches({
+        table: "admin_order_items_view",
+        columns: "order_id, marketplace_key",
+        column: "order_id",
+        values: ids,
+        label: "order line provenance",
+      });
+      const notice = partialJoinNotice("Source marketplaces", failedBatches, batches);
+      if (notice) notices.push(notice);
+      const byOrder = new Map<string, Set<string>>();
+      for (const line of (lines as any[]) || []) {
+        if (!line?.order_id) continue;
+        const set = byOrder.get(line.order_id) || new Set<string>();
+        set.add(line.marketplace_key);
+        byOrder.set(line.order_id, set);
+      }
+      for (const order of orders) {
+        const set = byOrder.get(order.id);
+        order.apps = set ? [...set].sort() : [];
       }
     }
-    return { ok: true, orders, total };
+    return { ok: true, orders, total, notices: notices.filter(Boolean) };
   } catch (e) {
-    return { ok: false, error: String(e), orders: [], total: 0 };
+    return { ok: false, error: String(e), orders: [], total: 0, notices: [] };
   }
 }
 
@@ -337,8 +460,9 @@ export async function listCustomers({ search }: { search?: string } = {}) {
       .order("created_at", { ascending: false })
       .limit(500);
     if (search) {
+      const like = orLike(search);
       q = q.or(
-        `full_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%,city.ilike.%${search}%`
+        `full_name.ilike.${like},email.ilike.${like},phone.ilike.${like},city.ilike.${like}`
       );
     }
     const { data, error } = await q;
@@ -436,20 +560,15 @@ export async function listProducts({ search, marketplace }: { search?: string; m
 }
 
 /**
- * PostgREST reads `,` and `.` inside or=() as structure, so one search box could
- * otherwise smuggle extra predicates into the query (`shoes%,moq.eq.1`). All
- * three characters are escaped with the backslash PostgREST documents.
+ * Both catalog predicates above are `.or()` strings, so the search box goes
+ * through the shared `orLike()` — see "Search filter safety".
  */
-function escapeFilter(term: string): string {
-  return term.replace(/[\\,.]/g, (c) => `\\${c}`);
-}
-
 function baseTitlePredicate(search: string): string {
-  return `source_title.ilike.%${escapeFilter(search)}%`;
+  return `source_title.ilike.${orLike(search)}`;
 }
 
 function curatedTitlePredicate(search: string): string {
-  const like = `%${escapeFilter(search)}%`;
+  const like = orLike(search);
   return (
     `title_english.ilike.${like},title_original.ilike.${like},` +
     `title_somali.ilike.${like},category.ilike.${like}`
@@ -723,10 +842,15 @@ const MARKETPLACE_SESSION_PLUS_COLS = MARKETPLACE_SESSION_COLS + ", cookies_upda
 async function attachCookieUpdaterNames(accounts: any[]): Promise<void> {
   const uids = [...new Set(accounts.map((a) => a?.cookies_updated_by).filter(Boolean))];
   if (!uids.length) return;
-  const { data: profs } = await supabase
-    .from("profiles")
-    .select("id, full_name")
-    .in("id", uids);
+  const { rows: profs, failedBatches, batches } = await selectInBatches({
+    table: "profiles",
+    columns: "id, full_name",
+    column: "id",
+    values: uids,
+    label: "cookie updater names",
+  });
+  const notice = partialJoinNotice("Cookie updater names", failedBatches, batches);
+  if (notice) console.warn(`[admin join] ${notice}`);
   const byId = new Map(((profs as any[]) || []).map((p) => [p.id, p?.full_name]));
   for (const a of accounts) {
     if (a?.cookies_updated_by) {

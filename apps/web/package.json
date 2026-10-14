@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "verify:joins": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-batched-join.mjs",
+    "verify:ai": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-ai-client.mjs",
+    "verify:track": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-track-errors.mjs",
+    "verify:admin": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-admin-guardrails.mjs",
+    "verify": "npm run verify:joins && npm run verify:ai && npm run verify:track && npm run verify:admin",
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",

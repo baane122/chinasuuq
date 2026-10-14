@@ -43,7 +43,11 @@ export default function PersonalInfoScreen() {
           setPhone(p.phone ?? user.phone ?? "");
           setCity(p.city ?? user.city ?? "");
         }
-      } catch {}
+      } catch (e) {
+        // Falls back to the auth-store values above, so the form is still
+        // usable — but a broken profile read must be visible in the log.
+        console.warn("[profile:personal-info] profile read failed, using session values", e);
+      }
       setInitialized(true);
     })();
   }, [user?.id]);
@@ -72,8 +76,9 @@ export default function PersonalInfoScreen() {
       } else {
         Alert.alert("Saved", "Your personal information has been updated.");
       }
-    } catch {
-      Alert.alert("Error", "Could not save. Please try again.");
+    } catch (e: any) {
+      console.warn("[profile:personal-info] save threw", e);
+      Alert.alert("Error", e?.message || "Could not save. Please try again.");
     } finally {
       setSaving(false);
     }

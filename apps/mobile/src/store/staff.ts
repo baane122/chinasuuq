@@ -5,6 +5,7 @@
  * with special staff-only controls (sync cookies, view all orders, etc.)
  */
 import { create } from "zustand";
+import { isStaffRole } from "@/lib/roles";
 
 export interface StaffModeState {
   isActive: boolean;
@@ -19,16 +20,23 @@ export interface StaffModeState {
   canViewAllOrders: boolean;
 }
 
-const STAFF_ROLES = ['staff', 'super_admin'];
+/**
+ * Screens used to re-derive this with `role === "staff" || role === "super_admin"`
+ * (three copies, none of them counting the legacy `admin` role the server does
+ * accept). Read the hydrated store instead — `store/auth.ts` fills it at
+ * sign-in and on session restore, so this costs no extra `profiles` query per
+ * screen mount.
+ */
+export const useIsStaff = (): boolean => useStaffStore((s) => s.role !== null && isStaffRole(s.role));
 
 export const useStaffStore = create<StaffModeState>((set, get) => ({
   isActive: false,
   role: null,
   
   initFromProfile: (role) => {
-    const isStaff = !!role && STAFF_ROLES.includes(role);
+    const isStaff = isStaffRole(role);
     const staffRole = isStaff ? role : null;
-    set({ 
+    set({
       role: staffRole,
       // "isActive" means "a staff account is operating": a staff/super_admin
       // login starts in staff mode (previously forced false, which made the

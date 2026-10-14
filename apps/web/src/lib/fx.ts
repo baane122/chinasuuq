@@ -132,7 +132,13 @@ async function loadRates(): Promise<{ rates: FxRates; reachedDb: boolean }> {
       else if (from === "SOS" && to === "USD" && sosRaw === null) sosRaw = rate;
     }
 
-    const cnyPerUsd = cnyRaw === null ? lastGood.cnyPerUsd : (normalizeCnyPerUsd(cnyRaw) ?? lastGood.cnyPerUsd);
+    // Normalise ONCE and let that result be the truth: `fromLiveRow` means "a
+    // live row passed the band check", not "a row existed". A typo'd admin row
+    // (e.g. 0.66 typed the wrong way round and flipped to 1.5, still sub-min)
+    // falls back to the last-known/offline number, so billing on it must be
+    // refused exactly like an unreachable table.
+    const liveCnyPerUsd = cnyRaw === null ? null : normalizeCnyPerUsd(cnyRaw);
+    const cnyPerUsd = liveCnyPerUsd ?? lastGood.cnyPerUsd;
     const sosPerUsd = sosRaw === null ? lastGood.sosPerUsd : (normalizeSosPerUsd(sosRaw) ?? lastGood.sosPerUsd);
 
     // The fee percentage has no column in exchange_rates — fx_rates() is its
@@ -146,7 +152,7 @@ async function loadRates(): Promise<{ rates: FxRates; reachedDb: boolean }> {
     // `fromLiveRow` is only true when an active CNY→USD row was actually read and
     // survived the band check. A default or last-known number is fine to show,
     // never to price a customer with.
-    lastGood = buildRates(cnyPerUsd, sosPerUsd, serviceFeePct, cnyRaw !== null);
+    lastGood = buildRates(cnyPerUsd, sosPerUsd, serviceFeePct, liveCnyPerUsd !== null);
     return { rates: lastGood, reachedDb: true };
   } catch {
     return { rates: { ...lastGood, fromLiveRow: false }, reachedDb: false };

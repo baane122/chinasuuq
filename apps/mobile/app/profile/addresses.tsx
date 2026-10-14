@@ -5,21 +5,32 @@ import { useRouter } from "expo-router";
 import { ArrowLeft, Home, MapPin, Plus, Trash2, Edit3, CheckCircle2 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
+import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { getAddresses, deleteAddress, type SavedAddress } from "@/db/index";
+import { readAddresses, deleteAddress, type SavedAddress } from "@/db/index";
 import { EmptyState } from "@/components/EmptyState";
 
 export default function AddressesScreen() {
   const router = useRouter();
+  const { locale } = useI18n();
+  const tt = (en: string, so: string) => (locale === "en" ? en : so);
   const user = useAuthStore((s) => s.user);
   const [addresses, setAddresses] = useState<SavedAddress[]>([]);
   const [loading, setLoading] = useState(true);
+  /**
+   * Kept apart from "the list is empty". The address read in db/ serves the
+   * device cache and then an empty array, so a rejected or unreachable read
+   * used to render as "No addresses yet" — the same shape wishlist.tsx already
+   * avoids.
+   */
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async () => {
     if (!user?.id) { setLoading(false); return; }
     setLoading(true);
-    const list = await getAddresses(user.id);
-    setAddresses(list);
+    const read = await readAddresses(user.id);
+    setAddresses(read.addresses);
+    setLoadFailed(read.failed);
     setLoading(false);
   }, [user?.id]);
 
@@ -33,10 +44,19 @@ export default function AddressesScreen() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          if (addr.id && user?.id) {
-            await deleteAddress(addr.id, user.id);
-            await load();
+          if (!addr.id || !user?.id) return;
+          const result = await deleteAddress(addr.id, user.id);
+          // The row is off this device either way; ok:false means the server
+          // still holds it, so the next good read brings it back. The customer
+          // hears that now instead of finding the "deleted" address again.
+          if (!result.ok) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert(
+              tt("Could not delete", "Lama tirtiri karin"),
+              result.error || tt("Please try again.", "Fadlan mar kale isku day.")
+            );
           }
+          await load();
         },
       },
     ]);
@@ -65,6 +85,15 @@ export default function AddressesScreen() {
           actionLabel="Sign In"
           onAction={() => router.push("/(auth)/login" as any)}
         />
+      ) : loadFailed ? (
+        <View style={styles.empty}>
+          <View style={styles.emptyIcon}><MapPin size={40} color={COLORS.error} /></View>
+          <Text style={styles.emptyTitle}>{tt("Couldn't load your addresses", "Cinwaanada lama soo dejin karin")}</Text>
+          <Text style={styles.emptySub}>{tt("Check your connection and try again.", "Hubi isku xirka internetka kadibna isku day mar kale.")}</Text>
+          <Pressable style={styles.retryBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); load(); }}>
+            <Text style={styles.retryBtnText}>{tt("Try again", "Isku day mar kale")}</Text>
+          </Pressable>
+        </View>
       ) : addresses.length === 0 ? (
         <View style={styles.empty}>
           <View style={styles.emptyIcon}><MapPin size={40} color={COLORS.primary} /></View>
@@ -140,6 +169,8 @@ const styles = StyleSheet.create({
   emptyIcon: { width: 84, height: 84, borderRadius: 42, backgroundColor: COLORS.softOrange, alignItems: "center", justifyContent: "center", marginBottom: SPACING.lg },
   emptyTitle: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: 4 },
   emptySub: { fontSize: 14, fontFamily: FONTS.regular, color: COLORS.textSecondary, textAlign: "center" },
+  retryBtn: { marginTop: SPACING.lg, backgroundColor: COLORS.primary, paddingHorizontal: SPACING.xxl, paddingVertical: SPACING.md, borderRadius: RADIUS.pill },
+  retryBtnText: { color: COLORS.white, fontSize: 15, fontFamily: FONTS.semibold },
   addrCard: { backgroundColor: COLORS.white, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.border, padding: SPACING.lg, marginBottom: SPACING.md },
   addrTop: { flexDirection: "row", gap: SPACING.md },
   addrIconWrap: { width: 44, height: 44, borderRadius: 12, backgroundColor: COLORS.softOrange, alignItems: "center", justifyContent: "center" },

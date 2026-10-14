@@ -14,7 +14,8 @@ import { useToast } from "@/components/admin/Toast";
 import FormInput from "@/components/admin/FormInput";
 import { PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips, TableShell, EMPTY_IMAGES, SidePanel } from "@/components/admin/ui";
 import { RowCapNotice } from "@/components/admin/RowCapNotice";
-import { isMissingColumnError } from "@/lib/admin/supabase-data";
+import { PartialJoinNotice } from "@/components/admin/PartialJoinNotice";
+import { getOrderRefsByIds, isMissingColumnError } from "@/lib/admin/supabase-data";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -98,6 +99,10 @@ export default function ShipmentsPage() {
   // Set when a fetch returned a full 1000-row page — the read cap hides older rows.
   const [rowCapHit, setRowCapHit] = useState(false);
 
+  // Set when the order-reference join only partly resolved, so a blank Order
+  // link reads as "the lookup failed" instead of "this shipment has no order".
+  const [refJoinNotice, setRefJoinNotice] = useState<string | null>(null);
+
   /* ── Fetch ──────────────────────────────────────────────────── */
 
   const fetchShipments = useCallback(async () => {
@@ -126,26 +131,24 @@ export default function ShipmentsPage() {
       if (orderColumnLive) {
         const ids = [...new Set(rows.map((s) => s.order_id).filter(Boolean) as string[])];
         if (ids.length) {
-          let { data: ords, error: ordsErr } = await supabase
-            .from("admin_orders_view")
-            .select("id, order_number, reference")
-            .in("id", ids);
-          if (ordsErr) {
-            const fb = await supabase
-              .from("orders")
-              .select("id, reference")
-              .in("id", ids);
-            // Base-table fallback has no order_number column — the map below
-            // guards per-field, so the narrower row shape is intentional.
-            ords = fb.data as unknown as typeof ords;
-          }
+          // Batched inside the data layer: this join used to put up to 1000
+          // order ids in one GET query string (~37 KB request line), the server
+          // answered 400, the base-table retry failed on the same oversized URL,
+          // and every shipment rendered with no order link at all.
+          const { rows: ords, failedBatches, batches } = await getOrderRefsByIds(ids);
           const map: Record<string, string> = {};
           for (const o of (ords as any[]) || []) {
             map[o.id] = o.order_number || o.reference || String(o.id).slice(0, 8);
           }
           setOrderRefs(map);
+          setRefJoinNotice(
+            failedBatches
+              ? `Order references could not be loaded for ${failedBatches} of ${batches} groups, so some shipments show a blank Order link even though the order exists.`
+              : null
+          );
         } else {
           setOrderRefs({});
+          setRefJoinNotice(null);
         }
       }
     } catch (err) {
@@ -369,6 +372,7 @@ export default function ShipmentsPage() {
       />
 
       {rowCapHit && <RowCapNotice noun="shipments" />}
+      {refJoinNotice && <PartialJoinNotice messages={[refJoinNotice]} />}
 
       {/* ── KPI Stats ── */}
       <PageGrid className="grid-cols-2 sm:grid-cols-4">

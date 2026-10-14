@@ -143,6 +143,12 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
   // Suggested quick-buy quantities
   const suggested = useMemo(() => getSuggestedQuantities(moqRules), [moqRules]);
 
+  // Seed from the capture whenever the CAPTURE changes — identified by its page
+  // signature, not by object identity. A parent that rebuilds the listing on
+  // every render (and this screen re-renders on progress, price sweeps and FX)
+  // would otherwise wipe qty/specs/weight/volume/price mid-typing, which is the
+  // single most maddening thing a form can do to a customer.
+  const seedKey = listing ? `${listing.sourceId}\u0000${listing.url}\u0000${listing.title}` : "";
   useEffect(() => {
     if (!listing) return;
     setQty(1);
@@ -155,7 +161,8 @@ export default function SmartProductForm({ visible, listing, onClose }: SmartPro
     userEditedUsd.current = false;
     setPriceCny(p);
     setUsdInput(usdTextFromCny(p));
-  }, [listing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedKey]);
 
   // A rate that lands after the capture must still reach an untouched box;
   // a price the customer typed is intent, so that path never writes priceCny

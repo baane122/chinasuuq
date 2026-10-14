@@ -9,6 +9,7 @@ import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
 import { getOrdersByUser, type LocalOrder } from "@/db/index";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 const EMPTY_ORDERS_IMG = require("../../assets/screens/empty_orders.png");
 
@@ -28,6 +29,7 @@ export default function OrderHistoryScreen() {
   const [orders, setOrders] = useState<LocalOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<any>(null);
 
   const load = async (refresh = false) => {
     if (refresh) setRefreshing(true); else setLoading(true);
@@ -35,7 +37,14 @@ export default function OrderHistoryScreen() {
     try {
       const list = await getOrdersByUser(user.id);
       setOrders(list);
-    } catch {}
+      setLoadError(null);
+    } catch (e) {
+      // A failed read used to leave this screen showing "No orders yet" with
+      // the same illustration as a genuinely empty history — a customer with
+      // paid orders concluded they had lost them.
+      console.warn("[profile:order-history] orders read failed", e);
+      setLoadError(e);
+    }
     setLoading(false);
     setRefreshing(false);
   };
@@ -60,6 +69,13 @@ export default function OrderHistoryScreen() {
 
       {loading ? (
         <View style={styles.centerLoading}><ActivityIndicator color={COLORS.primary} /></View>
+      ) : loadError && orders.length === 0 ? (
+        <ErrorState
+          error={loadError}
+          title="Couldn’t load your orders"
+          body="Your orders are safe — this was a connection problem, not a lost order. Pull down to retry."
+          onRetry={() => load()}
+        />
       ) : orders.length === 0 ? (
         <View style={styles.empty}>
           <Image source={EMPTY_ORDERS_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />

@@ -192,8 +192,16 @@ function SourcingPageContent() {
   /* One number prices this screen's quotes: the live rate through fx.ts's band
    * check. Both the drawer preview and the stored exchange_rate read it, and a
    * null (unreadable / out-of-band) disables the save instead of falling back
-   * to a default nobody displayed. */
-  const quoteRate = normalizeCnyPerUsd(fx.cnyPerUsd);
+   * to a default nobody displayed.
+   *
+   * The gate is `fx.fromLiveRow`, not just the band: `fx.cnyPerUsd` is ALWAYS a
+   * sane-looking number, because fx.ts substitutes the last good (or built-in)
+   * rate for display. Re-normalising that figure proves only that the fallback
+   * is plausible — which is how this screen could store an `exchange_rate` of
+   * 6.66 under a button whose own tooltip said "No live CNY→USD rate". Same
+   * convention as the quotes screen (`quotes/page.tsx`), so the two money
+   * surfaces now refuse for the same reason. */
+  const quoteRate = fx.fromLiveRow ? normalizeCnyPerUsd(fx.cnyPerUsd) : null;
 
   /* ── Fetch ──────────────────────────────────────────────────── */
 

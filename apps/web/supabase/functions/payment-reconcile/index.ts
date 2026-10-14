@@ -24,7 +24,7 @@
 // satisfies both the guard and the payments_update_staff / orders_update_own
 // RLS policies.
 import { corsHeaders } from "../_shared/cors.ts";
-import { requireStaffOrAdmin, unauthorized, userClient } from "../_shared/auth.ts";
+import { deny, staffGate, unauthorized, userClient } from "../_shared/auth.ts";
 
 // payments.status → orders.payment_status. The live page vocabulary is
 // pending/confirmed/failed/refunded (payments/page.tsx L48); the payment_status
@@ -91,8 +91,9 @@ async function insertNotification(
 export async function handler(req: Request) {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  const caller = await requireStaffOrAdmin(req);
-  if (!caller) return unauthorized("auth_required");
+  const gate = await staffGate(req);
+  if (!gate.caller) return deny(gate, "payment-reconcile");
+  const caller = gate.caller;
 
   try {
     const body = await req.json();

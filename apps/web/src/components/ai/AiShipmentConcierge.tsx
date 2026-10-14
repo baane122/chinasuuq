@@ -11,6 +11,49 @@ interface Props {
 }
 
 /**
+ * Why the panel has no answer. "read" = one of the two tracking queries never
+ * gave us a usable result, so NOTHING was looked at and we must not let the
+ * model improvise; "ai" = the data was read and the assistant itself failed.
+ */
+type Failure = "read" | "ai" | null;
+
+/** The order columns this panel reads; RLS decides what a guest can see. */
+interface TrackedOrder {
+  id: string;
+  status?: string;
+  shipping_method?: string;
+  total_usd?: number;
+  payment_status?: string;
+}
+
+/**
+ * One PostgREST collection read, with "the request failed" kept DISTINCT from
+ * "the server answered: zero rows".
+ *
+ * Both used to collapse into `.catch(() => null)`, so a dead network looked
+ * exactly like an order that does not exist: the concierge got
+ * `{order: null, events: null}` and wrote a confident tracking story about a
+ * parcel nobody had read. A non-2xx answer, a thrown transport error and a
+ * PostgREST error body (which is a JSON object, not an array) all count as a
+ * failed read; only a genuine array — empty included — counts as an answer.
+ */
+async function readCollection<T>(url: string): Promise<{ ok: true; rows: T[] } | { ok: false }> {
+  try {
+    // Anon key only: this is the public /track panel, and RLS decides what a
+    // guest or a signed-in customer may see — the same convention the page's
+    // own tracking queries use.
+    const res = await fetch(url, {
+      headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "" },
+    });
+    if (!res.ok) return { ok: false };
+    const json: unknown = await res.json();
+    return Array.isArray(json) ? { ok: true, rows: json as T[] } : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
  * AI Shipment Concierge — explains the tracked shipment in plain EN or SO.
  * Fetches nothing itself: the parent passes the reference, we pull the
  * tracking timeline client-side and let the AI narrate it.
@@ -21,37 +64,51 @@ export default function AiShipmentConcierge({ orderReference }: Props) {
   const [answer, setAnswer] = useState<string | null>(null);
   const [lang, setLang] = useState<"en" | "so">(locale === "so" ? "so" : "en");
   const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<Failure>(null);
 
   const ask = async (language: "en" | "so") => {
     setLoading(true);
-    setFailed(false);
+    setFailure(null);
     setAnswer(null);
     try {
       // Resolve the order by reference first (tracking_events FK needs the UUID)
-      const orders = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/orders?reference=eq.${orderReference}&select=id,status,shipping_method,total_usd,payment_status`,
-        { headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "" } }
-      ).then((r) => r.json()).catch(() => null);
-      const orderRow = Array.isArray(orders) ? orders[0] : null;
+      const orderRead = await readCollection<TrackedOrder>(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/orders?reference=eq.${orderReference}&select=id,status,shipping_method,total_usd,payment_status`
+      );
+      if (!orderRead.ok) {
+        // We could not ask the server at all — say so instead of prompting the model.
+        setFailure("read");
+        return;
+      }
+      const orderRow = orderRead.rows[0] ?? null;
       let events: unknown = null;
       if (orderRow?.id) {
-        events = await fetch(
-          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/tracking_events?order_id=eq.${orderRow.id}&select=status,location,message,created_at&order=created_at.desc&limit=5`,
-          { headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "" } }
-        ).then((r) => r.json()).catch(() => null);
+        const eventsRead = await readCollection<Record<string, unknown>>(
+          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/tracking_events?order_id=eq.${orderRow.id}&select=status,location,message,created_at&order=created_at.desc&limit=5`
+        );
+        if (!eventsRead.ok) {
+          // The order was read but its timeline was not. Narrating a status the
+          // unread timeline may contradict is the same invention in a nicer
+          // costume, so this is a failure too.
+          setFailure("read");
+          return;
+        }
+        events = eventsRead.rows;
       }
+      // A genuinely absent order (an empty array, not a failed read) still
+      // reaches the model, which may say plainly that it cannot find it.
       const prompt =
         `You are ChinaSuuq support. Shipment data JSON:\n${JSON.stringify({ order: orderRow, events })}\n` +
         `Explain the current shipment status simply in ${language === "so" ? "Somali (af-Soomaali)" : "English"}, ` +
         `max 3 sentences, then one line 'Next step: ...'.`;
       const result = await aiChat({ messages: [{ role: "user", content: prompt }], tier: "fast", timeoutMs: 30_000 });
       if (result) setAnswer(result);
-      else setFailed(true);
+      else setFailure("ai");
     } catch {
-      setFailed(true);
+      setFailure("ai");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleOpen = () => {
@@ -104,7 +161,24 @@ export default function AiShipmentConcierge({ orderReference }: Props) {
         </div>
       )}
 
-      {failed && (
+      {failure === "read" && (
+        <div className="mt-3 flex items-start gap-2 text-xs text-dark-900/60">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-amber-500" />
+          <span>
+            We couldn’t reach the server, so your shipment was never read — this is a connection
+            problem, not a missing parcel. Nothing was guessed.
+            <button
+              onClick={() => ask(lang)}
+              disabled={loading}
+              className="ml-1.5 font-semibold text-brand-600 underline disabled:opacity-50"
+            >
+              Try again
+            </button>
+          </span>
+        </div>
+      )}
+
+      {failure === "ai" && (
         <div className="mt-3 flex items-start gap-2 text-xs text-dark-900/60">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-amber-500" />
           AI is unavailable right now — for urgent questions, contact support below.

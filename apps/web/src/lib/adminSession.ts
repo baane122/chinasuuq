@@ -26,7 +26,12 @@ export function setAdminFallbackSession(active: boolean): void {
   try {
     if (active) localStorage.setItem(FALLBACK_FLAG, "1");
     else localStorage.removeItem(FALLBACK_FLAG);
-  } catch {}
+  } catch (e) {
+    // Safari private mode and blocked third-party storage both throw here. The
+    // flag is a dev-only convenience, but a silent failure means an
+    // unrecoverable-looking admin login with nothing in the console.
+    console.warn("[adminSession] could not persist fallback flag", e);
+  }
 }
 
 // Only meaningful in dev builds. The protected layout must combine this with

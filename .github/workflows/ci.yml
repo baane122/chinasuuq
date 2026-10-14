@@ -32,6 +32,74 @@ jobs:
         # secrets are needed for a type-only pass.
         run: npx tsc --noEmit
 
+      - name: Verify admin list enrichment is URL-safe
+        working-directory: apps/web
+        # The Shipments console once put ~1000 order ids into a single `.in()`,
+        # so the GET query string exceeded what the gateway accepts as a request
+        # line. It failed, the fallback failed identically, and every shipment
+        # rendered with no order link — a failed lookup drawn as missing data.
+        # Enrichment now batches, and this gate pins the batching, the bounded
+        # concurrency, and the rule that a failed chunk must be reported.
+        # Negative control (2026-10-14): IN_CLAUSE_BATCH_SIZE =
+        # Number.MAX_SAFE_INTEGER turns checks 1-7 red.
+        run: npm run verify:joins
+
+      - name: Verify the browser AI client
+        working-directory: apps/web
+        # The public quote assistant and the shipment concierge were dead on
+        # arrival: client.ts sent apikey but no Authorization header, and with
+        # Supabase's default verify_jwt the gateway answers 401 before ai-chat
+        # runs — which looked like "the AI has nothing to say". This imports the
+        # REAL module against a fake fetch and asserts the signed-in JWT (anon
+        # fallback for guests) is on the wire, the body carries only what was
+        # asked for, each HTTP status maps to a named failure (unauthorized /
+        # rate_limited / server / empty / timeout / offline), a build without
+        # the public env pair spends zero requests, and the conversation never
+        # reaches the console.
+        # Negative control (2026-10-14): deleting the Authorization header turns
+        # 3 of 16 checks red; the file was then restored byte-identically
+        # (sha256 e5323bc91336b3ff recorded before and after).
+        run: npm run verify:ai
+
+      - name: Verify the public tracking page tells failure from not-found
+        working-directory: apps/web
+        # /track probes two column shapes, so "no row matched" and "the request
+        # never reached Postgres" both arrive as an empty result — and the page
+        # used to answer both with a red "Order not found", which tells a
+        # customer holding a paid, shipped order that their order does not
+        # exist. src/lib/track/errors.ts separates them, Safari/undici/RN
+        # wordings are matched by name (a real Postgres answer always carries a
+        # code, so pairing a transport phrase with a code proves the pattern
+        # list and not the fallback), and the page keeps unreachable as its own
+        # UI state with a Try again action.
+        # Negative control (2026-10-14): replacing the classifier's last line
+        # with `return false` turns 3 of 18 red — including `fetch failed`,
+        # which is how this change was found in the first place.
+        run: npm run verify:track
+
+      - name: Verify the admin console fails closed
+        working-directory: apps/web
+        # The RBAC loader used to destructure { data } and ignore { error }, so a
+        # dropped network call became permCount null, which read as "permissions
+        # not configured", which hit the documented fail-open and gave every
+        # signed-in staff member AI-key editing and payment confirmation while the
+        # screen showed an empty table. loadAdminPermissions() now carries
+        # checksFailed and can() denies on it. This gate imports the real module
+        # (only its react + ../supabase boundaries are rewritten), scripts the
+        # PostgREST-shaped answers, and pins each decision: a clean grant opens
+        # exactly its own section, a failed or unusable read denies, a genuinely
+        # empty table keeps the bootstrap fail-open, super_admin needs no grant
+        # walk, and a failed check is never cached — one bad request must not
+        # lock an operator out for the rest of the session.
+        # Negative control (2026-10-14): deleting the `if (perm.checksFailed)
+        # return false` line turns 3 red, deleting the bootstrap fail-open 1,
+        # caching a failed result 1, neutering sanitizeOrFilter 1, making
+        # fx.fromLiveRow true after a failed read 1, and hiding the capped-
+        # broadcast banner 1; every file restored byte-identically (permissions
+        # 1a405b38e701aacd, supabase-data d8d46e3c8e5f7d51, fx eb9dae21745ea2f9,
+        # notifications 5ebc98200423e308).
+        run: npm run verify:admin
+
       - name: Lint
         working-directory: apps/web
         # Non-blocking: the codebase carries pre-existing lint debt
@@ -100,6 +168,108 @@ jobs:
         # wrap in continue-on-error.
         run: npx tsc --noEmit
 
+      - name: Verify the in-page WebView scheduler
+        working-directory: apps/mobile
+        # The WebView performance work rests on window.__cs behaving correctly inside a
+        # third-party page: one heartbeat, idle backoff, retirement + revival, a shared
+        # bounded text snapshot, and a hard stop while the page is hidden. This evaluates
+        # the real injected source against a stub DOM — no device, no network.
+        # Negative control (2026-10-14): removing the idle-backoff line makes it exit 1,
+        # so the gate is not passing vacuously.
+        run: node scripts/verify-cs-runtime.mjs
+
+      - name: Verify the translation client
+        working-directory: apps/mobile
+        # src/api/translate.ts owns the paid-call budget: 40-string batches, a
+        # warm cache that costs zero calls, in-flight de-duplication, a 9s
+        # time-box on a hung edge function, and parking on 429/503 instead of
+        # burning the rate-limit window. None of that is visible to tsc or
+        # Metro. This imports the REAL module (Node type stripping) against
+        # stubbed Supabase + AsyncStorage on a fake clock.
+        # Negative control (2026-10-14): dropping the "failed batch maps to its
+        # originals" fix turns 3 of 13 scenarios red, so the gate is live.
+        run: node --experimental-strip-types scripts/verify-translate-client.mjs
+
+      - name: Verify the in-page translation pipeline
+        working-directory: apps/mobile
+        # AI_TRANSLATE_SCRIPT runs inside the marketplace page and is the only
+        # place that owns the DOM marks the app reads (data-cs-orig / data-cs-tr),
+        # the 120-text budget, the give-up-after-3 rule, the language-switch
+        # restore, and the risk-widget/skip-tag guards. It is a template literal,
+        # so a stray backtick in a comment would silently truncate it — this
+        # compiles the real injected bytes and runs them against a stub document.
+        # Negative control (2026-10-14): walking shouldSkip() from el.parentElement
+        # again turns the risk-widget and script-tag scenarios red.
+        run: node --experimental-strip-types scripts/verify-translate-inpage.mjs
+
+      - name: Verify the in-page USD price overlay
+        working-directory: apps/mobile
+        # "The customer never sees RMB" is the product promise, and USD_PRICE_SCRIPT
+        # is the only thing that keeps it. A wrong figure here is worse than a slow
+        # screen — the customer orders at the wrong price — so this runs the exact
+        # bytes usdPriceScript(rate) returns against the shared stub DOM and checks
+        # the conversions, the no-compounding guard, split spans, aria-labels, the
+        # risk-widget/skip-tag guards, restore, and the unusable-FX skip.
+        # Negative control (2026-10-14): reverting CNY_RE to the pre-grouping form
+        # makes ¥1,299 render as $0.189 and turns the gate red.
+        run: node --experimental-strip-types scripts/verify-usd-inpage.mjs
+
+      - name: Verify bounded .in() reads
+        working-directory: apps/mobile
+        # PostgREST serialises .in(col, values) into the GET request line, so a
+        # long uuid list is a long URL — and order history asked for up to 200
+        # (~7.4 KB), where a gateway answers 400 and paid orders render with no
+        # line items. src/lib/in-batches.ts chunks to 50 with 4 in flight, and
+        # reports a failed chunk as failedBatches instead of zero rows.
+        # Negative control (2026-10-14): swapping `batch` back to `ids` in
+        # db/index.ts turns 2 of 15 checks red; the file is then restored and
+        # the gate prints its sha256 so the restore is provable.
+        run: npm run verify:inbatches
+
+      - name: Verify the shared marketplace login bridge
+        working-directory: apps/mobile
+        # Whether a marketplace page renders as staff or as a logged-out
+        # stranger is decided by src/lib/supabase.ts, and it had two silent
+        # failure modes: the RPC was awaited with no deadline of its own (only
+        # the client's 30s header), and a hung read is worse than a slow one
+        # here — injectedJavaScriptBeforeContentLoaded applies to the NEXT
+        # document, so the cookies simply missed the navigation the customer
+        # waited on. The same `return null` also drew a network failure as
+        # "No Session", telling staff to re-log-in over a failed read.
+        # fetchMarketplaceSession now races a 6s sentinel, keeps an in-memory
+        # last-known session for a repeat visit, and reports failed separately.
+        # Negative control (2026-10-14): reporting a failed read as
+        # failed:false, widening the deadline to 25s, skipping the cache write,
+        # and re-keying the capture-form seed on object identity each turn the
+        # gate red; every file is then restored byte-identical (sha256
+        # 7b5bf5e8a695cb9a / 42839080377a16fb).
+        run: npm run verify:session
+
+      - name: Verify the cart belongs to an account and money is quoted honestly
+        working-directory: apps/mobile
+        # Three customer-visible bugs typecheck could not see, found by the
+        # screen-by-screen sweep after the WebView pass:
+        #  * the basket persisted under ONE device-wide AsyncStorage key, so on
+        #    the shared phones this market runs on the next person to open the
+        #    app saw someone else's lines and totals (now `<key>:<uid>` /
+        #    `<key>:guest`, with writes frozen during a switch so zustand's
+        #    mid-switch blank cannot overwrite the account's entry);
+        #  * re-adding a line merged its money numbers one at a time
+        #    (`cny || old`, `Math.max(oldUsd, newUsd)`, a rate stamped only on
+        #    the first add) and checkout sends all three to createOrder, so a
+        #    price cut billed the old high figure while the preview disagreed;
+        #  * checkout printed the SELECTED freight method's price on BOTH cards,
+        #    so "sea looks like $15" could arrive at a different number.
+        # The gate imports the real store and shipping modules (only their
+        # AsyncStorage / FX boundaries are stubbed) and drives the switches.
+        # Negative control (2026-10-14): un-scoping the storage key turns 5
+        # checks red, `Math.max` on the USD merge 1, quoting air on the sea card
+        # 1, and dropping the search catch's setLoadFailed 1 — all files then
+        # restored byte-identical (cart f38ac032e2b3c76e,
+        # shipping c30f0dfc654d4308, checkout 4afaf4c35e41ec7c,
+        # search ec89e6f55735126b).
+        run: npm run verify:states
+
       - name: Bundle with Metro (iOS export)
         working-directory: apps/mobile
         # Proves native module shims + every asset require() path resolve —
@@ -119,12 +289,67 @@ jobs:
           fi
           echo "Metro iOS bundle OK ($files files, $(du -sh /tmp/cs-export-verify | cut -f1))"
 
+  edge-functions:
+    name: Supabase Edge Functions — parse gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Parse every function source (hard gate)
+        # Nothing in CI used to look at apps/web/supabase/functions at all, so a
+        # syntax error introduced into an edge function shipped straight to the
+        # runtime. Node's type-stripping parser validates the whole tree with no
+        # install step and no network: exit 1 on broken syntax, 0 on clean.
+        run: |
+          fail=0
+          count=0
+          for f in apps/web/supabase/functions/*/*.ts apps/web/supabase/functions/*.ts; do
+            [ -f "$f" ] || continue
+            count=$((count + 1))
+            node --experimental-strip-types --check "$f" || { echo "PARSE FAIL: $f"; fail=1; }
+          done
+          [ "$count" -ge 10 ] || { echo "expected >=10 function sources, saw $count"; exit 1; }
+          [ "$fail" -eq 0 ] && echo "Edge functions parse OK ($count files)"
+          exit $fail
+
+      - name: Deno typecheck (informational)
+        # Real type errors exist here already (~11 at 2026-10-14), all of them
+        # jsr supabase-js generic-inference noise from duck-typed helpers, plus
+        # one over-narrow literal in product-enrich. Pinned non-blocking so the
+        # job reports drift instead of red-lighting CI on pre-existing debt.
+        # Re-read the count before ever promoting this to a hard gate.
+        continue-on-error: true
+        run: |
+          curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/tmp/deno sh -s -- -y >/dev/null 2>&1 || true
+          /tmp/deno/bin/deno check apps/web/supabase/functions/*/index.ts 2>&1 | tail -30 || true
+
   guard:
     name: Repo hygiene guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: No agent/tool dirs or temp files in git
         run: |
           ! git ls-files | grep -E '^\.agent-teams/|^\.hermes/|^\.zcode/|supabase/\.temp/|\.DS_Store$' \
             || { echo "Tracked junk detected (see files above)"; exit 1; }
+
+      - name: Verify the staff-role vocabulary matches the database
+        # "Is this a staff account?" is written down four times: public.is_staff_or_admin()
+        # in SQL (authoritative — it backs every *_admin_all RLS policy), apps/mobile/src/lib/
+        # roles.ts, apps/web/src/lib/roles.ts, and _shared/auth.ts in the edge functions.
+        # They used to disagree, and an `admin` account passed the database policies but was
+        # locked out of its own staff UI. This reads the role list out of the latest
+        # migration and requires all three clients to match it exactly, plus fail-closed
+        # checks for unknown roles. No install, no database.
+        # Negative control (2026-10-14): dropping "admin" from the mobile list turns the
+        # mobile comparison and the helper-equivalence scenarios red.
+        run: node --experimental-strip-types scripts/verify-role-vocabulary.mjs

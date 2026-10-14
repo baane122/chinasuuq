@@ -23,6 +23,7 @@ import { refreshFx } from "@/lib/exchange";
 import type { Marketplace } from "@/types";
 import { moqOrderRules, describeMoq } from "@/lib/moqIngest";
 import { validateCartItem } from "@/lib/cartValidation";
+import { RouteErrorBoundary } from "@/components/ui/ErrorBoundary";
 
 const MARKET_NAMES: Record<string, string> = {
   "1688": "1688.com",
@@ -40,7 +41,22 @@ const MARKET_COLORS: Record<string, string> = {
   chinasuuq: "#FF5A0A",
 };
 
+/**
+ * The cart is where the customer's money is assembled, so it gets its own
+ * boundary: a throw from one line row used to unwind past the tab bar to the
+ * root fallback with no way back. Wrapped as a component (rather than around
+ * the JSX) so every render path of the screen — empty cart, one marketplace,
+ * many — is covered, and nothing the screen renders on success changes.
+ */
 export default function CartScreen() {
+  return (
+    <RouteErrorBoundary>
+      <CartScreenContent />
+    </RouteErrorBoundary>
+  );
+}
+
+function CartScreenContent() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const { t, locale } = useI18n();

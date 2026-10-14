@@ -35,7 +35,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         if (stored && (stored === "en" || stored === "so")) {
           setLocaleState(stored);
         }
-      } catch {}
+      } catch (e) {
+        console.warn("[i18n] saved language unreadable, using default", e);
+      }
       setLoaded(true);
     })();
   }, []);
@@ -44,7 +46,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     setLocaleState(newLocale);
     try {
       await AsyncStorage.setItem(LOCALE_KEY, newLocale);
-    } catch {}
+    } catch (e) {
+      // If this fails the app forgets the chosen language on next launch.
+      console.warn("[i18n] language not persisted", e);
+    }
   }, []);
 
   const t = useCallback(

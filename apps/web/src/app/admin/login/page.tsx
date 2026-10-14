@@ -48,7 +48,9 @@ export default function AdminLoginPage() {
       return;
     }
     setAdminFallbackSession(true);
-    try { localStorage.setItem("chinasuuq-admin-email", email || "admin@chinasuuq.com"); } catch {}
+    try { localStorage.setItem("chinasuuq-admin-email", email || "admin@chinasuuq.com"); } catch (e) {
+      console.warn("[admin/login] could not remember email (recovery path)", e);
+    }
     router.replace("/admin");
     router.refresh();
   };
@@ -87,7 +89,9 @@ export default function AdminLoginPage() {
       }
 
       if (data?.session) {
-        try { localStorage.setItem("chinasuuq-admin-email", email); } catch {}
+        try { localStorage.setItem("chinasuuq-admin-email", email); } catch (e) {
+          console.warn("[admin/login] could not remember email", e);
+        }
         router.push("/admin");
         router.refresh();
       }

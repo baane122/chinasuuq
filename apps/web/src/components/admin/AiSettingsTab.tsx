@@ -6,6 +6,7 @@ import { supabase, edgeFetch } from "@/lib/supabase";
 import {
   useAdminPermissions,
   allowed,
+  permissionCheckFailureNotice,
   PERMISSIONS,
 } from "@/lib/admin/permissions";
 import { PermissionNotice } from "@/components/admin/ui";
@@ -346,14 +347,26 @@ export function AiSettingsTab() {
 
   return (
     <div className="space-y-6">
-      {/* RBAC affordance banners — a UI gate only; server RLS stays coarse. */}
-      {!perms.loading && !perms.configured && (
+      {/* RBAC affordance banners — a UI gate only; server RLS stays coarse.
+          Three states, never collapsed into one another: nothing seeded (fail
+          open + tell the operator), your role lacks the grant, or the check
+          itself could not be read (fail closed + say so and offer a retry). */}
+      {!perms.loading && !perms.configured && !perms.checksFailed && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
           Permissions not configured — any signed-in staff member can edit AI provider keys until you seed the permission tables.
         </div>
       )}
       {!perms.loading && perms.configured && !canEdit && (
         <PermissionNotice required={`${PERMISSIONS.aiKeys.resource}:${PERMISSIONS.aiKeys.action}`} />
+      )}
+      {!canEdit && permissionCheckFailureNotice(perms) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          <p className="font-semibold">Couldn’t check your permissions</p>
+          <p className="mt-0.5 leading-relaxed">{permissionCheckFailureNotice(perms)}</p>
+          <button onClick={perms.reload} className="admin-btn-outline mt-3 h-8 px-3 text-xs">
+            <RefreshCw className="h-3.5 w-3.5" /> Check again
+          </button>
+        </div>
       )}
 
       {/* Honest status banner when the edge function can’t be reached. */}

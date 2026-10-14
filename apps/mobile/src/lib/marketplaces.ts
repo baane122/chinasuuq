@@ -154,10 +154,14 @@ export async function addRecentlyVisited(id: string): Promise<void> {
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) prev.push(...parsed);
-      } catch {}
+      } catch (e) {
+        console.warn("[marketplaces] recent-list entry unreadable", e);
+      }
     }
     // Most recent first, dedup, cap at RECENT_MAX
     const next = [id, ...prev.filter((x) => x !== id)].slice(0, RECENT_MAX);
     await AsyncStorage.setItem(RECENT_KEY, JSON.stringify(next));
-  } catch {}
+  } catch (e) {
+    console.warn("[marketplaces] could not save recent marketplaces", e);
+  }
 }

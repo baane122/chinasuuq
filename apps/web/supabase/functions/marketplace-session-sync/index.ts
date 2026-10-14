@@ -25,7 +25,7 @@
 // with is_shared/is_active set and NO credentials (username/password NULL),
 // because the session model needs no credentials at all.
 import { corsHeaders } from "../_shared/cors.ts";
-import { requireStaffOrAdmin, unauthorized, userClient } from "../_shared/auth.ts";
+import { deny, staffGate, userClient } from "../_shared/auth.ts";
 
 const MAX_COOKIES_BYTES = 32 * 1024;
 
@@ -40,8 +40,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
 
-  const caller = await requireStaffOrAdmin(req);
-  if (!caller) return unauthorized();
+  const gate = await staffGate(req);
+  if (!gate.caller) return deny(gate, "marketplace-session-sync");
+  const caller = gate.caller;
 
   let body: Record<string, unknown>;
   try {
@@ -76,7 +77,7 @@ Deno.serve(async (req) => {
   const now = new Date().toISOString();
 
   // Upsert onto the shared+active row for this marketplace.
-  const { data: existing } = await db
+  const { data: existing, error: findErr } = await db
     .from("marketplace_accounts")
     .select("id")
     .eq("marketplace_type", marketplace)
@@ -84,6 +85,15 @@ Deno.serve(async (req) => {
     .eq("is_active", true)
     .limit(1)
     .maybeSingle();
+  if (findErr) {
+    // The error used to be swallowed, which made "could not read" look like "no
+    // shared row exists" — and the next statement would then INSERT a second
+    // shared account for that marketplace. The customer-facing session read picks
+    // one of them, so a transient failure here silently pins customers to a stale
+    // or credential-less row. Refuse instead.
+    console.error("marketplace-session-sync lookup failed", findErr.message);
+    return json({ ok: false, error: "lookup_failed" }, 500);
+  }
 
   let err: unknown;
   if (existing) {

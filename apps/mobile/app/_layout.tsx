@@ -69,8 +69,11 @@ export default function RootLayout() {
           // the next cold start so the running UI is never interrupted.
           void fetched;
         }
-      } catch {
-        // Offline, server hiccup, dev-mode rejection — stay silent.
+      } catch (e) {
+        // Offline, server hiccup, dev-mode rejection — stay silent to the user,
+        // but leave a line in the log: "why is this build old" is unanswerable
+        // when the update check swallows its own failure.
+        console.warn("[updates] check/fetch skipped:", e);
       }
     })();
   }, []);

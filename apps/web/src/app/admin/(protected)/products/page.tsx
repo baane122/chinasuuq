@@ -22,6 +22,8 @@ import { useUrlFilters, useDebouncedFilterValue } from "@/components/admin/useUr
 import { useTablePrefs } from "@/components/admin/useTablePrefs";
 import { useLiveVersion } from "@/lib/admin/live-store";
 import { isMissingColumnError } from "@/lib/admin/supabase-data";
+import { IN_CLAUSE_BATCH_SIZE, chunk, runInBatches } from "@/lib/admin/batched-join";
+import { PartialJoinNotice } from "@/components/admin/PartialJoinNotice";
 import { useFx, usdFromCny, roundCents } from "@/lib/fx";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -137,6 +139,92 @@ const PRODUCT_COLUMNS: { key: string; label: string }[] = [
   { key: "actions", label: "Actions" },
 ];
 
+/* ── Bulk writes ──────────────────────────────────────────────────
+ * A bulk action used to hand PostgREST every selected id in ONE `.in()`.
+ * The page loads up to `.limit(1000)` and "select all" takes every visible row,
+ * and a DELETE/PATCH's filters ride the request URL exactly like a GET's do —
+ * so ~1000 uuids emitted a ~37 KB request line, the gateway answered 400/414
+ * before Postgres ever ran, and the console reported either a bare error or 0
+ * rows, which is indistinguishable from "RLS blocked it". So a big bulk delete
+ * could never succeed at all.
+ *
+ * Same budget as the read-side joins (lib/admin/batched-join.ts): 50 ids per
+ * request, bounded concurrency, and a chunk that did not land is reported as
+ * FAILED — never folded into "nothing matched". Three honest outcomes, because
+ * the three causes need different follow-ups from staff:
+ *   affected — the server echoed the row back; it really changed
+ *   failed   — the request never completed; the rows are untouched and retryable
+ *   blocked  — the request succeeded and the row was filtered out; that IS the
+ *              row-level security answer, and retrying will not help
+ */
+type BulkWriteResult = {
+  affected: string[];
+  failed: string[];
+  blocked: string[];
+  /** 1-based numbers of the groups whose request failed, for the notice. */
+  failedGroupNumbers: number[];
+  groups: number;
+};
+
+async function runBulkWrite(
+  ids: string[],
+  label: string,
+  // PromiseLike, not Promise: a PostgREST builder is thenable, and the result
+  // shape is widened here because this screen deliberately writes columns the
+  // checked-in types predate (see the save path above).
+  write: (batch: string[]) => PromiseLike<{ data: unknown; error: { message?: string } | null }>
+): Promise<BulkWriteResult> {
+  // Same deterministic 50-wide chunking on both sides, so a reported group
+  // number maps back to exactly the ids that were in that request.
+  const groups = chunk(ids, IN_CLAUSE_BATCH_SIZE);
+  const failedGroupNumbers: number[] = [];
+  // runInBatches reports every chunk that errored OR threw, so the collected
+  // group numbers are the complete failure list — no separate counter needed.
+  const { rows } = await runInBatches<string, { id: string }>({
+    values: ids,
+    batchSize: IN_CLAUSE_BATCH_SIZE,
+    query: async (batch) => {
+      const res = await write(batch);
+      return {
+        data: (res.data as Array<{ id: string }> | null) ?? null,
+        error: res.error ? { message: res.error.message || "request failed" } : null,
+      };
+    },
+    onBatchError: (idx, total, message) => {
+      console.warn(`[products] bulk ${label} group ${idx}/${total} failed:`, message);
+      failedGroupNumbers.push(idx);
+    },
+  });
+
+  const affected = rows.map((r) => r.id);
+  const affectedSet = new Set(affected);
+  const failed = failedGroupNumbers.flatMap((n) => groups[n - 1] ?? []);
+  const failedSet = new Set(failed);
+  const blocked = ids.filter((id) => !affectedSet.has(id) && !failedSet.has(id));
+  return { affected, failed, blocked, failedGroupNumbers, groups: groups.length };
+}
+
+/** Staff-facing outcome of a bulk write: only what needs acting on. */
+function bulkWriteNotice(verb: "deleted" | "updated", res: BulkWriteResult): string[] {
+  const out: string[] = [];
+  if (res.failed.length) {
+    const listed = res.failedGroupNumbers.slice(0, 6).join(", ");
+    const more = res.failedGroupNumbers.length > 6 ? ` (+${res.failedGroupNumbers.length - 6} more)` : "";
+    out.push(
+      `${res.failed.length.toLocaleString()} selected product${res.failed.length === 1 ? "" : "s"} could not be ${verb}: ` +
+        `group${res.failedGroupNumbers.length === 1 ? "" : "s"} ${listed}${more} of ${res.groups} never reached the database, ` +
+        `so those rows are untouched — that is a failed request, not "nothing to ${verb === "deleted" ? "delete" : "update"}". ` +
+        `They are still selected, so pressing the button again retries only them.`
+    );
+  }
+  if (res.blocked.length) {
+    out.push(
+      `${res.blocked.length.toLocaleString()} product${res.blocked.length === 1 ? "" : "s"} were sent and refused by the database's row-level security — your signed-in role cannot ${verb === "deleted" ? "delete" : "change the status of"} those rows. Retrying will not help.`
+    );
+  }
+  return out;
+}
+
 /* ── Component ─────────────────────────────────────────────────── */
 
 /** `source_products` rows carry created_at (the table's select("*") returns it),
@@ -203,6 +291,8 @@ function ProductsPageContent() {
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [bulkStatusValue, setBulkStatusValue] = useState("active");
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  /** Outcome of the last bulk write that needs acting on (failed / blocked groups). */
+  const [bulkNotice, setBulkNotice] = useState<string[]>([]);
 
   // Create/Edit modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -627,18 +717,33 @@ function ProductsPageContent() {
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     setBulkDeleting(true);
+    setBulkNotice([]);
     try {
       const ids = Array.from(selectedIds);
-      const { data, error } = await supabase.from("source_products").delete().in("id", ids).select("id");
-      if (error) throw error;
-      // Empty result = RLS blocked every row despite a 204/no-error response.
-      if (!data || data.length === 0) {
-        toastError("Blocked by permissions — nothing was deleted");
-        return;
+      const res = await runBulkWrite(ids, "delete", (batch) =>
+        supabase.from("source_products").delete().in("id", batch).select("id")
+      );
+      const gone = new Set(res.affected);
+      if (gone.size) setProducts((prev) => prev.filter((p) => !gone.has(p.id)));
+      // Only the retryable ones stay selected: RLS-refused rows are the answer,
+      // not a hiccup, so leaving them selected would invite an endless retry.
+      setSelectedIds(new Set(res.failed));
+      if (res.affected.length) {
+        const untouched = res.failed.length + res.blocked.length;
+        success(
+          `${res.affected.length} product${res.affected.length > 1 ? "s" : ""} deleted${
+            untouched ? ` · ${untouched} not deleted` : ""
+          }`
+        );
       }
-      setProducts((prev) => prev.filter((p) => !selectedIds.has(p.id)));
-      success(`${data.length} product${data.length > 1 ? "s" : ""} deleted`);
-      setSelectedIds(new Set());
+      const notice = bulkWriteNotice("deleted", res);
+      setBulkNotice(notice);
+      if (!res.affected.length) {
+        // Nothing wrote at all. Keep this console's established wording for the
+        // pure-permission outcome; an unfinished request instead names the
+        // groups that failed and says they stayed selected for a retry.
+        toastError(res.failed.length ? notice[0] : "Blocked by permissions — nothing was deleted");
+      }
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Failed to delete products");
     } finally {
@@ -648,25 +753,41 @@ function ProductsPageContent() {
 
   const handleBulkStatusUpdate = async () => {
     if (selectedIds.size === 0) return;
+    setBulkNotice([]);
     try {
       const ids = Array.from(selectedIds);
-      const { data, error } = await supabase
-        .from("source_products")
-        .update({ status: bulkStatusValue, updated_at: new Date().toISOString() })
-        .in("id", ids)
-        .select("id");
-      if (error) throw error;
-      // 0 rows returned = RLS blocked the write; do not claim a false success.
-      if (!data || data.length === 0) {
-        toastError("Blocked by permissions — nothing was updated");
-        return;
-      }
-      setProducts((prev) =>
-        prev.map((p) => selectedIds.has(p.id) ? { ...p, status: bulkStatusValue } as Product : p)
+      const res = await runBulkWrite(ids, "status update", (batch) =>
+        supabase
+          .from("source_products")
+          .update({ status: bulkStatusValue, updated_at: new Date().toISOString() })
+          .in("id", batch)
+          .select("id")
       );
-      success(`${data.length} product${data.length > 1 ? "s" : ""} updated to ${bulkStatusValue}`);
-      setSelectedIds(new Set());
-      setBulkStatusOpen(false);
+      const written = new Set(res.affected);
+      // Reflect the server, not the wish list: a row that came back in neither
+      // group keeps its old status on screen instead of showing a change that
+      // never happened.
+      if (written.size) {
+        setProducts((prev) =>
+          prev.map((p) => (written.has(p.id) ? ({ ...p, status: bulkStatusValue } as Product) : p))
+        );
+      }
+      setSelectedIds(new Set(res.failed));
+      if (res.affected.length) {
+        const untouched = res.failed.length + res.blocked.length;
+        success(
+          `${res.affected.length} product${res.affected.length > 1 ? "s" : ""} updated to ${bulkStatusValue}${
+            untouched ? ` · ${untouched} not updated` : ""
+          }`
+        );
+      }
+      const notice = bulkWriteNotice("updated", res);
+      setBulkNotice(notice);
+      if (!res.affected.length) {
+        toastError(res.failed.length ? notice[0] : "Blocked by permissions — nothing was updated");
+      }
+      // Keep the picker open only while the job is genuinely unfinished.
+      if (!res.failed.length) setBulkStatusOpen(false);
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Failed to update status");
     }
@@ -958,6 +1079,26 @@ function ProductsPageContent() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Bulk write outcome ──
+          Which groups never reached the database and which rows its security
+          filtered out. Rendered as the same amber status block the Orders and
+          Shipments consoles use, so a partial bulk write is never read as
+          "nothing was selected" or "0 rows affected". */}
+      {bulkNotice.length > 0 && (
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <PartialJoinNotice messages={bulkNotice} />
+          </div>
+          <button
+            onClick={() => setBulkNotice([])}
+            className="rounded-lg p-1.5 text-dark-400 hover:bg-dark-100"
+            aria-label="Dismiss bulk action result"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* ── Products Table ── */}
       <TableShell

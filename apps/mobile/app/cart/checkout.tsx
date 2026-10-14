@@ -34,10 +34,17 @@ import { createOrder } from "@/db";
 import { validateCartRemote } from "@/lib/cartValidateRemote";
 import { resolveMoq } from "@/lib/moqIngest";
 import { SmartRoute } from "@/components/orders/SmartRoute";
-import { calculateShipping, getShippingEstimates } from "@/lib/shipping";
+import { getShippingEstimates } from "@/lib/shipping";
 import { refreshFx } from "@/lib/exchange";
 
 const STEP_LABELS = ["Contact", "Shipping", "Payment", "Confirm"];
+
+/** Card copy for one freight method: this cart's own figure when it can be
+ *  costed, otherwise the same "estimate" wording with NO number. A card must
+ *  never print the other method's figure to fill the gap. */
+function shippingQuoteText(cost: number | null): string {
+  return cost === null ? "Est. after weighing" : `Est. ~$${cost}`;
+}
 const CITIES = [
   "Mogadishu",
   "Hargeisa",
@@ -103,24 +110,38 @@ export default function CheckoutScreen() {
   const subtotal = total.subtotalUSD;
   const serviceFee = Math.round(subtotal * 0.05 * 100) / 100;
 
-  // Auto-calculate estimated international shipping cost (China → Somalia).
-  // Memoized on cart + method: the pure per-item weight math used to re-run on
-  // every keystroke of the contact form.
-  const estimatedShipping = useMemo(() => cartItems.reduce((sum, item) => {
-    const weight = item.product.attributes?.weight
-      ? parseFloat(String(item.product.attributes.weight).replace(/[^0-9.]/g, "")) || 0.5
-      : 0.5;
-    const shipping = calculateShipping(
-      {
-        weight_kg: weight * item.quantity,
-        domestic_shipping_cny: 0, // not needed - international only
-        marketplace: item.product.marketplace,
-      },
-      1, // already multiplied weight by quantity
-      shippingMethod
-    );
-    return sum + shipping.costUSD;
-  }, 0), [cartItems, shippingMethod]);
+  // Auto-calculate estimated international shipping cost (China → Somalia) for
+  // BOTH freight methods in one pass keyed on the cart alone: the cards are
+  // side-by-side choices, and air (max(w*8.50, 15)) and sea
+  // (max(max(w, 10)*2.20, 25)) are different numbers. Quoting the selected
+  // method twice meant a customer who chose sea because it "looked like $15"
+  // was billed something else on arrival. The pure per-item weight math used to
+  // re-run on every keystroke of the contact form, so it stays memoized.
+  const shippingQuotes = useMemo(() => {
+    let air = 0;
+    let sea = 0;
+    for (const item of cartItems) {
+      const weight = item.product.attributes?.weight
+        ? parseFloat(String(item.product.attributes.weight).replace(/[^0-9.]/g, "")) || 0.5
+        : 0.5;
+      const [airEst, seaEst] = getShippingEstimates(
+        {
+          weight_kg: weight * item.quantity,
+          domestic_shipping_cny: 0, // not needed - international only
+          marketplace: item.product.marketplace,
+        },
+        1 // already multiplied weight by quantity
+      );
+      air += airEst.costUSD;
+      sea += seaEst.costUSD;
+    }
+    const quote = (cost: number) =>
+      Number.isFinite(cost) ? Math.round(cost * 100) / 100 : null;
+    return { air: quote(air), sea: quote(sea) };
+  }, [cartItems]);
+
+  // The method the customer actually picked — what the order summary quotes.
+  const estimatedShipping = shippingQuotes[shippingMethod];
 
   const grandTotal = subtotal + serviceFee; // shipping paid on arrival in Somalia
 
@@ -342,7 +363,7 @@ export default function CheckoutScreen() {
         <View style={styles.shippingInfo}>
           <Text style={[styles.shippingTitle, shippingMethod === "air" && styles.shippingTitleActive]}>Air Freight</Text>
           <Text style={styles.shippingDesc}>7-14 days from China warehouse</Text>
-          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Pay on arrival</Text>
+          <Text style={styles.shippingCost}>{shippingQuoteText(shippingQuotes.air)} · Pay on arrival</Text>
         </View>
         <View style={[styles.radioOuter, shippingMethod === "air" && styles.radioOuterActive]}>
           {shippingMethod === "air" && <View style={styles.radioDot} />}
@@ -355,7 +376,7 @@ export default function CheckoutScreen() {
         <View style={styles.shippingInfo}>
           <Text style={[styles.shippingTitle, shippingMethod === "sea" && styles.shippingTitleActive]}>Sea Freight</Text>
           <Text style={styles.shippingDesc}>25-35 days from China warehouse</Text>
-          <Text style={styles.shippingCost}>Est. ~${Math.round(estimatedShipping * 100) / 100} · Pay on arrival</Text>
+          <Text style={styles.shippingCost}>{shippingQuoteText(shippingQuotes.sea)} · Pay on arrival</Text>
         </View>
         <View style={[styles.radioOuter, shippingMethod === "sea" && styles.radioOuterActive]}>
           {shippingMethod === "sea" && <View style={styles.radioDot} />}
@@ -430,7 +451,7 @@ export default function CheckoutScreen() {
         <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Service Fee (est. 5%)</Text><Text style={styles.summaryValue}>{formatUSD(serviceFee)}</Text></View>
         <View style={styles.divider} />
         <View style={styles.summaryRow}><Text style={styles.totalLabel}>Subtotal + Service Fee</Text><Text style={styles.totalValue}>{formatUSD(grandTotal)}</Text></View>
-        <View style={styles.shippingNote}><Text style={styles.shippingNoteText}>Shipping: {shippingMethod === "air" ? "Air Freight" : "Sea Freight"} · Paid on arrival</Text></View>
+        <View style={styles.shippingNote}><Text style={styles.shippingNoteText}>Shipping: {shippingMethod === "air" ? "Air Freight" : "Sea Freight"} · {shippingQuoteText(estimatedShipping)} · Paid on arrival</Text></View>
       </View>
       <View style={styles.infoSummary}>
         <Text style={styles.infoLabel}>Contact: {fullName}</Text>

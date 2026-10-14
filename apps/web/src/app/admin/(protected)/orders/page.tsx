@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn, formatUSD, formatDate, formatDateTime } from "@/lib/utils";
 import { listOrders, updateOrder, getOrderItems } from "@/lib/admin/supabase-data";
+import { PartialJoinNotice } from "@/components/admin/PartialJoinNotice";
 import { chartPalette } from "@/lib/admin/theme";
 import { ORDERS_CSV_COLUMNS, downloadCsv, stamp, toCsv } from "@/lib/admin/csv";
 import OrderProvenance from "@/components/admin/OrderProvenance";
@@ -133,6 +134,8 @@ function OrdersPageContent() {
 
   const [orders, setOrders] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
+  // Warnings from decorative joins that only partly resolved (see `load`).
+  const [joinNotices, setJoinNotices] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<any | null>(null);
@@ -163,14 +166,26 @@ function OrdersPageContent() {
   const load = useCallback(async (status?: string, q?: string) => {
     setLoading(true);
     setError(null);
-    const res = await listOrders({ status: status === "all" ? undefined : status, search: q });
-    if (res.ok) {
-      setOrders(res.orders);
-      setTotal(res.total ?? res.orders.length);
-    } else {
-      setError(res.error || "Failed to load orders");
+    try {
+      const res = await listOrders({ status: status === "all" ? undefined : status, search: q });
+      if (res.ok) {
+        setOrders(res.orders);
+        setTotal(res.total ?? res.orders.length);
+        // A blank Customer or "Bought in" cell can mean "not recorded" or "the
+        // enrichment query failed"; listOrders now tells us which, and it is shown
+        // instead of silently rendering Guest / no chips for a whole page.
+        setJoinNotices(res.notices ?? []);
+      } else {
+        setError(res.error || "Failed to load orders");
+        setJoinNotices([]);
+      }
+    } finally {
+      // In `finally`, like every sibling page (payments, quotes, shipments):
+      // `listOrders` swallows today, but the day anything in the block above
+      // throws, the spinner on the admin's order list never stops and the
+      // screen shows nothing but a wheel they cannot escape.
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -741,6 +756,14 @@ function OrdersPageContent() {
           Showing the newest {orders.length.toLocaleString()} of {total.toLocaleString()} matching orders —
           use the status chips, date range or search to narrow the set.
         </div>
+      )}
+
+      {/* ── Enrichment notice ──
+          Shown when the customer-name / marketplace joins only partly resolved,
+          so a blank cell is explained as a failed lookup rather than accepted as
+          "this order has no customer". */}
+      {!loading && !error && joinNotices.length > 0 && (
+        <PartialJoinNotice messages={joinNotices} />
       )}
 
       {/* ── Table ── */}

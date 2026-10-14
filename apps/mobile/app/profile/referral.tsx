@@ -32,7 +32,9 @@ export default function ReferralScreen() {
       Clipboard.setString(refCode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {}
+    } catch (e) {
+      console.warn("[referral] clipboard write failed", e);
+    }
   };
 
   const handleShare = async () => {
@@ -41,7 +43,9 @@ export default function ReferralScreen() {
       await Share.share({
         message: `Order from China to Somalia with ChinaSuuq! Use my referral code ${refCode} or ${refLink} to get started. 🇨🇳➡️🇸🇴`,
       });
-    } catch {}
+    } catch (e) {
+      console.warn("[referral] share sheet failed", e);
+    }
   };
 
   const HOW_IT_WORKS = [

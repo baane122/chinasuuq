@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -28,6 +28,7 @@ import {
   ShieldAlert,
   RefreshCw,
   Home,
+  CloudOff,
 } from "lucide-react-native";
 import { COLORS } from "@/lib/theme";
 import { whatsappOrderLink } from "@/lib/utils";
@@ -36,7 +37,8 @@ import SmartProductForm, { type CapturedListing } from "@/components/marketplace
 import { useI18n } from "@/lib/i18n";
 import { useCartStore } from "@/store/cart";
 import { useAuthStore } from "@/store/auth";
-import { supabase } from "@/lib/supabase";
+import { useStaffStore } from "@/store/staff";
+import { isStaffRole } from "@/lib/roles";
 import {
   PRODUCT_CAPTURE_SCRIPT,
   LOGIN_WALL_SCRIPT,
@@ -44,6 +46,7 @@ import {
   HIDE_MARKET_NAV_SCRIPT,
   NAV_WATCH_SCRIPT,
 } from "@/lib/webviewScripts";
+import { CS_RUNTIME_SCRIPT } from "@/lib/webviewScripts.runtime";
 import { AI_TRANSLATE_SCRIPT } from "@/lib/webviewScripts.ai";
 import { usdPriceScript } from "@/lib/webviewUsd";
 import {
@@ -57,7 +60,7 @@ import { marketplaceBySlug } from "@/config/marketplaceRegistry";
 import { getMarketplaceProducts } from "@/db";
 import type { Product } from "@/types";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getMarketplaceSession, syncMarketplaceSession, cookieInjectScript } from "@/lib/supabase";
+import { fetchMarketplaceSession, peekMarketplaceSession, syncMarketplaceSession, cookieInjectScript } from "@/lib/supabase";
 
 // Real marketplace base URLs
 const MARKETPLACES: Record<string, { name: string; home: string; loginWalled: boolean }> = {
@@ -122,12 +125,14 @@ function cookieDomainInFamily(domain: string | undefined, family: string): boole
 
 // Restore the page's original text after AI translation ("show original").
 // The AI layer (webviewScripts.ai.ts) stamps each translated node's parent
-// with data-cs-orig (the original Chinese) + data-cs-tr="1", and keeps its
-// 3s schedule in window.__csAiTrState.timer — so restoring means: undo every
-// stamped node from its original, strip the marks, and STOP + reset the AI
-// state so no timer keeps posting requests into a screen that shows zh.
+// with data-cs-orig (the original Chinese) + data-cs-tr="1" and runs its pass
+// on the shared in-page scheduler — so restoring means: stop that task, undo
+// every stamped node from its original, strip the marks, and reset the AI state
+// so nothing keeps posting translation requests into a screen that shows zh.
+// The pre-runtime window.__csAiTimer path is kept for the fallback timer.
 const RESTORE_SCRIPT =
   "(function(){try{" +
+  "if(window.__cs&&window.__cs.stop)window.__cs.stop('translate');" +
   "var s=window.__csAiTrState;" +
   "if(s){if(s.timer){clearTimeout(s.timer);s.timer=0;}}" +
   "if(window.__csAiTimer){clearTimeout(window.__csAiTimer);window.__csAiTimer=0;}" +
@@ -156,7 +161,16 @@ export default function MarketplaceBrowser() {
   // captured price has to be converted to yuan before it enters the app.
   const usdNative = marketplaceBySlug(marketplace)?.currency === "USD";
   const authUser = useAuthStore((s) => s.user);
+  // PERF: `entryUrl` is the ONLY value ever handed to source={{uri}}.
+  // `url` is the location observed inside the page (NAV ping / navigation
+  // state) and is for the UI and capture only. Feeding the observed URL back
+  // into source caused react-native-webview to re-issue loadUrl() for the page
+  // it was already displaying — so every SPA route change re-downloaded and
+  // re-rendered the whole marketplace page. That reload was the single biggest
+  // contributor to "the WebView is very slow".
+  const [entryUrl, setEntryUrl] = useState(meta.home);
   const [url, setUrl] = useState(meta.home);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [canGoBack, setCanGoBack] = useState(false);
   const [loading, setLoading] = useState(true);
   const [translateLang, setTranslateLang] = useState<null | string>(null); // null = original
@@ -177,8 +191,14 @@ export default function MarketplaceBrowser() {
   const [blocked, setBlocked] = useState(false);
   const [cnylist, setCnylist] = useState<number[]>([]);
   const [captureFormVisible, setCaptureFormVisible] = useState(false);
-  const [sessionCookieScript, setSessionCookieScript] = useState("");
-  const [isStaff, setIsStaff] = useState(false);
+  const [sessionCookieScript, setSessionCookieScript] = useState(() =>
+    // Seed from the in-memory session already read this app run. A WebView
+    // applies injectedJavaScriptBeforeContentLoaded to the NEXT document, so
+    // waiting on a round trip meant the second 1688 visit still rendered
+    // logged-out; this one injects the shared login before first paint and
+    // the network read below refreshes the value for whatever comes after.
+    cookieInjectScript(peekMarketplaceSession(marketplace || "1688")?.cookies ?? "")
+  );
   const [syncing, setSyncing] = useState(false);
   const [curatedProducts, setCuratedProducts] = useState<Product[]>([]);
   const [curatedLoading, setCuratedLoading] = useState(false);
@@ -235,9 +255,14 @@ export default function MarketplaceBrowser() {
     return () => sub.remove();
   }, [canGoBack]);
 
-  // Branded skeleton shimmer: gentle infinite opacity pulse while loading
+  // Branded skeleton shimmer: gentle infinite opacity pulse while loading.
+  // Gated on `loading` — it used to start on mount and loop for the whole life
+  // of the screen, so an animation kept running under a customer who is already
+  // reading the marketplace page (a steady stream of frames competing with the
+  // WebView for the UI thread, and battery for nothing).
   const pulse = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
+    if (!loading) return;
     const anim = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
@@ -246,7 +271,7 @@ export default function MarketplaceBrowser() {
     );
     anim.start();
     return () => anim.stop();
-  }, [pulse]);
+  }, [pulse, loading]);
 
   // restore translation pref + one-time tip state + warm FX cache
   useEffect(() => {
@@ -264,55 +289,73 @@ export default function MarketplaceBrowser() {
         }
         const tip = await AsyncStorage.getItem(TIP_KEY);
         setTipDismissed(tip === "1");
-      } catch {}
+      } catch (e) {
+        // Losing the stored language preference is not fatal, but it must be
+        // visible: "it keeps translating when I said original" is otherwise
+        // impossible to tell apart from a broken toggle.
+        console.warn("[marketplace] preferences read failed", e);
+      }
     })();
   }, []);
 
   // Fetch the shared marketplace SESSION (cookies only — no credentials in
-  // the customer app anymore) and curated products on mount.
-  useEffect(() => {
-    (async () => {
-      try {
-        const session = await getMarketplaceSession(marketplace || "1688");
-        if (session?.cookies) {
-          setSessionCookieScript(cookieInjectScript(session.cookies));
-        }
-        setCuratedLoading(true);
-        const products = await getMarketplaceProducts(marketplace || "1688");
-        setCuratedProducts(products);
-      } catch {
-        // silent - curated products will be empty, WebView still works
-      } finally {
-        setCuratedLoading(false);
-      }
-    })();
-  }, [marketplace]);
-
-  // Staff gate for the "Sync session" header button: profiles.role is the
-  // coarse server-side role; only staff/super_admin may push a session.
+  // the customer app anymore) and the curated fallback catalog on mount.
+  //
+  // PERF: these used to run one after the other and the curated list was
+  // awaited before the WebView had its cookies, so the browser screen waited
+  // on two round-trips. They now run concurrently, and the curated catalog —
+  // only ever shown when a marketplace blocks the page — is fetched with a
+  // delay so it can never compete with the marketplace's own first paint.
   useEffect(() => {
     let alive = true;
+    const id = marketplace || "1688";
     (async () => {
-      if (!authUser?.id) {
-        if (alive) setIsStaff(false);
-        return;
-      }
       try {
-        const { data } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", authUser.id)
-          .maybeSingle();
-        const role = String((data as any)?.role ?? "");
-        if (alive) setIsStaff(role === "staff" || role === "super_admin");
-      } catch {
-        if (alive) setIsStaff(false);
+        const res = await fetchMarketplaceSession(id);
+        if (!alive) return;
+        if (res.session?.cookies) {
+          setSessionCookieScript(cookieInjectScript(res.session.cookies));
+        } else if (!res.failed) {
+          // The server answered "there is no shared login". That is an
+          // authoritative answer, so the seeded value has to go — otherwise a
+          // revoked session would keep browsing the marketplace as if it were
+          // still active. A failed read keeps it (see fetchMarketplaceSession).
+          setSessionCookieScript("");
+        }
+      } catch (e) {
+        // fetchMarketplaceSession never throws; this stays as the belt for the
+        // effect itself so a bug here cannot blank the browser screen.
+        console.warn("[Marketplace] session fetch failed", e);
       }
     })();
+    const deferred = setTimeout(() => {
+      (async () => {
+        try {
+          setCuratedLoading(true);
+          const products = await getMarketplaceProducts(id);
+          if (alive) setCuratedProducts(products);
+        } catch (e) {
+          // Non-fatal: the curated overlay then shows its empty state and the
+          // WebView keeps working.
+          console.warn("[Marketplace] curated catalog failed", e);
+        } finally {
+          if (alive) setCuratedLoading(false);
+        }
+      })();
+    }, 1200);
     return () => {
       alive = false;
+      clearTimeout(deferred);
     };
-  }, [authUser?.id]);
+  }, [marketplace]);
+
+  // Staff gate for the "Sync session" header button. The role is already on
+  // the signed-in user (store/auth.ts hydrates it from profiles at sign-in),
+  // so this screen does not need its own query — the version that lived here
+  // added a round-trip to every browser open and disagreed with the staff
+  // store when the two fetches raced. Server-side authority stays RLS.
+  const staffRole = useStaffStore((s) => s.role);
+  const isStaff = isStaffRole(staffRole);
 
   // ---- Staff: read this WebView's native cookies and push them server-side.
   // httpOnly cookies (1688's `cookie2` etc.) are ONLY readable through the
@@ -350,20 +393,30 @@ export default function MarketplaceBrowser() {
       const id = marketplace || "1688";
       const family = marketplaceCookieFamily(id);
       const found: Record<string, string> = {};
-      for (const probe of marketplaceCookieProbes(id)) {
-        try {
-          const jar = await CookieManager.get(probe, false);
-          Object.entries<any>(jar ?? {}).forEach(([name, c]) => {
-            // c is a Cookie object ({name, value, domain…}); fall back to string maps
-            const value = typeof c === "string" ? c : c?.value;
-            const domain = typeof c === "string" ? undefined : c?.domain;
-            if (!value) return;
-            if (domain && !cookieDomainInFamily(domain, family)) return;
-            found[name] = value;
-          });
-        } catch {
-          // one probe failing (e.g. unsupported sub-API) must not kill the sync
-        }
+      // Each native cookie read is independent, so they go out together. Awaited
+      // one after another, a staff member tapped "Sync" and waited for up to five
+      // bridge round trips on the slowest possible device. The results are still
+      // merged in probe ORDER, so a name present on two domains resolves to the
+      // same cookie it did before — parallel network, identical outcome.
+      const jars = await Promise.all(
+        marketplaceCookieProbes(id).map(async (probe) => {
+          try {
+            return await CookieManager.get(probe, false);
+          } catch {
+            // one probe failing (e.g. unsupported sub-API) must not kill the sync
+            return null;
+          }
+        })
+      );
+      for (const jar of jars) {
+        Object.entries<any>(jar ?? {}).forEach(([name, c]) => {
+          // c is a Cookie object ({name, value, domain…}); fall back to string maps
+          const value = typeof c === "string" ? c : c?.value;
+          const domain = typeof c === "string" ? undefined : c?.domain;
+          if (!value) return;
+          if (domain && !cookieDomainInFamily(domain, family)) return;
+          found[name] = value;
+        });
       }
       const pairs = Object.keys(found).map((k) => `${k}=${found[k]}`);
       if (pairs.length === 0) {
@@ -395,6 +448,15 @@ export default function MarketplaceBrowser() {
           )
         );
       }
+    } catch (e) {
+      console.warn("[marketplace] syncSession threw", e);
+      Alert.alert(
+        title,
+        tt(
+          "Sync could not run: " + String((e as any)?.message ?? e),
+          "Isku xirku ma shaqaynin: " + String((e as any)?.message ?? e)
+        )
+      );
     } finally {
       setSyncing(false);
     }
@@ -405,16 +467,22 @@ export default function MarketplaceBrowser() {
     (webview: any, delay = 0) => {
       const post = () => {
         try {
+          // The shared in-page scheduler goes in FIRST and on every path: the
+          // scripts below register their work with it instead of each owning a
+          // setInterval/MutationObserver of their own. It is idempotent, so
+          // re-injecting per navigation costs one `if` inside the page.
+          //
           // A live slide-captcha is the one page we do not touch: no text
           // rewriting, no price overlay, no chrome hiding. Watcher + route
           // sentinel only, so the verification widget keeps its own DOM.
           if (riskActiveRef.current) {
             webview?.injectJavaScript?.(
-              "(function(){" + [NAV_WATCH_SCRIPT, RISK_WATCH_SCRIPT].join(";") + "})();true;"
+              "(function(){" + [CS_RUNTIME_SCRIPT, NAV_WATCH_SCRIPT, RISK_WATCH_SCRIPT].join(";") + "})();true;"
             );
             return;
           }
           const parts: string[] = [];
+          parts.push(CS_RUNTIME_SCRIPT);
           // Route sentinel first: must be installed even if a later script
           // throws, so SPA page types keep getting the full suite.
           parts.push(NAV_WATCH_SCRIPT);
@@ -441,7 +509,9 @@ export default function MarketplaceBrowser() {
           }
           const combined = "(function(){" + parts.join(";") + "})();true;";
           webview?.injectJavaScript?.(combined);
-        } catch {}
+        } catch (e) {
+          console.warn("[marketplace] forced capture inject failed", e);
+        }
       };
       setTimeout(post, delay);
     },
@@ -479,19 +549,18 @@ export default function MarketplaceBrowser() {
   // live node refs in window.__csAiTrState.map, keyed by TRIMMED original text.
   // All DOM application lives in the script (single source) — the app only
   // answers with window.__csApplyTranslations(originals, translated).
-  const handleTranslateRequest = useCallback(async (data: any) => {
-    const texts = Array.isArray(data?.texts) ? data.texts : null;
-    if (!texts || texts.length === 0) return;
-    const targetLang = String(data?.targetLang || "en");
+  //
+  // PERF: requests are SERIALIZED through one queue instead of firing a
+  // function call per message. A product page posts several bursts while it
+  // mounts, and each used to start its own paid round-trip while the previous
+  // one was still in flight — the extra cold starts and the bandwidth race are
+  // what made translation arrive late. Whatever arrives while a batch is out
+  // gets merged into the next single call.
+  const translateQueueRef = useRef<{ lang: string; texts: string[] }>({ lang: "", texts: [] });
+  const translateBusyRef = useRef(false);
 
+  const applyToPage = useCallback((originals: string[], translated: string[]) => {
     try {
-      const { translateTexts } = await import("@/api/translate");
-      const translations = await translateTexts(texts, targetLang);
-      // translateTexts keys by the TRIMMED source string — request with the
-      // same key the page stamped so lookups can't miss on whitespace.
-      const originals = texts.map((t: string) => String(t || "").trim());
-      const translated = originals.map((t: string) => translations[t] || t);
-
       webRef.current?.injectJavaScript?.(
         "window.__csApplyTranslations && window.__csApplyTranslations(" +
           JSON.stringify(originals) +
@@ -499,10 +568,70 @@ export default function MarketplaceBrowser() {
           JSON.stringify(translated) +
           ");true;"
       );
-    } catch (error) {
-      console.error("[CS] Translation failed:", error);
+    } catch (e) {
+      console.warn("[CS] applyTranslations inject failed:", e);
     }
   }, []);
+
+  const releaseToPage = useCallback((originals: string[]) => {
+    try {
+      webRef.current?.injectJavaScript?.(
+        "window.__csTranslateFailed && window.__csTranslateFailed(" +
+          JSON.stringify(originals) +
+          ");true;"
+      );
+    } catch (e) {
+      console.warn("[CS] translateFailed inject failed:", e);
+    }
+  }, []);
+
+  const drainTranslateQueue = useCallback(async (): Promise<void> => {
+    if (translateBusyRef.current) return;
+    const queue = translateQueueRef.current;
+    if (queue.texts.length === 0) return;
+    const targetLang = queue.lang;
+    const originals = queue.texts;
+    queue.texts = [];
+    translateBusyRef.current = true;
+    try {
+      const { translateTextsDetailed } = await import("@/api/translate");
+      const { map, failed } = await translateTextsDetailed(originals, targetLang);
+      // translateTextsDetailed keys by the TRIMMED source string — request with
+      // the same key the page stamped so lookups can't miss on whitespace.
+      const translated = originals.map((t) => map[t] || t);
+      applyToPage(originals, translated);
+      // Un-stamp the strings the backend could not serve so the page retries
+      // them (bounded) instead of leaving them Chinese forever.
+      if (failed.length > 0) releaseToPage(failed);
+    } catch (error) {
+      console.warn("[CS] Translation batch failed:", error);
+      releaseToPage(originals);
+    } finally {
+      translateBusyRef.current = false;
+    }
+    if (translateQueueRef.current.texts.length > 0) await drainTranslateQueue();
+  }, [applyToPage, releaseToPage]);
+
+  const handleTranslateRequest = useCallback(
+    async (data: any) => {
+      const texts = Array.isArray(data?.texts) ? data.texts : null;
+      if (!texts || texts.length === 0) return;
+      const targetLang = String(data?.targetLang || "en");
+      const queue = translateQueueRef.current;
+      // Language switched mid-flight: the page already restored originals and
+      // reset its state, so anything queued for the old target is stale.
+      if (queue.lang && queue.lang !== targetLang) queue.texts = [];
+      queue.lang = targetLang;
+      for (const raw of texts) {
+        const trimmed = String(raw ?? "").trim();
+        if (!trimmed || queue.texts.includes(trimmed)) continue;
+        if (queue.texts.length >= 200) break;
+        queue.texts.push(trimmed);
+      }
+      await drainTranslateQueue();
+    },
+    [drainTranslateQueue]
+  );
 
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -612,7 +741,9 @@ export default function MarketplaceBrowser() {
             moqText: typeof p.moqText === "string" ? p.moqText : "",
           });
         }
-      } catch {}
+      } catch (e) {
+        console.warn("[marketplace] message handler failed", e);
+      }
     },
     [marketplace, url, meta.loginWalled, loginWall, curatedProducts.length, applyListing, runPerPageScripts, runPerPageScriptsThrottled, handleTranslateRequest, fxRate, usdNative]
   );
@@ -716,11 +847,33 @@ export default function MarketplaceBrowser() {
   const goBack = useCallback(() => webRef.current?.goBack(), []);
   const reload = useCallback(() => {
     setPunish(null);
+    setLoadError(null);
     // A reload is a fresh document: let the full suite back in, the watcher
     // re-declares the wall within 700ms if 1688 shows it again.
     riskActiveRef.current = false;
     webRef.current?.reload();
   }, []);
+  /**
+   * PERF: go to a marketplace URL. Never `setUrl()` — `url` is only an
+   * observation of where the page currently is, and `source={{uri: entryUrl}}`
+   * is the single thing React Native WebView reacts to. Calling loadUrl()
+   * explicitly and syncing entryUrl keeps the two in step without ever
+   * re-feeding the observed location back into `source` (that feedback loop
+   * re-downloaded the page on every SPA route change).
+   */
+  const navigateTo = useCallback(
+    (next: string) => {
+      if (!next) return;
+      setPunish(null);
+      setLoadError(null);
+      riskActiveRef.current = false;
+      navUrlRef.current = next;
+      setUrl(next);
+      setEntryUrl(next);
+      webRef.current?.loadUrl(next);
+    },
+    []
+  );
   const openExternal = useCallback(() => {
     Linking.openURL(url).catch(() =>
       Alert.alert(tt("Error", "Khalad"), tt("Could not open this link.", "Lama furin kara bogga."))
@@ -738,7 +891,9 @@ export default function MarketplaceBrowser() {
       Haptics.selectionAsync();
       try {
         await AsyncStorage.setItem(TL_KEY, JSON.stringify(next));
-      } catch {}
+      } catch (e) {
+        console.warn("[marketplace] could not persist language", e);
+      }
       setTranslateLang(next);
       if (webRef.current) {
         if (next) {
@@ -819,7 +974,10 @@ export default function MarketplaceBrowser() {
         webRef.current?.injectJavaScript?.(
           "try{window.__csCapForce=location.href;}catch(e){};" + PRODUCT_CAPTURE_SCRIPT
         );
-      } catch {}
+      } catch (e) {
+        console.warn("[marketplace] capture inject failed", e);
+        setCaptureBusy(false);
+      }
     }, 200);
   }, []);
 
@@ -867,17 +1025,31 @@ export default function MarketplaceBrowser() {
   // ---- Context-aware bottom bar state ----
   // (pageState was removed: nothing rendered from it)
 
-  const localListing: CapturedListing = currentListing ?? {
-    title: "Detected product",
-    price: cnylist.length ? cnylist[cnylist.length - 1] : 0,
-    image: "",
-    url,
-    brand: "",
-    platform: marketplace || "1688",
-    sourceId: String(Date.now()),
-    // Nothing has been scraped yet — the sheet then honestly says "no minimum found".
-    moqText: "",
-  };
+  // The listing the capture sheet shows. MEMOISED on purpose: built inline on
+  // every render, this object was a new identity each time — and this screen
+  // re-renders constantly (progress, price sweeps, FX rate, translation state).
+  // SmartProductForm seeds its qty/specs/kg/CBM/price from an effect keyed on
+  // this prop, so an un-memoised object wiped whatever the customer had just
+  // typed while the sheet was open. The signature is page-level: capture,
+  // URL, title, marketplace, and the last detected yuan figure.
+  const lastCny = cnylist.length ? cnylist[cnylist.length - 1] : 0;
+  const localListing: CapturedListing = useMemo(
+    () =>
+      currentListing ?? {
+        title: "Detected product",
+        price: lastCny,
+        image: "",
+        url,
+        brand: "",
+        platform: marketplace || "1688",
+        // Identity of THIS capture, not of this render: a fresh Date.now() per
+        // render is what re-seeded the form.
+        sourceId: String(Date.now()),
+        // Nothing has been scraped yet — the sheet then honestly says "no minimum found".
+        moqText: "",
+      },
+    [currentListing, url, marketplace, lastCny]
+  );
 
   const requestCheckout = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -934,9 +1106,7 @@ export default function MarketplaceBrowser() {
           )}
           <TouchableOpacity
             onPress={() => {
-              if (url !== meta.home) {
-                setUrl(meta.home);
-              }
+              if (url !== meta.home) navigateTo(meta.home);
             }}
             style={styles.headerBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1015,7 +1185,9 @@ export default function MarketplaceBrowser() {
                 } else {
                   webRef.current?.injectJavaScript("window.__csUsdRestore && window.__csUsdRestore(); true;");
                 }
-              } catch {}
+              } catch (e) {
+                console.warn("[marketplace] USD toggle failed", e);
+              }
             }}
             style={[styles.usdPill, usdOn && styles.usdPillActive]}
             activeOpacity={0.8}
@@ -1030,7 +1202,7 @@ export default function MarketplaceBrowser() {
         <View style={styles.webWrap} collapsable={false}>
           <WebView
             ref={webRef}
-            source={{ uri: url }}
+            source={{ uri: entryUrl }}
             style={styles.web}
             onMessage={onMessage}
             onNavigationStateChange={(nav: any) => {
@@ -1038,7 +1210,18 @@ export default function MarketplaceBrowser() {
               setUrl(nav.url);
               setCanGoBack(nav.canGoBack);
             }}
-            onProgress={(e: any) => setProgress(e.nativeEvent.progress)}
+            onProgress={(e: any) => {
+              const p = e.nativeEvent.progress;
+              setProgress(p);
+              // The skeleton is an absolute-fill overlay, so revealing it only
+              // at onLoadEnd meant watching a shimmer for 8-20 seconds over a
+              // page that was already drawn — onLoadEnd fires when EVERY
+              // subresource has settled, and 1688 pages carry Chinese CDNs, ads
+              // and trackers that trickle in long after the content is readable.
+              // 0.85 means the document is parsed and painted; show it then and
+              // keep onLoadEnd as the backstop for pages that stall lower.
+              if (p >= 0.85) setLoading(false);
+            }}
             onShouldStartLoadWithRequest={(req) => {
               const u = req.url || "";
               const scheme = u.split(":")[0]?.toLowerCase();
@@ -1064,6 +1247,7 @@ export default function MarketplaceBrowser() {
             }}
             onLoadStart={() => {
               setLoading(true);
+              setLoadError(null);
               applyListing(null);
               setCnylist([]);
               setLoginWall(false);
@@ -1076,12 +1260,45 @@ export default function MarketplaceBrowser() {
               // Fast path: hide loader immediately for perceived performance
               setLoading(false);
               if (webRef.current) {
-                // Inject scripts with minimal delay for faster rendering
-                runPerPageScripts(webRef.current, 100);
+                // The runtime heartbeat is already resident from the previous
+                // document teardown path; 30ms lets the new body mount before
+                // the first sweep instead of racing it.
+                runPerPageScripts(webRef.current, 30);
               }
             }}
-            onError={() => {
+            onError={(e: any) => {
               setLoading(false);
+              // Never leave the customer on a blank white page with a spinner
+              // that stopped: name what failed and give a retry.
+              const ne = e?.nativeEvent || {};
+              const code = Number(ne.code) || 0;
+              console.warn(
+                `[marketplace:${marketplace ?? "?"}] load failed code=${code} ` +
+                  `${String(ne.description || "").slice(0, 200)} url=${String(ne.url || ne.loadingURL || "")}`
+              );
+              // -2 / ERR_INTERNET_DISCONNECTED-ish and -1001 (iOS timeout) are
+              // the two that actually happen on Somali mobile data.
+              let msg = tt(
+                "This marketplace page didn’t load.",
+                "Boggan suuqa ma furmin."
+              );
+              if (code === -1 || code === -2 || code === -3 || code === -106 || code === -1001) {
+                msg = tt(
+                  "Connection problem — check your internet and try again.",
+                  "Internetka ma jiro — hubi xiriirkaaga oo isku day mar kale."
+                );
+              } else if (code === -4 || code === -6 || code === -7 || code === -105 || code === -1009) {
+                msg = tt(
+                  "The marketplace server didn’t respond. It may be busy or blocking this visit.",
+                  "Suuqa kama jawaabin. laga yaabee inuu mashquul yahay."
+                );
+              } else if (code === -12 || code === -1012 || code === -1022 || code === -2003) {
+                msg = tt(
+                  "This page needs a secure connection that failed. Try again or open it in the browser.",
+                  "Boggan wuxuu u baahan yahay isku-xir amaan ah oo fashilmay."
+                );
+              }
+              setLoadError(msg);
             }}
             startInLoadingState
             javaScriptEnabled
@@ -1277,6 +1494,43 @@ export default function MarketplaceBrowser() {
                   <RefreshCw size={15} color={COLORS.white} />
                   <Text style={styles.punishPrimaryText}>
                     {tt("Retry this page", "Isku day mar kale")}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.punishSecondary} onPress={openExternal} activeOpacity={0.7}>
+                  <Text style={styles.punishSecondaryText}>{tt("Open in browser", "Fur browser-ka")}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.punishSecondary} onPress={goBack} activeOpacity={0.7}>
+                  <Text style={styles.punishSecondaryText}>{tt("Go back", "Dib ugu noqo")}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Hard load failure (no network, DNS, TLS, server down). Without
+              this the screen stayed a blank white WebView forever. */}
+          {loadError && !loading && !punish?.interactive && (
+            <View style={styles.punishOverlay}>
+              <View style={styles.punishCard}>
+                <View style={styles.punishIconWrap}>
+                  <CloudOff size={30} color={COLORS.primary} />
+                </View>
+                <Text style={styles.punishTitle}>
+                  {tt("Page didn’t load", "Boggu ma furmin")}
+                </Text>
+                <Text style={styles.punishBody}>{loadError}</Text>
+                <TouchableOpacity style={styles.punishPrimary} onPress={reload} activeOpacity={0.85}>
+                  <RefreshCw size={15} color={COLORS.white} />
+                  <Text style={styles.punishPrimaryText}>
+                    {tt("Try again", "Isku day mar kale")}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.punishSecondary}
+                  onPress={() => navigateTo(meta.home)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.punishSecondaryText}>
+                    {tt(`Go to ${meta.name} home`, `U gudbo ${meta.name} home`)}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.punishSecondary} onPress={openExternal} activeOpacity={0.7}>

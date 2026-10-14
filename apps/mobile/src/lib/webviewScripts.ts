@@ -230,7 +230,13 @@ export const PRODUCT_CAPTURE_SCRIPT = `(function () {
 export const LOGIN_WALL_SCRIPT = `(function () {
   try {
     var hint = false;
-    var body = (document.body && document.body.innerText || "").slice(0, 4000);
+    // body.innerText forces the browser to lay out the whole page before it can
+    // answer, and this script runs on every suite inject (load + each navigation
+    // ping) — 100-400ms of blocked main thread on a 1688 page, right when it is
+    // trying to paint. The shared runtime keeps one bounded, layout-free
+    // textContent snapshot per tick, so ask it first and fall back to the old
+    // read only on pages where the runtime never started.
+    var body = window.__cs ? window.__cs.text(4000) : (document.body && document.body.innerText || "").slice(0, 4000);
     var clues = [/请登录/, /扫码登录/, /扫码支付/, /二维码/, /手机验证/, /验证码/, /登录淘宝/, /登录后/, /未登录/, /安全验证/, /login/i, /passport\\./i, /qr.*login/i, /account\\.yiwugo/i, /trademanager/i, /安全认证/];
     for (var i = 0; i < clues.length; i++) {
       if (clues[i].test(body)) { hint = true; break; }
@@ -245,7 +251,14 @@ export const LOGIN_WALL_SCRIPT = `(function () {
 // Detect page has NO real content (blocked / blank / error)
 export const BLANK_PAGE_SCRIPT = `(function () {
   try {
-    var body = (document.body && document.body.innerText || "").trim();
+    // Same reason as LOGIN_WALL above: innerText lays out the entire document,
+    // and a blank check only needs to know whether ANY text exists. The one
+    // behaviour change is deliberate: textContent also sees visually hidden
+    // text, so a page whose DOM is full but whose styles hide it is no longer
+    // reported blank. That case is a rendering bug, not a blocked page, and it
+    // never used to reach the customer as blank either — the images guard
+    // below is what actually separates "nothing arrived" from "slow".
+    var body = (window.__cs ? window.__cs.text(2000) : (document.body && document.body.innerText || "")).trim();
     var hasImages = !!(document.images && document.images.length);
     if (!body && !hasImages) {
       window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: "BLANK", payload: { url: location.href } }));
@@ -260,10 +273,14 @@ export const BLANK_PAGE_SCRIPT = `(function () {
 //   chinagoods) frequently change pages WITHOUT a document reload, so the
 //   app never gets onLoadStart/onLoadEnd and its per-page suite (translation,
 //   USD overlay, capture, risk detection) would only ever run on the entry
-//   page. This tiny watcher posts a NAV message the moment location.href
-//   changes (poll + popstate/hashchange listeners for immediacy); the app
-//   then clears any stale captured product and re-runs the full suite, so
-//   home, search results and product detail all behave identically.
+//   page. This watcher posts a NAV message the moment location.href changes;
+//   the app then clears any stale captured product and re-runs the full suite,
+//   so home, search results and product detail all behave identically.
+//
+//   PERF: the events (popstate/hashchange) are free and give instant coverage
+//   of router navigations. The href poll that catches bare history.pushState
+//   now runs on the shared runtime heartbeat instead of its own 500ms
+//   setInterval that ticked forever on every page.
 // ---------------------------------------------------------------------------
 export const NAV_WATCH_SCRIPT = `(function () {
   try {
@@ -275,17 +292,42 @@ export const NAV_WATCH_SCRIPT = `(function () {
       } catch (e) {}
     };
     if (!window.__csNavLast) window.__csNavLast = location.href;
+    if (!window.__csNavEvents) {
+      window.__csNavEvents = true;
+      try {
+        window.addEventListener("popstate", function () {
+          if (location.href === window.__csNavLast) return;
+          window.__csNavLast = location.href; post();
+        });
+        window.addEventListener("hashchange", function () {
+          if (location.href === window.__csNavLast) return;
+          window.__csNavLast = location.href; post();
+        });
+      } catch (e) {}
+    }
+    if (window.__cs) {
+      window.__cs.add("nav", {
+        every: 900, maxEvery: 900,
+        fn: function () {
+          try {
+            if (location.href === window.__csNavLast) return 0;
+            window.__csNavLast = location.href;
+            post();
+            return 1;
+          } catch (e) { return 0; }
+        }
+      });
+      return true;
+    }
+    // Runtime absent (unexpected): keep the standalone poll so navigation
+    // detection is never silently lost.
     if (!window.__csNavWatch) {
       window.__csNavWatch = setInterval(function () {
         try {
           var h = location.href;
           if (h !== window.__csNavLast) { window.__csNavLast = h; post(); }
         } catch (e) {}
-      }, 500);
-      try {
-        window.addEventListener("popstate", function () { window.__csNavLast = location.href; post(); });
-        window.addEventListener("hashchange", function () { window.__csNavLast = location.href; post(); });
-      } catch (e) {}
+      }, 900);
     }
     return true;
   } catch (e) { return true; }
@@ -300,8 +342,7 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
   // Install-once guard (per document+href): every re-inject on the SAME page
   // used to re-run the full three-pass DOM sweep (querySelectorAll over 40+
   // selectors, plus a getComputedStyle loop over every div/section/footer).
-  // The MutationObserver below keeps hiding late-mounted bars, and SPA route
-  // changes carry a new href, so they legitimately re-scan.
+  // SPA route changes carry a new href, so they legitimately re-scan.
   try {
     if (window.__csHideNavInstalled && window.__csHideNavHref === location.href) return true;
     window.__csHideNavInstalled = true;
@@ -367,8 +408,16 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
       }
       return false;
     }
+    function kill(el) {
+      el.setAttribute("data-cs-market-nav", "1");
+      el.style.setProperty("display", "none", "important");
+      el.style.setProperty("visibility", "hidden", "important");
+      el.style.setProperty("pointer-events", "none", "important");
+    }
+
+    // PASS 1 — cheap, selector-driven, always safe to run.
     function hideKnownBars() {
-      // 1) Class/id-pattern bottom bars — kill regardless of size
+      var hits = 0;
       var nodes = document.querySelectorAll(selectors.join(","));
       for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i];
@@ -377,34 +426,55 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
         var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
         // Fixed bars are typically 40-160px tall; still catch shorter strips
         if (rect && (rect.height > 220 || rect.width < window.innerWidth * 0.4)) continue;
-        el.setAttribute("data-cs-market-nav", "1");
-        el.style.setProperty("display", "none", "important");
-        el.style.setProperty("visibility", "hidden", "important");
-        el.style.setProperty("pointer-events", "none", "important");
+        kill(el);
+        hits++;
       }
-      // 2) Text-labeled fixed elements in the bottom 40% of the screen
+      return hits;
+    }
+
+    // PASS 2/3 — the expensive sweeps. Both walked the whole document and read
+    // getBoundingClientRect / getComputedStyle per element, which forces
+    // layout; run as ONE batched read pass (all rects collected first, then
+    // written) and only while the page is still producing chrome.
+    function deepSweep() {
+      var hits = 0;
+      var candidates = [];
       var anchors = document.querySelectorAll("a, div, li, span, button");
       for (var j = 0; j < anchors.length; j++) {
         var el2 = anchors[j];
         if (!el2 || el2.getAttribute("data-cs-market-nav") === "1") continue;
-        if (isCsOwn(el2) || isRiskArea(el2)) continue;
-        var txt = (el2.innerText || "").trim();
+        // textContent (layout-free) instead of innerText (full reflow per read):
+        // these bars are short labels, so the cheap read is enough.
+        var raw = el2.textContent || "";
+        if (!raw || raw.length > 80) continue;
+        candidates.push(el2);
+      }
+      // READ PHASE — one contiguous burst of layout, no writes interleaved.
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var decided = [];
+      for (var c = 0; c < candidates.length; c++) {
+        var el3 = candidates[c];
+        if (isCsOwn(el3) || isRiskArea(el3)) continue;
+        var txt = (el3.textContent || "").replace(/\\s+/g, " ").trim();
         if (!txt || txt.length > 60) continue;
-        var r = el2.getBoundingClientRect ? el2.getBoundingClientRect() : null;
-        if (!r || r.height < 24 || r.height > 180) continue;
-        if (r.top < window.innerHeight * 0.60) continue; // bottom region only
         if (!dockText.test(txt)) continue;
-        if (r.width > window.innerWidth * 0.9 && el2.children.length > 10) continue;
-        el2.setAttribute("data-cs-market-nav", "1");
-        el2.style.setProperty("display", "none", "important");
-        el2.style.setProperty("visibility", "hidden", "important");
-        el2.style.setProperty("pointer-events", "none", "important");
+        var r = el3.getBoundingClientRect ? el3.getBoundingClientRect() : null;
+        if (!r || r.height < 24 || r.height > 180) continue;
+        if (r.top < vh * 0.60) continue; // bottom region only
+        if (r.width > vw * 0.9 && el3.children.length > 10) continue;
+        decided.push(el3);
+      }
+      // WRITE PHASE.
+      for (var d = 0; d < decided.length; d++) {
+        var target = decided[d];
+        kill(target);
+        hits++;
         // Collapse empty parent shells so no dead space remains
-        var p = el2.parentElement;
+        var p = target.parentElement;
         var depth = 0;
         while (p && depth < 3) {
-          var pTxt = (p.innerText || "").trim();
-          if (pTxt.length <= 60 && p.getBoundingClientRect && p.getBoundingClientRect().top >= window.innerHeight * 0.55 && p.scrollHeight <= 200) {
+          var pTxt = (p.textContent || "").trim();
+          if (pTxt.length <= 60 && p.scrollHeight <= 200) {
             p.setAttribute("data-cs-market-nav", "1");
             p.style.setProperty("display", "none", "important");
           } else break;
@@ -412,35 +482,63 @@ export const HIDE_MARKET_NAV_SCRIPT = `(function () {
           depth++;
         }
       }
-      // 3) position:fixed/sticky elements anchored to the bottom edge —
-      //    catch-all for bars with unpredictable class names.
-      var all = document.querySelectorAll("div, section, footer");
-      for (var k = 0; k < all.length; k++) {
-        var el3 = all[k];
-        if (!el3 || el3.getAttribute("data-cs-market-nav") === "1") continue;
-        if (isCsOwn(el3) || isRiskArea(el3)) continue;
-        var cs = getComputedStyle(el3);
-        if (cs.position !== "fixed" && cs.position !== "sticky") continue;
-        var r3 = el3.getBoundingClientRect();
-        if (r3.height < 30 || r3.height > 200) continue;
-        // Sits flush with (or overlapping) the bottom edge of the viewport
-        if (r3.bottom < window.innerHeight - 8) continue;
-        var t3 = (el3.innerText || "").trim();
-        // If it has marketplace action words or is a wide bar → hide
-        if (dockText.test(t3) || (r3.width >= window.innerWidth * 0.6 && el3.children.length >= 2)) {
-          el3.setAttribute("data-cs-market-nav", "1");
-          el3.style.setProperty("display", "none", "important");
-          el3.style.setProperty("visibility", "hidden", "important");
-          el3.style.setProperty("pointer-events", "none", "important");
-        }
+
+      // Pass 3: position:fixed/sticky elements anchored to the bottom edge —
+      // catch-all for bars with unpredictable class names. Only containers that
+      // carry dock text can qualify, so the getComputedStyle read — the single
+      // most expensive call in the old script — runs on dozens of nodes instead
+      // of every div/section/footer on the page.
+      var shells = document.querySelectorAll("div, section, footer");
+      var fixedCandidates = [];
+      for (var k = 0; k < shells.length; k++) {
+        var el4 = shells[k];
+        if (!el4 || el4.getAttribute("data-cs-market-nav") === "1") continue;
+        var t4 = (el4.textContent || "");
+        if (!t4 || t4.length > 400) continue;
+        if (!dockText.test(t4) && el4.children.length < 2) continue;
+        fixedCandidates.push(el4);
       }
+      var verdicts = [];
+      for (var f = 0; f < fixedCandidates.length; f++) {
+        var el5 = fixedCandidates[f];
+        if (isCsOwn(el5) || isRiskArea(el5)) continue;
+        var cs;
+        try { cs = getComputedStyle(el5); } catch (e) { continue; }
+        if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+        var r5 = el5.getBoundingClientRect();
+        if (r5.height < 30 || r5.height > 200) continue;
+        if (r5.bottom < vh - 8) continue;
+        var t5 = (el5.textContent || "").replace(/\\s+/g, " ").trim();
+        if (dockText.test(t5) || (r5.width >= vw * 0.6 && el5.children.length >= 2)) verdicts.push(el5);
+      }
+      for (var z = 0; z < verdicts.length; z++) { kill(verdicts[z]); hits++; }
+      return hits;
     }
-    hideKnownBars();
+
+    function runPass1() { return hideKnownBars(); }
+    function runDeep() { return deepSweep(); }
+
+    if (window.__cs) {
+      // Fast, cheap selector pass on mutations; the full document walk runs on
+      // a slower cadence and backs off / stops once the page stops producing
+      // chrome. Previously both ran on every 250ms mutation burst forever.
+      window.__cs.add("marketNav", { every: 700, maxEvery: 5000, idleStop: 6, watches: true, fn: function () {
+        var h = 0;
+        try { h += runPass1(); } catch (e) {}
+        try { h += runDeep(); } catch (e) {}
+        return h;
+      } });
+      setTimeout(runPass1, 0);
+      return true;
+    }
+    // Runtime absent: fall back to the single self-throttling observer.
+    runPass1();
+    runDeep();
     if (!window.__csMarketNavObserver) {
       var moTimer = null;
       window.__csMarketNavObserver = new MutationObserver(function () {
         if (moTimer) return;
-        moTimer = setTimeout(function () { moTimer = null; hideKnownBars(); }, 250);
+        moTimer = setTimeout(function () { moTimer = null; runPass1(); }, 400);
       });
       window.__csMarketNavObserver.observe(document.documentElement, { childList: true, subtree: true });
     }

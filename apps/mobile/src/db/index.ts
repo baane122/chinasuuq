@@ -9,9 +9,10 @@
 // supabase or AsyncStorage directly.
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { supabase } from "@/lib/supabase";
+import { supabase, SUPABASE_URL } from "@/lib/supabase";
 import { getCachedCnyPerUsdSync, subscribeFx } from "@/lib/exchange";
 import { unadaptOrder, mapMobileStatusToDb, adaptSourcing, unadaptAddress, adaptAddress, adaptFavorite } from "@/lib/supabase-adapter";
+import { partialJoinNotice, runInBatches } from "@/lib/in-batches";
 
 // ---- safe AsyncStorage helpers (never crash the app) ----
 const safeGet = async (k: string) => {
@@ -31,8 +32,89 @@ const safeSet = async (k: string, v: string) => {
 const safeRemove = async (k: string) => {
   try {
     await AsyncStorage.removeItem(k);
-  } catch {}
+  } catch (e) {
+    logDbError("safeRemove", e, { key: k });
+  }
 };
+
+/**
+ * Caps for the per-user list reads, so a screen's payload stops growing with the
+ * customer's history.
+ *
+ * Both were written when an account had a handful of rows. On a real account the
+ * order/payment reads pulled every order ever placed and the wishlist pulled a
+ * FULL product row per favorite — the page got slower for the customer who has
+ * used ChinaSuuq the most. 200 matches the cap the order list has always used.
+ */
+export const ORDER_QUERY_CAP = 200;
+
+export const FAVORITES_QUERY_CAP = 200;
+
+/**
+ * Single reporting point for the resilient fallbacks in this repository.
+ *
+ * The offline-first design deliberately keeps returning cached/empty data
+ * instead of throwing — that is what keeps the app usable when the project is
+ * paused. What it used to also do was make every failure invisible: an empty
+ * admin list, a stale catalog or a silently rejected write looked identical to
+ * "there is no data" from the outside, which is exactly how the
+ * "Mission Control shows nothing" bug got misdiagnosed as missing rows.
+ *
+ * So: classify, log with the operation name, and let a genuine network failure
+ * flip the cached health flag so the next read skips the 5s reachability probe.
+ */
+export type DbErrorKind = "network" | "auth" | "conflict" | "schema" | "parse" | "unknown";
+
+export function classifyDbError(error: any): DbErrorKind {
+  const msg = String(error?.message ?? error ?? "").toLowerCase();
+  if (
+    msg.includes("failed to fetch") ||
+    msg.includes("networkrequest") ||
+    msg.includes("network request") ||
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("abort") ||
+    msg.includes("could not connect") ||
+    msg.includes("enotfound") ||
+    msg.includes("service unreachable")
+  ) {
+    return "network";
+  }
+  const code = String(error?.code ?? "");
+  if (code === "42501" || code === "23505") {
+    return code === "23505" ? "conflict" : "auth";
+  }
+  if (
+    code === "PGRST116" ||
+    msg.includes("row-level security") ||
+    msg.includes("new row violates row-level") ||
+    msg.includes("not authorized") ||
+    msg.includes("jwt expired") ||
+    msg.includes("invalid api key")
+  ) {
+    return "auth";
+  }
+  if (code === "42P01" || code === "42703" || msg.includes("relation") || msg.includes("column") ) {
+    return "schema";
+  }
+  if (msg.includes("json")) return "parse";
+  return "unknown";
+}
+
+/** Every silent fallback logs once, tagged, at warn level. */
+export function logDbError(op: string, error: any, extra?: Record<string, unknown>): void {
+  const kind = classifyDbError(error);
+  if (kind === "network") {
+    // A real transport failure: let the next read go straight to cache.
+    cachedOnline = false;
+    cachedCheckedAt = Date.now();
+  }
+  console.warn(
+    `[db:${op}] ${kind}` + (extra ? ` ${JSON.stringify(extra)}` : ""),
+    String(error?.message ?? error ?? "unknown")
+  );
+}
+
 
 export interface BackendState {
   online: boolean;
@@ -55,14 +137,16 @@ export async function isBackendOnline(force = false): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(
-      "https://athkmrvsaijwgsyvwrbp.supabase.co/rest/v1/orders?select=id&limit=1",
-      { signal: controller.signal }
-    );
+    // Never hardcode the project host here: a paused/renamed project would make
+    // every read look "offline" forever while the app itself still worked.
+    await fetch(`${SUPABASE_URL}/rest/v1/orders?select=id&limit=1`, {
+      signal: controller.signal,
+    });
     clearTimeout(timer);
     cachedOnline = true; // any response (200/401/404) = project alive
-  } catch {
+  } catch (e) {
     cachedOnline = false; // network/TLS/DNS failure = unreachable
+    logDbError("isBackendOnline", e);
   }
   cachedCheckedAt = now;
   return cachedOnline;
@@ -145,6 +229,26 @@ export async function getOrders(): Promise<LocalOrder[]> {
 const ORDER_COLUMNS =
   "id, reference, status, payment_status, shipping_method, currency, subtotal_usd, service_fee_usd, total_usd, delivery_address, destination_city, notes, created_at, updated_at";
 
+/** Real `order_items` columns, shared by the single-order and list reads. */
+const ORDER_ITEM_COLUMNS =
+  "id, order_id, product_id, product_name, quantity, unit_price, unit_price_cny, exchange_rate, moq_at_purchase, variant, variant_name, marketplace_key, source_url, image_url";
+
+/**
+ * Optional out-param that says WHY nothing came back.
+ *
+ * `getOrderById` never throws (a screen must not crash on one bad read), so a
+ * bare `null` cannot separate "the server has no such order" from "we could not
+ * ask". A customer arriving from orders/[id] has a paid order: showing them
+ * "Order Not Found" because OUR read failed is the bug this flag exists to
+ * prevent. Callers that pass nothing keep the old behaviour exactly.
+ */
+export interface OrderLookupState {
+  /** True only when no order was found AND the server never answered for this
+   *  id (unreachable, or the read errored). A read that completed and returned
+   *  no row leaves this false — that genuinely is "no such order here". */
+  readFailed: boolean;
+}
+
 /**
  * Fetch one order by server uuid OR human reference (CS-…).
  *
@@ -153,22 +257,44 @@ const ORDER_COLUMNS =
  * be read from production. Falls back to the local cache when the backend is
  * unreachable or the row is not visible, so offline tracking keeps working.
  */
-export async function getOrderById(id: string): Promise<LocalOrder | null> {
+export async function getOrderById(
+  id: string,
+  lookup?: OrderLookupState
+): Promise<LocalOrder | null> {
+  // Did the server ever get asked about this id? Tracked so the caller can tell
+  // an unknown answer from a confirmed absence.
+  let couldNotAsk = false;
   try {
     if (await isBackendOnline()) {
+      // `order_items` is keyed by the server uuid, so when the caller handed us
+      // one the item read does not depend on the order read — issue both at
+      // once and the detail screen costs the slower round-trip instead of the
+      // sum. A CS… reference still has to resolve to a uuid first.
+      const isUuid = UUID_RE.test(id);
+      const itemsPromise = isUuid
+        ? supabase.from("order_items").select(ORDER_ITEM_COLUMNS).eq("order_id", id)
+        : null;
       let query = supabase.from("orders").select(ORDER_COLUMNS).limit(1);
-      query = UUID_RE.test(id) ? query.eq("id", id) : query.eq("reference", id);
+      query = isUuid ? query.eq("id", id) : query.eq("reference", id);
       const { data, error } = await query;
+      if (error) {
+        // The engine answered, and its answer was "I could not do this read" —
+        // still not an answer of "there is no such order".
+        couldNotAsk = true;
+        logDbError("getOrderById order read", error, { id });
+      }
       if (!error && data && data.length > 0) {
         const row = data[0] as any;
         // Same two-query pattern as getOrdersByUser: an embed only resolves if
         // PostgREST detects the FK; a direct select always works.
-        const itemsRes = await supabase
-          .from("order_items")
-          .select(
-            "id, order_id, product_id, product_name, quantity, unit_price, unit_price_cny, exchange_rate, moq_at_purchase, variant, variant_name, marketplace_key, source_url, image_url"
-          )
-          .eq("order_id", row.id);
+        const itemsRes = itemsPromise
+          ? await itemsPromise
+          : await supabase.from("order_items").select(ORDER_ITEM_COLUMNS).eq("order_id", row.id);
+        if (itemsRes.error) {
+          // Blank lines on a paid order look like the order was emptied. Say
+          // which read failed so it is not mistaken for missing data.
+          console.warn("[db]", "getOrderById items read failed:", itemsRes.error.message);
+        }
         const order = unadaptOrder(
           row,
           !itemsRes.error && itemsRes.data ? (itemsRes.data as any[]) : []
@@ -195,13 +321,20 @@ export async function getOrderById(id: string): Promise<LocalOrder | null> {
         await saveLocalOrders(local);
         return local[idx >= 0 ? idx : 0];
       }
+    } else {
+      // The reachability probe itself failed: this id was never put to the
+      // server, so a cache miss here proves nothing about the order.
+      couldNotAsk = true;
     }
   } catch (e: any) {
+    couldNotAsk = true;
     console.warn("[db]", "getOrderById remote read — falling back to cache:", e?.message);
   }
   // Cache fallback: offline, guest, or row not visible under this policy.
   const all = await getOrders();
-  return all.find((o) => o.id === id || o.reference === id) || null;
+  const cached = all.find((o) => o.id === id || o.reference === id) || null;
+  if (lookup) lookup.readFailed = couldNotAsk && !cached;
+  return cached;
 }
 
 /** Fetch orders for a user from Supabase, merged with local cache. */
@@ -243,18 +376,40 @@ export async function getOrdersByUser(userId: string): Promise<LocalOrder[]> {
           const ids = (data as any[]).map((o) => o.id).filter(Boolean);
           const itemsByOrder: Record<string, any[]> = {};
           if (ids.length > 0) {
-            const r = await supabase
-              .from("order_items")
-              .select(
-                "id, order_id, product_id, product_name, quantity, unit_price, unit_price_cny, exchange_rate, moq_at_purchase, variant, variant_name, marketplace_key, source_url, image_url"
-              )
-              .in("order_id", ids);
-            if (!r.error && r.data) {
-              for (const it of r.data as any[]) {
-                const key = it.order_id as string;
-                if (!itemsByOrder[key]) itemsByOrder[key] = [];
-                itemsByOrder[key].push(it);
-              }
+            // Never one `.in()` with 200 uuids: PostgREST puts that list in the
+            // GET request line (~7.4 KB), which gateways reject outright, and
+            // the screen would then show paid orders with no lines. Bounded
+            // batches keep each request near 1.9 KB. See src/lib/in-batches.ts.
+            const joined = await runInBatches<string, any>({
+              values: ids,
+              query: async (batch) => {
+                // Awaited rather than returned: the builder is a thenable
+                // PromiseLike, so handing it back would make runInBatches await
+                // something it cannot chain, and tsc rejects it.
+                const r = await supabase
+                  .from("order_items")
+                  .select(ORDER_ITEM_COLUMNS)
+                  .in("order_id", batch);
+                return {
+                  data: (r.data as any[] | null) ?? null,
+                  error: r.error ? { message: r.error.message } : null,
+                };
+              },
+              onBatchError: (idx, total, message) =>
+                console.warn(`[db] order_items batch ${idx}/${total} failed:`, message),
+            });
+            if (joined.failedBatches) {
+              // Not fatal: the list uses items for a preview only, and the
+              // detail screen re-reads them per order. Log the scope so a blank
+              // preview is traceable to a failed read rather than missing rows.
+              console.warn(
+                partialJoinNotice("Order line items", joined.failedBatches, joined.batches)
+              );
+            }
+            for (const it of joined.rows) {
+              const key = it.order_id as string;
+              if (!itemsByOrder[key]) itemsByOrder[key] = [];
+              itemsByOrder[key].push(it);
             }
           }
           remote = (data as any[]).map((o) => unadaptOrder(o, itemsByOrder[o.id] || []));
@@ -394,7 +549,7 @@ export async function createOrder(
   try {
     const { data: auth } = await supabase.auth.getUser();
     userId = auth?.user?.id ?? null;
-  } catch {}
+  } catch (e) { logDbError("createOrder", e); }
 
   if (userId && (await isBackendOnline())) {
     const order: LocalOrder = { ...draft, id: "", synced: true };
@@ -435,7 +590,7 @@ export async function syncPendingOrders(userId: string): Promise<number> {
         await saveLocalOrders(cur);
         syncedCount += 1;
       }
-    } catch {}
+    } catch (e) { logDbError("syncPendingOrders", e); }
   }
   return syncedCount;
 }
@@ -539,7 +694,7 @@ export async function getProducts(force = false): Promise<Product[]> {
           await safeSet(PRODUCTS_KEY, JSON.stringify(live));
         }
         return live;
-      } catch {}
+      } catch (e) { logDbError("getProducts", e); }
     }
   }
   // seed empty, try supabase
@@ -552,7 +707,7 @@ export async function getProducts(force = false): Promise<Product[]> {
         return mapped;
       }
     }
-  } catch {}
+  } catch (e) { logDbError("getProducts", e); }
   // Fall back to local product cache (kept intact even when force=false only —
   // a force refresh still returns [] rather than stale cache if the backend fails).
   if (force) {
@@ -560,7 +715,7 @@ export async function getProducts(force = false): Promise<Product[]> {
     if (raw) {
       try {
         return (JSON.parse(raw) as Product[]).map(withLivePrice);
-      } catch {}
+      } catch (e) { logDbError("getProducts", e); }
     }
   }
   return [];
@@ -752,7 +907,7 @@ async function applyMoqToLocalCache(productId: string, d: MoqDecision): Promise<
       moq_raw_text: d.rawText ?? null,
     };
     await safeSet(PRODUCTS_KEY, JSON.stringify(all));
-  } catch {}
+  } catch (e) { logDbError("applyMoqToLocalCache", e); }
 }
 
 /**
@@ -800,7 +955,7 @@ export async function saveMoqDecision(
       // Zero rows is RLS saying the caller is not staff, not a broken write.
       return { local: true, remote: (count ?? 0) > 0 ? "written" : null };
     }
-  } catch {}
+  } catch (e) { logDbError("saveMoqDecision", e); }
   return { local: true, remote: null };
 }
 
@@ -892,7 +1047,7 @@ export async function getMarketplaceProducts(
           .slice(0, 30);
       }
     }
-  } catch {}
+  } catch (e) { logDbError("getMarketplaceProducts", e); }
   // Fall back to local product cache filtered by marketplace
   const all = await getProducts();
   return all.filter((p) => p.marketplace === marketplace);
@@ -926,7 +1081,7 @@ export async function getSourcingCaptures(): Promise<SourcingCapture[]> {
   if (raw) {
     try {
       return JSON.parse(raw);
-    } catch {}
+    } catch (e) { logDbError("getSourcingCaptures", e); }
   }
   return [];
 }
@@ -947,7 +1102,7 @@ export async function saveSourcingCapture(c: SourcingCapture): Promise<SourcingC
         await setSourcingSynced(c.id, true);
       }
     }
-  } catch {}
+  } catch (e) { logDbError("saveSourcingCapture", e); }
   return c;
 }
 
@@ -1021,16 +1176,17 @@ async function readUserScopedKey(key: string, legacyKey: string): Promise<string
 export async function getProfile(userId: string): Promise<UserProfile | null> {
   try {
     if (await isBackendOnline()) {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
-      if (!error && data) {
+      // Independent tables, so one parallel round-trip instead of two serial
+      // ones — this is on the profile screen's critical path.
+      const [p, c] = await Promise.all([
+        supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
         // city is not a profiles column — it lives on customer_profiles.
-        let city: string | null = null;
-        const c = await supabase
-          .from("customer_profiles")
-          .select("city")
-          .eq("user_id", userId)
-          .maybeSingle();
-        if (!c.error) city = (c.data as any)?.city ?? null;
+        supabase.from("customer_profiles").select("city").eq("user_id", userId).maybeSingle(),
+      ]);
+      const { data, error } = p;
+      if (!error && data) {
+        if (c.error) console.warn("[db]", "getProfile city read:", c.error.message);
+        const city = c.error ? null : ((c.data as any)?.city ?? null);
         const merged = { ...data, city } as UserProfile;
         await safeSet(profileKey(userId), JSON.stringify(merged));
         return merged;
@@ -1041,7 +1197,11 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
   }
   const cached = await readUserScopedKey(profileKey(userId), PROFILE_KEY_BASE);
   if (cached) {
-    try { return JSON.parse(cached); } catch {}
+    try { return JSON.parse(cached); } catch (e) {
+      // Corrupt cache → the profile screen opens blank and looks like the
+      // server has nothing. Say so in the log.
+      logDbError("readProfileCache:parse", e, { userId });
+    }
   }
   return null;
 }
@@ -1113,27 +1273,72 @@ export interface SavedAddress {
   updated_at?: string;
 }
 
-export async function getAddresses(userId: string): Promise<SavedAddress[]> {
+/**
+ * The address read has two possible answers and the screen has to be able to
+ * tell them apart: "this customer has saved no address" and "we could not read
+ * their addresses" used to render the same "No addresses yet".
+ */
+export interface AddressRead {
+  addresses: SavedAddress[];
+  /**
+   * True only when neither Supabase nor a cached row on this device could
+   * answer. Serving the cache is NOT a failure — that is the offline-first
+   * design working — but a cache that has never been filled says nothing about
+   * what the account actually holds.
+   */
+  failed: boolean;
+}
+
+export async function readAddresses(userId: string): Promise<AddressRead> {
   try {
     if (await isBackendOnline()) {
       const { data, error } = await supabase.from("addresses").select("*").eq("user_id", userId).order("is_default", { ascending: false });
       if (!error && data) {
         const mapped = data.map((r: any) => unadaptAddress(r));
         await safeSet(addressesKey(userId), JSON.stringify(mapped));
-        return mapped as SavedAddress[];
+        return { addresses: mapped as SavedAddress[], failed: false };
       }
+      // A rejected SELECT (RLS, schema) is a failed read, not an empty book.
+      if (error) logDbError("readAddresses", error, { userId });
     }
   } catch (e: any) {
-    console.warn("[db]", "getAddresses remote read — serving cache:", e?.message);
+    console.warn("[db]", "readAddresses remote read — serving cache:", e?.message);
   }
   const cached = await readUserScopedKey(addressesKey(userId), ADDRESSES_KEY_BASE);
   if (cached) {
-    try { return JSON.parse(cached); } catch {}
+    try { return { addresses: JSON.parse(cached) as SavedAddress[], failed: false }; } catch (e) {
+      logDbError("readAddressesCache:parse", e, { userId });
+    }
   }
-  return [];
+  return { addresses: [], failed: true };
 }
 
-export async function saveAddress(addr: SavedAddress): Promise<SavedAddress> {
+/** Rows only, for callers that cannot act on a failed read. A screen that has
+ *  to distinguish empty from broken wants readAddresses() instead. */
+export async function getAddresses(userId: string): Promise<SavedAddress[]> {
+  return (await readAddresses(userId)).addresses;
+}
+
+/** Offline-only message for the two address writes: they have no pending-sync
+ *  queue (unlike orders), so a device-local row is silently overwritten by the
+ *  next online read — the customer has to hear that now, not later. */
+const ADDRESS_OFFLINE_SAVED =
+  "You're offline — this address was kept on this device only and won't reach your account until you're back online.";
+const ADDRESS_OFFLINE_DELETE =
+  "You're offline — this address is hidden on this device but will come back, because the delete never reached your account.";
+
+/**
+ * Save or update an address.
+ *
+ * The device copy is still written first — same local-first behaviour, so the
+ * list updates instantly and an offline save is not lost — but the result now
+ * says whether the row reached production. Before this the sync error only
+ * reached console.warn and the write returned nothing, which is how every
+ * failed address save was reported to the customer as "Saved".
+ */
+export async function saveAddress(
+  addr: SavedAddress
+): Promise<{ ok: boolean; error?: string }> {
   // Local first
   const all = await getAddresses(addr.user_id);
   let result: SavedAddress;
@@ -1148,44 +1353,63 @@ export async function saveAddress(addr: SavedAddress): Promise<SavedAddress> {
   await safeSet(addressesKey(addr.user_id), JSON.stringify(all));
   // Sync to Supabase (the row is `addresses`, owned by user_id)
   try {
-    if (await isBackendOnline()) {
-      const row = adaptAddress(addr, addr.user_id);
-      // If the user just set this address as default, clear others
-      if (addr.is_default) {
-        await supabase
-          .from("addresses")
-          .update({ is_default: false })
-          .eq("user_id", addr.user_id)
-          .neq("id", result.id || "00000000-0000-0000-0000-000000000000");
-      }
-      // A device-generated id (`addr-…`) is not a uuid: it can only be an
-      // insert, and the server's uuid is then adopted back.
-      const isUuid = UUID_RE.test(result.id || "");
-      const { data, error } = isUuid
-        ? await supabase.from("addresses").update(row).eq("id", result.id).select().single()
-        : await supabase.from("addresses").insert(row).select().single();
-      if (error) {
-        console.warn("[db]", "saveAddress remote sync:", error.message);
-      }
-      if (!error && data?.id) result = { ...result, id: data.id };
+    if (!(await isBackendOnline())) return { ok: false, error: ADDRESS_OFFLINE_SAVED };
+    const row = adaptAddress(addr, addr.user_id);
+    let syncError: string | null = null;
+    // If the user just set this address as default, clear others. A refusal
+    // here leaves two defaults, so it is kept as the reported error unless the
+    // write below fails for a worse reason.
+    if (addr.is_default) {
+      const { error: clearError } = await supabase
+        .from("addresses")
+        .update({ is_default: false })
+        .eq("user_id", addr.user_id)
+        .neq("id", result.id || "00000000-0000-0000-0000-000000000000");
+      if (clearError) syncError = clearError.message;
     }
+    // A device-generated id (`addr-…`) is not a uuid: it can only be an
+    // insert, and the server's uuid is then adopted back by the next read.
+    const isUuid = UUID_RE.test(result.id || "");
+    const { error } = isUuid
+      ? await supabase.from("addresses").update(row).eq("id", result.id).select().single()
+      : await supabase.from("addresses").insert(row).select().single();
+    if (error) syncError = error.message;
+    if (syncError) return { ok: false, error: syncError };
+    return { ok: true };
   } catch (e: any) {
     console.warn("[db]", "saveAddress remote sync:", e?.message);
+    return { ok: false, error: e?.message || "Could not sync the address." };
   }
-  return result;
 }
 
-export async function deleteAddress(id: string, userId: string): Promise<void> {
+/**
+ * Delete an address.
+ *
+ * Mirrors deleteSavedPaymentMethod(): the local row is dropped either way, and
+ * the caller is told when the server row survived. Swallowing that error (the
+ * old console.warn) is what made a deleted address REAPPEAR on the next good
+ * read while the screen had reported it gone.
+ */
+export async function deleteAddress(
+  id: string,
+  userId: string
+): Promise<{ ok: boolean; error?: string }> {
   const all = await getAddresses(userId);
   await safeSet(addressesKey(userId), JSON.stringify(all.filter((a) => a.id !== id)));
+  // A device-generated `addr-…` row has nothing to delete remotely: it is gone
+  // for good, so this is a success and not a failure to report.
+  if (!UUID_RE.test(id)) return { ok: true };
   try {
     if (await isBackendOnline()) {
       const { error } = await supabase.from("addresses").delete().eq("id", id);
-      if (error) console.warn("[db]", "deleteAddress remote sync:", error.message);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true };
     }
   } catch (e: any) {
     console.warn("[db]", "deleteAddress remote sync:", e?.message);
+    return { ok: false, error: e?.message || "Could not delete the address." };
   }
+  return { ok: false, error: ADDRESS_OFFLINE_DELETE };
 }
 
 // =====================================================================
@@ -1209,7 +1433,13 @@ export async function getPaymentsByUser(userId: string): Promise<PaymentRecord[]
         .from("orders")
         .select("id, reference, total_usd, payment_status, shipping_method, created_at")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        // Bounded on purpose. This paid the whole `orders` table for a customer
+        // into one array on the payment-methods screen, so the screen got
+        // strictly slower with every order ever placed — the same cap the order
+        // list already uses (getOrdersByUser), newest-first so what is cut is
+        // the oldest history.
+        .limit(ORDER_QUERY_CAP);
       if (!error && data) {
         return data.map((o: any) => ({
           id: o.id,
@@ -1221,7 +1451,7 @@ export async function getPaymentsByUser(userId: string): Promise<PaymentRecord[]
         }));
       }
     }
-  } catch {}
+  } catch (e) { logDbError("getPaymentsByUser", e); }
   return [];
 }
 
@@ -1234,7 +1464,16 @@ export async function getFavorites(userId: string): Promise<Product[]> {
       const { data, error } = await supabase
         .from("favorites")
         .select("*, source_products(*)")
-        .eq("user_id", userId);
+        .eq("user_id", userId)
+        // The embed is a FULL product row per favorite (titles, descriptions,
+        // images, variants, attributes), and this read had no cap at all: the
+        // wishlist screen's payload grew with every heart the customer tapped,
+        // over the wire and through JSON.parse on the JS thread.
+        // No `.order()` here on purpose — `favorites` is written as
+        // {user_id, product_id} only (lib/supabase-adapter.ts adaptFavorite) and
+        // the base table was never committed, so ordering by a column that may
+        // not exist would fail the whole read and show an empty wishlist.
+        .limit(FAVORITES_QUERY_CAP);
       if (!error && data) {
         // Per-row guard: one favorite pointing at a deleted product (an
         // orphan row whose source_products embed is null) used to throw in
@@ -1256,8 +1495,58 @@ export async function getFavorites(userId: string): Promise<Product[]> {
   return [];
 }
 
-export async function toggleFavorite(userId: string, productId: string): Promise<boolean> {
+/**
+ * How many items the customer has saved — as a count, not as rows.
+ *
+ * The account tab needed one number and was receiving up to FAVORITES_QUERY_CAP
+ * favourite rows, each carrying a FULL `source_products` embed, only to call
+ * `.length` on them in JS. That was the heaviest read on a screen customers open
+ * on the way to something else. `head: true` asks PostgREST for the count alone:
+ * no row payload, no JSON.parse on the JS thread.
+ *
+ * `null` means "could not read it" and is deliberately not folded into `0`, so
+ * the badge can't claim a customer has no saved items because of a network blip.
+ */
+export async function getFavoritesCount(userId: string): Promise<number | null> {
   try {
+    if (await isBackendOnline()) {
+      const { count, error } = await supabase
+        .from("favorites")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId);
+      if (!error) return count ?? 0;
+      console.warn("[db]", "getFavoritesCount:", error.message);
+    }
+  } catch (e) {
+    logDbError("getFavoritesCount", e, { userId });
+  }
+  return null;
+}
+
+/**
+ * Is this one product saved? Replaces the product screen's habit of loading the
+ * entire wishlist (with every product row) to answer a yes/no question, which it
+ * did on every product open. Same lookup shape `toggleFavorite` already uses.
+ */
+export async function isFavorite(userId: string, productId: string): Promise<boolean> {
+  try {
+    if (await isBackendOnline()) {
+      const { data, error } = await supabase
+        .from("favorites")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("product_id", productId)
+        .maybeSingle();
+      if (!error) return !!data;
+      console.warn("[db]", "isFavorite:", error.message);
+    }
+  } catch (e) {
+    logDbError("isFavorite", e, { userId, productId });
+  }
+  return false;
+}
+
+export async function toggleFavorite(userId: string, productId: string): Promise<boolean> {  try {
     if (await isBackendOnline()) {
       const { data, error: findError } = await supabase
         .from("favorites")
@@ -1379,7 +1668,7 @@ export async function getUnreadNotificationCount(userId: string): Promise<number
         return count;
       }
     }
-  } catch {}
+  } catch (e) { logDbError("getUnreadNotificationCount", e); }
   return 0;
 }
 
@@ -1403,7 +1692,7 @@ async function readNotificationCache(): Promise<Record<string, AppNotification[]
   if (raw) {
     try {
       return JSON.parse(raw);
-    } catch {}
+    } catch (e) { logDbError("readNotificationCache", e); }
   }
   return {};
 }
@@ -1432,7 +1721,7 @@ export async function getNotifications(
         return rows;
       }
     }
-  } catch {}
+  } catch (e) { logDbError("getNotifications", e); }
   const cache = await readNotificationCache();
   return (cache[userId] || []).slice(0, limit);
 }
@@ -1484,7 +1773,7 @@ async function readPaymentMethodsCache(): Promise<Record<string, SavedPaymentMet
   if (raw) {
     try {
       return JSON.parse(raw);
-    } catch {}
+    } catch (e) { logDbError("readPaymentMethodsCache", e); }
   }
   return {};
 }
@@ -1514,7 +1803,7 @@ export async function getSavedPaymentMethods(
         return rows;
       }
     }
-  } catch {}
+  } catch (e) { logDbError("getSavedPaymentMethods", e); }
   const cache = await readPaymentMethodsCache();
   return cache[profileId] || [];
 }

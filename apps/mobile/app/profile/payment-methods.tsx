@@ -70,25 +70,25 @@ export default function PaymentMethodsScreen() {
   useEffect(() => {
     (async () => {
       if (!user?.id) { setLoading(false); return; }
-      try {
-        const list = await getPaymentsByUser(user.id);
-        setPayments(list);
-      } catch (e) {
-        // Serve what we have, but say what broke.
-        console.warn("[payment-methods] payment history load failed", e);
-      }
-      try {
-        const stored = await AsyncStorage.getItem(PREF_KEY);
-        if (stored) setSelected(stored);
+      // Three independent reads. Awaited in series the spinner runs for the
+      // sum of all three; issued together it costs the slowest one. allSettled
+      // so one broken read cannot blank the other two.
+      const [history, pref, methods] = await Promise.allSettled([
+        getPaymentsByUser(user.id),
+        AsyncStorage.getItem(PREF_KEY),
         // Resilient read in db/ — cached methods when the backend is down.
-        const rows = await getSavedPaymentMethods(user.id);
-        setSaved(rows);
-      } catch (e) {
-        console.warn("[payment-methods] saved methods load failed", e);
-      } finally {
-        // Loading clears whether or not either read succeeded.
-        setLoading(false);
+        getSavedPaymentMethods(user.id),
+      ]);
+      if (history.status === "fulfilled") setPayments(history.value);
+      else console.warn("[payment-methods] payment history load failed", history.reason);
+      if (pref.status === "fulfilled") {
+        if (pref.value) setSelected(pref.value);
+      } else {
+        console.warn("[payment-methods] preferred method read failed", pref.reason);
       }
+      if (methods.status === "fulfilled") setSaved(methods.value);
+      else console.warn("[payment-methods] saved methods load failed", methods.reason);
+      setLoading(false);
     })();
   }, [user?.id]);
 
@@ -97,7 +97,9 @@ export default function PaymentMethodsScreen() {
     setSelected(id);
     try {
       await AsyncStorage.setItem(PREF_KEY, id);
-    } catch {}
+    } catch (e) {
+      console.warn("[payment-methods] default method not persisted", e);
+    }
   };
 
   const openAdd = (methodId: string) => {

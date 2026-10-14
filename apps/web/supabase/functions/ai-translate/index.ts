@@ -19,7 +19,7 @@
 // miss rather than serving the wrong translation.
 
 import { corsHeaders } from "../_shared/cors.ts";
-import { requireRole, unauthorized } from "../_shared/auth.ts";
+import { deny, roleGate } from "../_shared/auth.ts";
 import { loadAiProviderForTask } from "../_shared/ai-provider.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -78,8 +78,12 @@ export async function handler(req: Request) {
   if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
 
   try {
-    const caller = await requireRole(req, ANY_SIGNED_IN_ROLE);
-    if (!caller) return unauthorized("authentication_required");
+    const gate = await roleGate(req, ANY_SIGNED_IN_ROLE);
+    const caller = gate.caller;
+    // A blip reading auth/profile now answers 503 (retryable) instead of 401, so
+    // the app keeps its session and the text gets retried rather than staying
+    // Chinese with an "authentication_required" nobody can act on.
+    if (!caller) return deny(gate, "ai-translate");
     // Per-user cost brake (40 req/min per cold isolate) — see rateLimited() note.
     if (rateLimited(caller.userId)) {
       return json({ ok: false, error: "rate_limited", max_per_minute: MAX_REQUESTS_PER_MINUTE_PER_USER }, 429);

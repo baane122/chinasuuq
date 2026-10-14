@@ -26,7 +26,7 @@ import { Image } from "expo-image";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/auth";
-import { isBackendOnline, getOrders, getFavorites } from "@/db/index";
+import { isBackendOnline, getOrders, getFavoritesCount } from "@/db/index";
 import { StaffEntryBanner } from "@/components/staff/StaffEntryBanner";
 
 const ACCOUNT_IMG = require("../../assets/screens/account_hero.png");
@@ -50,14 +50,17 @@ export default function AccountScreen() {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [checkingBackend, setCheckingBackend] = useState(true);
   const [orderCount, setOrderCount] = useState(0);
-  const [favoritesCount, setFavoritesCount] = useState(0);
+  // null = the count could not be read, which the row shows as "—" rather than
+  // as "0 saved" (the customer would conclude their wishlist was wiped).
+  const [favoritesCount, setFavoritesCount] = useState<number | null>(0);
 
   useEffect(() => {
     (async () => {
       try {
         const online = await isBackendOnline();
         setBackendOnline(online);
-      } catch {
+      } catch (e) {
+        console.warn("[account] backend check failed", e);
         setBackendOnline(false);
       } finally {
         setCheckingBackend(false);
@@ -74,18 +77,26 @@ export default function AccountScreen() {
         if (!user?.id) { setOrderCount(0); return; }
         const orders = await getOrders();
         setOrderCount(orders?.length ?? 0);
-      } catch {}
+      } catch (e) {
+        // The badge is decorative; a failure must not blank the row silently
+        // without a trace for support to find.
+        console.warn("[account] order count failed", e);
+        setOrderCount(0);
+      }
     })();
   }, [user?.id]);
 
   useEffect(() => {
     (async () => {
       try {
-        if (user?.id) {
-          const favs = await getFavorites(user.id);
-          setFavoritesCount(favs?.length ?? 0);
-        }
-      } catch {}
+        if (!user?.id) { setFavoritesCount(0); return; }
+        // Counted server-side. This used to download the whole wishlist — every
+        // saved row with its full product embed — to read `.length`.
+        setFavoritesCount(await getFavoritesCount(user.id));
+      } catch (e) {
+        console.warn("[account] favorites count failed", e);
+        setFavoritesCount(null);
+      }
     })();
   }, [user?.id]);
 
@@ -299,7 +310,7 @@ export default function AccountScreen() {
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statItem}>
-                <Text style={styles.statValue}>{favoritesCount}</Text>
+                <Text style={styles.statValue}>{favoritesCount ?? "—"}</Text>
                 <Text style={styles.statLabel}>{locale === "en" ? "Saved" : "Kaydka"}</Text>
               </View>
             </View>

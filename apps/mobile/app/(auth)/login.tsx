@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, Link } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuthStore } from "@/store/auth";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import * as Haptics from "expo-haptics";
@@ -20,6 +21,8 @@ import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Image } from "expo-image";
 
 const LOGO = require("../../assets/images/logo.jpg");
+
+const EMAIL_KEY = "chinasuuq-login-email";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -33,8 +36,14 @@ export default function LoginScreen() {
 
   // Load saved email
   useEffect(() => {
-    const saved = localStorage.getItem("chinasuuq-login-email");
-    if (saved) setEmail(saved);
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(EMAIL_KEY);
+        if (saved) setEmail(saved);
+      } catch (e) {
+        console.warn("[login] saved email unreadable", e);
+      }
+    })();
   }, []);
 
   const handleLogin = useCallback(async () => {
@@ -65,7 +74,9 @@ export default function LoginScreen() {
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         // Remember email for next time
-        try { localStorage.setItem("chinasuuq-login-email", email.trim()); } catch {}
+        try { await AsyncStorage.setItem(EMAIL_KEY, email.trim()); } catch (e) {
+          console.warn("[login] could not remember email", e);
+        }
       }
     } catch (e: any) {
       setErrorMsg(platformText("Connection error. Please try again.", "Khalad xiriir. Fadlan isku day mar kale."));
