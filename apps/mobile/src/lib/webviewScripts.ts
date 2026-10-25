@@ -3,16 +3,21 @@ import { RISK_INSIDE_FN } from "./webviewScripts.risk";
 // JavaScript injection scripts for the marketplace WebView.
 // These run INSIDE the third-party Chinese marketplace page.
 //
-// TRANSLATION: the old self-contained Google translator (TRANSLATE_SCRIPT,
-// translate.googleapis.com + api.mymemory.translated.net) has been REMOVED.
-// Both endpoints are blocked/slow in China, and the script self-installed a
+// TRANSLATION: no injected script performs any network request. The old
+// self-contained Google translator (TRANSLATE_SCRIPT, which fetched
+// translate.googleapis.com + api.mymemory.translated.net from inside the page)
+// was deleted in d75318c, and what made it slow was its architecture — a
 // permanent 600ms interval + MutationObserver + drain loop whose hanging 5s
-// fetches are what made every page crawl. Translation now runs exclusively
-// through the AI path (webviewScripts.ai.ts): the page posts TRIMMED text
-// batches to RN, the app's ai-translate edge function answers, and the page
-// itself applies them via window.__csApplyTranslations. Originals are kept
-// on parent elements as data-cs-orig (with data-cs-tr="1") so language
-// switches and "show original" can undo in place.
+// fetches stalled every page — not the endpoint.
+//
+// Translation now runs exclusively through the AI path (webviewScripts.ai.ts):
+// the page posts TRIMMED text batches to RN, the APP translates them — via
+// src/api/translate.ts, which on the owner's decision resolves through Google's
+// free endpoint instead of the paid ai-translate edge function, batched,
+// time-boxed and circuit-broken — and the page itself applies the answers via
+// window.__csApplyTranslations. Originals are kept on parent elements as
+// data-cs-orig (with data-cs-tr="1") so language switches and "show original"
+// can undo in place.
 
 // ---------------------------------------------------------------------------
 // 1. SMART PRODUCT CAPTURE — best-effort scraper for title / price / image / url

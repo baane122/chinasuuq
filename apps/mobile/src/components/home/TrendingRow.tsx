@@ -13,14 +13,14 @@ import {
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { Plus, Package, ShoppingCart } from "lucide-react-native";
+import { Plus, Package, ShoppingCart, Sparkles } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useCartStore } from "@/store/cart";
 import { describeMoq } from "@/lib/moqIngest";
 import { getMOQText } from "@/lib/shipping";
 import { formatCNY, formatUSD } from "@/lib/utils";
-import { recordProductEvent } from "@/api/productEvents";
+import { trackById } from "@/api/browseEvents";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import type { TrendingItem } from "@/api/trending";
 
@@ -69,13 +69,10 @@ export function TrendingRow({ items, active = true, stale = false }: TrendingRow
         const item = items[i];
         if (!item || seenRef.current.has(item.productId)) continue;
         seenRef.current.add(item.productId);
-        // Fire and forget. recordProductEvent catches its own failures and the
-        // RPC throttles a repeat within 60s, so this can neither block nor throw.
-        void recordProductEvent({
-          productId: item.productId,
-          eventType: "view",
-          marketplaceKey: item.marketplace,
-        });
+        // Fire and forget. trackById wraps recordProductEvent, which catches
+        // its own failures, and the RPC throttles a repeat within 60s — so
+        // this can neither block nor throw.
+        trackById(item.productId, "view", item.marketplace);
       }
     },
     [items]
@@ -132,11 +129,7 @@ export function TrendingRow({ items, active = true, stale = false }: TrendingRow
       }
       const qty = item.quantity;
       addItem(item.product, qty);
-      void recordProductEvent({
-        productId: item.productId,
-        eventType: "add_to_cart",
-        marketplaceKey: item.marketplace,
-      });
+      trackById(item.productId, "add_to_cart", item.marketplace);
       const added =
         locale === "so"
           ? `Waxaa lagu daray ${qty} xabbadood`
@@ -251,9 +244,29 @@ const TrendingCard = React.memo(
         <View style={styles.marketBadge}>
           <Text style={styles.marketBadgeText}>{item.marketplace}</Text>
         </View>
-        <View style={styles.rankBadge}>
-          <Text style={styles.rankBadgeText}>#{rank}</Text>
-        </View>
+        {/* The badge states HOW this card earned its slot. A "#3" on a staff pick
+            would claim a popularity ranking nobody measured, and a pick hidden
+            among numbered cards is indistinguishable from organic demand. */}
+        {item.source === "pinned" ? (
+          <View style={styles.pickBadge}>
+            <Sparkles size={9} color={COLORS.primary} strokeWidth={2.4} />
+            <Text style={styles.pickBadgeText}>
+              {locale === "so" ? "La soo xulay" : "Our pick"}
+            </Text>
+          </View>
+        ) : item.source === "bestseller" ? (
+          <View style={styles.pickBadge}>
+            <Text style={styles.pickBadgeText}>
+              {locale === "so"
+                ? `${item.salesCount ?? 0} la iibiyay`
+                : `${item.salesCount ?? 0} sold`}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.rankBadge}>
+            <Text style={styles.rankBadgeText}>#{rank}</Text>
+          </View>
+        )}
       </View>
 
       <Text style={styles.title} numberOfLines={2}>
@@ -395,6 +408,24 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   rankBadgeText: {
+    fontSize: 10,
+    fontFamily: FONTS.bold,
+    color: COLORS.primary,
+  },
+  pickBadge: {
+    position: "absolute",
+    top: SPACING.sm,
+    right: SPACING.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    maxWidth: CARD_W - SPACING.sm * 4,
+    paddingHorizontal: SPACING.xs,
+    paddingVertical: 3,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.white,
+  },
+  pickBadgeText: {
     fontSize: 10,
     fontFamily: FONTS.bold,
     color: COLORS.primary,

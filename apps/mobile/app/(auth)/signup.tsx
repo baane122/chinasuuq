@@ -1,497 +1,419 @@
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
-  ActivityIndicator,
-  ScrollView,
-} from "react-native";
-import { useState, useCallback, useRef } from "react";
-import { useRouter, Link } from "expo-router";
-import { useAuthStore } from "@/store/auth";
-import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Link, useRouter } from "expo-router";
+import { CheckCircle2, Lock, Mail, Phone, User } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
-import { Image } from "expo-image";
+import { COLORS, FONTS, RADIUS, SPACING } from "@/lib/theme";
+import { useI18n } from "@/lib/i18n";
+import { readAuthContract, useAuthContract } from "@/components/auth/authContract";
+import {
+  AuthErrorBanner,
+  AuthHeading,
+  AuthScreen,
+  AuthTrustFooter,
+} from "@/components/auth/AuthScreen";
+import { AuthField } from "@/components/auth/AuthField";
+import { AuthSubmitButton } from "@/components/auth/AuthSubmitButton";
+import {
+  normalizeSomaliPhone,
+  passwordStrength,
+  type PasswordLevel,
+} from "@/components/auth/passwordStrength";
 
-const LOGO = require("../../assets/images/logo.jpg");
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Password strength indicator
-function passwordStrength(pw: string): { score: number; label: string; color: string } {
-  let score = 0;
-  if (pw.length >= 6) score++;
-  if (pw.length >= 10) score++;
-  if (/[A-Z]/.test(pw)) score++;
-  if (/[0-9]/.test(pw)) score++;
-  if (/[^A-Za-z0-9]/.test(pw)) score++;
-  if (score <= 1) return { score, label: "Weak", color: "#EF4444" };
-  if (score <= 2) return { score, label: "Fair", color: "#F59E0B" };
-  if (score <= 3) return { score, label: "Good", color: "#3B82F6" };
-  return { score, label: "Strong", color: "#10B981" };
-}
+type FieldKey = "name" | "email" | "phone" | "password" | "confirm";
 
 export default function SignupScreen() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [touched, setTouched] = useState<Record<FieldKey, boolean>>({
+    name: false,
+    email: false,
+    phone: false,
+    password: false,
+    confirm: false,
+  });
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const { signUp, error, clearError } = useAuthStore();
+
+  const { signUp, clearError } = useAuthContract();
   const router = useRouter();
-  const passwordInputRef = useRef<TextInput>(null);
-  const confirmInputRef = useRef<TextInput>(null);
+  const emailRef = useRef<TextInput>(null);
+  const phoneRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmRef = useRef<TextInput>(null);
+  const { locale } = useI18n();
+
+  const t = useCallback(
+    (en: string, so: string) => (locale === "so" ? so : en),
+    [locale]
+  );
+
+  // Single error source: render only this screen's per-attempt message;
+  // stale store errors are cleared on mount and before every submit.
+  useEffect(() => {
+    clearError();
+  }, [clearError]);
+
+  const touch = useCallback((key: FieldKey) => {
+    setTouched((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+  }, []);
+
+  // Per-field inline validation (computed on blur / submit via `touched`).
+  const errors = useMemo(() => {
+    const normalizedPhone = normalizeSomaliPhone(phone);
+    return {
+      name:
+        name.trim().length === 0
+          ? t("Enter your full name", "Geli magacaaga oo dhan")
+          : name.trim().length < 2
+            ? t("Name is too short", "Magacu waa gaaban yahay")
+            : null,
+      email:
+        email.trim().length === 0
+          ? t("Enter your email address", "Geli cinwaanka iimaylkaaga")
+          : !EMAIL_RE.test(email.trim())
+            ? t("That email doesn't look right", "Iimaylkaasi sax ma aha")
+            : null,
+      phone:
+        phone.trim().length > 0 && !normalizedPhone
+          ? t(
+              "Use a Somali number, e.g. 0612345678 or +252…",
+              "Isticmaal lambar Soomaaliyeed, tusaale 0612345678 ama +252…"
+            )
+          : null,
+      password:
+        password.length === 0
+          ? t("Choose a password", "Dooro code-xufis")
+          : password.length < 6
+            ? t("Password must be at least 6 characters", "Code-xufis waa inuu noqdaa ugu yaraan 6 xaraf")
+            : null,
+      confirm:
+        confirmPassword.length === 0
+          ? t("Re-enter your password", "Dib geli code-xufiskaaga")
+          : confirmPassword !== password
+            ? t("Passwords do not match", "Code-xufisyadu isku ma aha")
+            : null,
+    };
+  }, [name, email, phone, password, confirmPassword, t]);
 
   const strength = passwordStrength(password);
+  const strengthLabel = {
+    weak: t("Weak", "Taban"),
+    fair: t("Fair", "Dhexdhexaad"),
+    good: t("Good", "Fiican"),
+    strong: t("Strong", "Xoog badan"),
+  } satisfies Record<PasswordLevel, string>;
+
+  const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
 
   const handleSignup = useCallback(async () => {
+    if (loading) return;
     setErrorMsg(null);
     clearError();
+    setTouched({ name: true, email: true, phone: true, password: true, confirm: true });
 
-    if (!name.trim() || !email.trim() || !password.trim() || !confirmPassword.trim()) {
-      Alert.alert(
-        platformText("Missing fields", "Buuxi dhammaan"),
-        platformText("Please fill in all fields.", "Fadlan buuxi dhammaan go'aanka.")
-      );
+    if (errors.name || errors.email || errors.phone || errors.password || errors.confirm) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
-    if (password.length < 6) {
-      Alert.alert(
-        platformText("Weak password", "Code-xufis dabacsan"),
-        platformText("Password must be at least 6 characters.", "Code-xufis waa inuu noqdaa ugu yaraan 6 xaraf.")
-      );
-      return;
-    }
-    if (password !== confirmPassword) {
-      Alert.alert(
-        platformText("Passwords don't match", "Code-xufisyadu waa isku mid"),
-        platformText("Passwords do not match. Please try again.", "Code-xufisyadu isku ma aha. Fadlan isku day mar kale.")
-      );
-      return;
-    }
+
+    const normalizedPhone = normalizeSomaliPhone(phone);
+
     setLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     try {
-      const result = await signUp(email.trim(), password, name.trim());
+      const result = await signUp(
+        email.trim(),
+        password,
+        name.trim(),
+        normalizedPhone ?? undefined
+      );
       if (result.error) {
         const msg = result.error.toLowerCase();
         if (msg.includes("email") || msg.includes("already")) {
-          setErrorMsg(platformText("This email is already registered. Try signing in instead.", "Email-kan waa la qoray. Fadlan isku day gal."));
+          setErrorMsg(
+            t("This email is already registered. Try signing in instead.", "Email-kan waa la qoray. Fadlan isku day gal.")
+          );
         } else if (msg.includes("network") || msg.includes("fetch")) {
-          setErrorMsg(platformText("Network error. Please check your connection.", "Khalad shabaakad. Fadlan hubi isku xirka."));
+          setErrorMsg(
+            t("Network error. Please check your connection.", "Khalad shabaakad. Fadlan hubi isku xirka.")
+          );
         } else {
-          setErrorMsg(platformText("Sign up failed. Please try again.", "Diwaangelin wax khasaare ah. Fadlan isku day mar kale."));
+          setErrorMsg(
+            t("Sign up failed. Please try again.", "Diwaangelintii waa lagaga guuldareystay. Fadlan isku day mar kale.")
+          );
         }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } else {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert(
-          platformText("Welcome! 🎉", "Ku soo dhawoobo! 🎉"),
-          platformText(
-            "Your account has been created successfully.\n\nYou can now browse products, add to cart, and checkout.",
-            "Xisaabtaada waa la abuuray.\n\nHadda waxaad yaaban kartaa alaabta, cart ku dar, iyo checkout."
-          ),
-          [{ text: platformText("Start Shopping", "Bilow Iibsashada"), onPress: () => router.replace("/(tabs)/home") }]
-        );
+        return;
       }
-    } catch (e: any) {
-      setErrorMsg(platformText("Connection error. Please try again.", "Khalad xiriir. Fadlan isku day mar kale."));
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Email verification may be ON or OFF server-side — handle both:
+      // if the store reports `requiresVerification`, go to the verify screen;
+      // if it holds a live session, go straight into the app. Read the fresh
+      // snapshot because the hook value in this closure predates the await.
+      const hasLiveSession = !!readAuthContract().session;
+      if (result.requiresVerification || !hasLiveSession) {
+        router.replace({
+          pathname: "/(auth)/verify-email",
+          params: { email: email.trim() },
+        });
+      } else {
+        router.replace("/(tabs)/home");
+      }
+    } catch {
+      setErrorMsg(
+        t("Connection error. Please try again.", "Khalad xiriir. Fadlan isku day mar kale.")
+      );
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
     }
-  }, [name, email, password, confirmPassword, signUp, clearError]);
-
-  const platformText = (en: string, so: string) => en;
+  }, [clearError, email, errors, loading, name, password, phone, router, signUp, t]);
 
   return (
-    <ErrorBoundary>
-    <SafeAreaView style={styles.outerContainer}>
-      {/* Decorative background */}
-      <View style={styles.bgOrb1} />
-      <View style={styles.bgOrb2} />
+    <AuthScreen
+      tagline={t("Shop from China, delivered to Somalia", "Ka soo iibso Shiinaha, loo keeno Soomaaliya")}
+      footer={<AuthTrustFooter text={t("Your data is secure and encrypted", "Xogtaada waa ammaan")} />}
+    >
+      <AuthHeading
+        title={t("Create Account", "Abuur Akoon")}
+        subtitle={t(
+          "Save your favourites and checkout faster next time.",
+          "Kaydi waxaad jeceshahay oo si degdeg ah u iibso mariga dambe."
+        )}
+      />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardView}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Brand Header */}
-          <View style={styles.brandSection}>
-            <Image source={LOGO} style={styles.authLogo} resizeMode="contain" />
-            <Text style={styles.brandName}>ChinaSuuq</Text>
-            <Text style={styles.brandTagline}>One account for shopping, tracking and support across Somalia</Text>
-          </View>
+      {errorMsg ? <AuthErrorBanner message={errorMsg} /> : null}
 
-          {/* Signup Card */}
-          <View style={styles.card}>
-            <Text style={styles.title}>Create Your Account</Text>
-            <Text style={styles.helper}>Save your favourite finds and get a smoother checkout next time.</Text>
+      <AuthField
+        label={t("Full name", "Magaca guud")}
+        value={name}
+        onChangeText={setName}
+        placeholder={t("Amina Hassan", "Aamina Xasan")}
+        icon={<User size={18} color={COLORS.textMuted} />}
+        error={touched.name ? errors.name : null}
+        autoCapitalize="words"
+        autoComplete="name"
+        textContentType="name"
+        returnKeyType="next"
+        editable={!loading}
+        onBlur={() => touch("name")}
+        onSubmitEditing={() => emailRef.current?.focus()}
+      />
 
-            {errorMsg ? (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{errorMsg}</Text>
-                <TouchableOpacity onPress={() => setErrorMsg(null)} style={styles.errorDismiss}>
-                  <Text style={styles.errorDismissText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ) : error ? (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{error}</Text>
-                <TouchableOpacity onPress={clearError} style={styles.errorDismiss}>
-                  <Text style={styles.errorDismissText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
+      <AuthField
+        label={t("Email address", "Cinwaanka iimaylka")}
+        value={email}
+        onChangeText={setEmail}
+        placeholder={t("you@example.com", "tusaale@example.com")}
+        icon={<Mail size={18} color={COLORS.textMuted} />}
+        error={touched.email ? errors.email : null}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
+        textContentType="emailAddress"
+        keyboardType="email-address"
+        returnKeyType="next"
+        editable={!loading}
+        inputRef={emailRef}
+        onBlur={() => touch("email")}
+        onSubmitEditing={() => phoneRef.current?.focus()}
+      />
 
-            {/* Full Name */}
-            <View style={styles.inputWrap}>
-              <Text style={styles.inputLabel}>Full Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Abdirahman Baane"
-                placeholderTextColor={COLORS.gray400}
-                value={name}
-                onChangeText={(v) => { setName(v); setErrorMsg(null); }}
-                autoCapitalize="words"
-                autoComplete="name"
-                returnKeyType="next"
-                onSubmitEditing={() => passwordInputRef.current?.focus()}
-              />
-            </View>
+      <AuthField
+        label={t("Phone (optional)", "Taleefan (ikhyaari)")}
+        value={phone}
+        onChangeText={setPhone}
+        placeholder={t("0612345678 or +252…", "0612345678 ama +252…")}
+        icon={<Phone size={18} color={COLORS.textMuted} />}
+        error={touched.phone ? errors.phone : null}
+        helper={t(
+          "Only for delivery updates on WhatsApp.",
+          "Waa kaliya wararka gaarsiinta WhatsApp-ka."
+        )}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="tel"
+        textContentType="telephoneNumber"
+        keyboardType="phone-pad"
+        returnKeyType="next"
+        editable={!loading}
+        inputRef={phoneRef}
+        onBlur={() => touch("phone")}
+        onSubmitEditing={() => passwordRef.current?.focus()}
+      />
 
-            {/* Email */}
-            <View style={styles.inputWrap}>
-              <Text style={styles.inputLabel}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="you@example.com"
-                placeholderTextColor={COLORS.gray400}
-                value={email}
-                onChangeText={(v) => { setEmail(v); setErrorMsg(null); }}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-                returnKeyType="next"
-                onSubmitEditing={() => passwordInputRef.current?.focus()}
-              />
-            </View>
+      <AuthField
+        label={t("Password", "Code-xufis")}
+        value={password}
+        onChangeText={setPassword}
+        placeholder={t("Min 6 characters", "Ugu yaraan 6 xaraf")}
+        icon={<Lock size={18} color={COLORS.textMuted} />}
+        error={touched.password ? errors.password : null}
+        secure
+        showLabel={t("Show password", "Muuji code-xufiska")}
+        hideLabel={t("Hide password", "Qari code-xufiska")}
+        labelTrailing={
+          password.length > 0 ? (
+            <Text style={[styles.strengthLabel, { color: strength.color }]}>
+              {strengthLabel[strength.level]}
+            </Text>
+          ) : null
+        }
+        autoComplete="new-password"
+        textContentType="newPassword"
+        returnKeyType="next"
+        editable={!loading}
+        inputRef={passwordRef}
+        onBlur={() => touch("password")}
+        onSubmitEditing={() => confirmRef.current?.focus()}
+        style={password.length > 0 ? { marginBottom: 0 } : undefined}
+      />
 
-            {/* Password */}
-            <View style={styles.inputWrap}>
-              <View style={styles.inputLabelRow}>
-                <Text style={styles.inputLabel}>Password</Text>
-                {password.length > 0 && (
-                  <Text style={[styles.strengthLabel, { color: strength.color }]}>
-                    {strength.label}
-                  </Text>
-                )}
-              </View>
-              <TextInput
-                ref={passwordInputRef}
-                style={styles.input}
-                placeholder="Min 6 characters"
-                placeholderTextColor={COLORS.gray400}
-                value={password}
-                onChangeText={(v) => { setPassword(v); setErrorMsg(null); }}
-                secureTextEntry
-                autoComplete="new-password"
-                returnKeyType="next"
-                onSubmitEditing={() => confirmInputRef.current?.focus()}
-              />
-              {/* Strength bar */}
-              {password.length > 0 && (
-                <View style={styles.strengthBar}>
-                  <View style={[styles.strengthFill, { width: `${(strength.score / 5) * 100}%`, backgroundColor: strength.color }]} />
-                </View>
-              )}
-            </View>
+      {password.length > 0 ? (
+        <View style={styles.strengthTrack} accessibilityLabel={t("Password strength", "Xooga code-xufiska")}>
+          {[0, 1, 2, 3].map((i) => (
+            <View
+              key={i}
+              style={[
+                styles.strengthSegment,
+                i < strength.segments && { backgroundColor: strength.color },
+              ]}
+            />
+          ))}
+        </View>
+      ) : null}
 
-            {/* Confirm Password */}
-            <View style={styles.inputWrap}>
-              <Text style={styles.inputLabel}>Confirm Password</Text>
-              <View style={styles.passwordWrap}>
-                <TextInput
-                  ref={confirmInputRef}
-                  style={styles.input}
-                  placeholder="Re-enter your password"
-                  placeholderTextColor={COLORS.gray400}
-                  value={confirmPassword}
-                  onChangeText={(v) => { setConfirmPassword(v); setErrorMsg(null); }}
-                  secureTextEntry
-                  autoComplete="new-password"
-                  returnKeyType="done"
-                  onSubmitEditing={handleSignup}
-                />
-              </View>
-              {confirmPassword.length > 0 && password !== confirmPassword && (
-                <Text style={styles.matchError}>Passwords do not match</Text>
-              )}
-              {confirmPassword.length > 0 && password === confirmPassword && (
-                <Text style={styles.matchOk}>✓ Passwords match</Text>
-              )}
-            </View>
-
-            {/* Sign Up Button */}
-            <TouchableOpacity
-              style={[styles.btn, loading && styles.btnDisabled]}
-              onPress={handleSignup}
-              disabled={loading}
-              activeOpacity={0.85}
+      <AuthField
+        label={t("Confirm password", "Xaqiiji code-xufiska")}
+        value={confirmPassword}
+        onChangeText={setConfirmPassword}
+        placeholder={t("Re-enter your password", "Dib geli code-xufiskaaga")}
+        icon={<Lock size={18} color={COLORS.textMuted} />}
+        error={touched.confirm ? errors.confirm : null}
+        secure
+        showLabel={t("Show password", "Muuji code-xufiska")}
+        hideLabel={t("Hide password", "Qari code-xufiska")}
+        trailing={
+          passwordsMatch ? (
+            <View
+              style={styles.matchBox}
+              accessibilityLabel={t("Passwords match", "Code-xufisyadu way is waafaqsan yihiin")}
             >
-              {loading ? (
-                <ActivityIndicator color={COLORS.white} />
-              ) : (
-                <Text style={styles.btnText}>Create Account</Text>
-              )}
-            </TouchableOpacity>
+              <CheckCircle2 size={18} color={COLORS.success} />
+            </View>
+          ) : null
+        }
+        autoComplete="new-password"
+        textContentType="newPassword"
+        returnKeyType="done"
+        editable={!loading}
+        inputRef={confirmRef}
+        onBlur={() => touch("confirm")}
+        onSubmitEditing={handleSignup}
+      />
 
-            {/* Sign In Link */}
-            <Link href="/(auth)/login" asChild>
-              <TouchableOpacity style={styles.link} activeOpacity={0.7}>
-                <Text style={styles.linkText}>
-                  Already have an account? {" "}
-                  <Text style={styles.linkHighlight}>Sign In</Text>
-                </Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
+      <AuthSubmitButton
+        label={t("Create Account", "Abuur Akoon")}
+        onPress={handleSignup}
+        loading={loading}
+      />
 
-          {/* Trust Footer */}
-          <View style={styles.trustFooter}>
-            <Text style={styles.trustText}>🔒 Your data is secure · 🌍 Trusted by 10,000+ shoppers</Text>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-    </ErrorBoundary>
+      <Text style={styles.termsText}>
+        {t("By creating an account you agree to our", "Marka aad akoon abuurto waxaad ogolaanaysaa")}{" "}
+        <Text
+          accessibilityRole="link"
+          onPress={() => router.push("/profile/terms")}
+          style={styles.termsLink}
+        >
+          {t("Terms", "Qodobada Adeegga")}
+        </Text>
+        {" " + t("and", "iyo") + " "}
+        <Text
+          accessibilityRole="link"
+          onPress={() => router.push("/profile/privacy")}
+          style={styles.termsLink}
+        >
+          {t("Privacy Policy", "Siyaasadda Khatarka")}
+        </Text>
+        .
+      </Text>
+
+      <View style={styles.loginRow}>
+        <Text style={styles.loginText}>
+          {t("Already have an account?", "Horay akoon ma leedahay?")}
+        </Text>
+        <Link href="/(auth)/login" asChild>
+          <TouchableOpacity
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+            accessibilityRole="link"
+            accessibilityLabel={t("Sign in", "Gal")}
+          >
+            <Text style={styles.loginLink}>{t("Sign in", "Gal")}</Text>
+          </TouchableOpacity>
+        </Link>
+      </View>
+    </AuthScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  outerContainer: {
-    flex: 1,
-    backgroundColor: COLORS.darkSurface,
-    overflow: "hidden",
-  },
-  bgOrb1: {
-    position: "absolute",
-    top: -60,
-    right: -60,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: "rgba(101, 163, 13, 0.12)",
-  },
-  bgOrb2: {
-    position: "absolute",
-    bottom: -40,
-    left: -40,
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: "rgba(255, 90, 10, 0.1)",
-  },
-  keyboardView: {
-    flex: 1,
-    paddingHorizontal: SPACING.xl,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingVertical: SPACING.xl,
-  },
-  brandSection: {
-    alignItems: "center",
-    marginBottom: SPACING.xl,
-  },
-  authLogo: {
-    width: 120,
-    height: 104,
-    borderRadius: RADIUS.xl,
-    marginBottom: SPACING.md,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  brandName: {
-    fontSize: 32,
-    fontFamily: FONTS.bold,
-    color: COLORS.white,
-    letterSpacing: 0.5,
-  },
-  brandTagline: {
-    fontSize: 13,
-    fontFamily: FONTS.medium,
-    color: "rgba(255,255,255,0.55)",
-    marginTop: 4,
-    textAlign: "center",
-    paddingHorizontal: SPACING.xl,
-  },
-  card: {
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.xxl,
-    padding: SPACING.xl,
-    width: "100%",
-    shadowColor: COLORS.black,
-    shadowOpacity: 0.25,
-    shadowRadius: 32,
-    shadowOffset: { width: 0, height: 16 },
-    elevation: 12,
-  },
-  title: {
-    fontSize: 26,
-    fontFamily: FONTS.bold,
-    color: COLORS.black,
-    marginBottom: 6,
-  },
-  helper: {
-    fontSize: 13,
-    fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
-    marginBottom: SPACING.lg,
-    lineHeight: 19,
-  },
-  inputWrap: {
-    marginBottom: SPACING.md,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontFamily: FONTS.semibold,
-    color: COLORS.gray600,
-    marginBottom: 6,
-  },
-  inputLabelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  input: {
-    width: "100%",
-    height: 52,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
-    paddingHorizontal: SPACING.lg,
-    fontSize: 15,
-    color: COLORS.black,
-    backgroundColor: COLORS.gray50,
-  },
-  passwordWrap: {
-    position: "relative",
-  },
   strengthLabel: {
     fontSize: 12,
     fontFamily: FONTS.semibold,
   },
-  strengthBar: {
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: COLORS.gray200,
-    marginTop: 6,
-    overflow: "hidden",
-  },
-  strengthFill: {
-    height: "100%",
-    borderRadius: 2,
-  },
-  matchError: {
-    fontSize: 12,
-    fontFamily: FONTS.medium,
-    color: "#EF4444",
-    marginTop: 4,
-  },
-  matchOk: {
-    fontSize: 12,
-    fontFamily: FONTS.medium,
-    color: "#10B981",
-    marginTop: 4,
-  },
-  btn: {
-    width: "100%",
-    height: 54,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: SPACING.md,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  btnDisabled: {
-    opacity: 0.6,
-  },
-  btnText: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontFamily: FONTS.bold,
-    letterSpacing: 0.3,
-  },
-  link: {
-    marginTop: SPACING.lg,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  linkText: {
-    fontSize: 14,
-    fontFamily: FONTS.medium,
-    color: COLORS.textSecondary,
-  },
-  linkHighlight: {
-    color: COLORS.primary,
-    fontFamily: FONTS.bold,
-  },
-  errorBanner: {
-    width: "100%",
+  strengthTrack: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#FEF2F2",
-    borderWidth: 1,
-    borderColor: COLORS.error,
-    borderRadius: RADIUS.md,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
+    gap: SPACING.xs,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.lg,
   },
-  errorText: {
-    color: COLORS.error,
-    fontSize: 13,
+  strengthSegment: {
     flex: 1,
-    paddingRight: SPACING.sm,
+    height: 4,
+    borderRadius: RADIUS.sm / 2,
+    backgroundColor: COLORS.gray200,
   },
-  errorDismiss: {
-    minHeight: 24,
-    justifyContent: "center",
+  matchBox: {
+    marginLeft: SPACING.sm,
+    flexShrink: 0,
   },
-  errorDismissText: {
-    color: COLORS.error,
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  trustFooter: {
-    marginTop: SPACING.xl,
-    alignItems: "center",
-  },
-  trustText: {
+  termsText: {
     fontSize: 12,
-    fontFamily: FONTS.medium,
-    color: "rgba(255,255,255,0.45)",
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    textAlign: "center",
+    lineHeight: 18,
+    marginTop: SPACING.xl,
+  },
+  termsLink: {
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
+  },
+  loginRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    minHeight: 44,
+    marginTop: SPACING.sm,
+  },
+  loginText: {
+    fontSize: 14,
+    fontFamily: FONTS.regular,
+    color: COLORS.gray500,
+  },
+  loginLink: {
+    fontSize: 14,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
+    marginLeft: SPACING.xs,
   },
 });

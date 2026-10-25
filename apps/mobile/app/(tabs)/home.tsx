@@ -6,19 +6,17 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
-  Image,
+  FlatList,
   Dimensions,
-  Animated,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
+import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Bell,
   Mic,
   Search as SearchIcon,
-  ChevronRight,
-  MessageCircle,
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -30,13 +28,15 @@ import { useI18n } from "@/lib/i18n";
 import { ProductCard } from "@/components/home/ProductCard";
 import { StaffEntryBanner } from "@/components/staff/StaffEntryBanner";
 import { CategoryChips } from "@/components/home/CategoryChips";
+import { useBrowseCategories } from "@/components/home/useBrowseCategories";
+import { categoryLabel, filterProductsByCategory } from "@/api/categories";
 import { WhatsAppCard } from "@/components/home/WhatsAppCard";
 import { TrendingRow, TrendingRowSkeleton } from "@/components/home/TrendingRow";
 import { ProductCardSkeleton } from "@/components/ui/SkeletonLoader";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { FloatingCartButton } from "@/components/cart/FloatingCartButton";
 import { EmptyState } from "@/components/EmptyState";
-import { getProducts, getUnreadNotificationCount } from "@/db";
+import { getProducts, getUnreadNotificationCount, isBackendOnline } from "@/db";
 import { getTrendingFeed, type TrendingItem, type TrendingStatus } from "@/api/trending";
 import { MARKETPLACES } from "@/lib/marketplaces";
 import type { Product } from "@/types";
@@ -46,7 +46,16 @@ const LOGO = require("../../assets/images/logo.jpg");
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
-// ─── Hero banner data with generated images ───
+/** Two ProductCards per virtualised row — the same chunked-row pattern the
+ *  search screen proved out, so a 200-product catalog mounts ~visible rows,
+ *  not 200 cells, inside one FlatList that keeps pull-to-refresh. */
+function chunkRows(products: Product[]): Product[][] {
+  const rows: Product[][] = [];
+  for (let i = 0; i < products.length; i += 2) rows.push(products.slice(i, i + 2));
+  return rows;
+}
+
+// ─── Hero banner data with generated images ─────────────────
 const HERO_BANNERS = [
   {
     id: "1",
@@ -114,7 +123,15 @@ function HeroBannerCarousel() {
               router.push("/(tabs)/markets");
             }}
           >
-            <Image source={b.image} style={styles.heroImg} resizeMode="cover" />
+            {/* expo-image, not RN Image: disk cache + transition, same as every
+                other photo surface in the app. */}
+            <Image
+              source={b.image}
+              style={styles.heroImg}
+              contentFit="cover"
+              transition={200}
+              cachePolicy="memory-disk"
+            />
             <LinearGradient
               colors={["transparent", "rgba(17,17,17,0.7)"]}
               style={styles.heroGradient}
@@ -137,7 +154,7 @@ function HeroBannerCarousel() {
   );
 }
 
-// ─── Home Tab ────────────────────────────────────────
+// ─── Home Tab ────────────────────────────────────────────────
 export default function HomeTab() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -151,6 +168,9 @@ export default function HomeTab() {
     initFromProfile(staffRole);
   }, [user?.role]);
   const { t, locale } = useI18n();
+  // Chip selection is a REAL category id now (uuid from `categories`, or
+  // `text:<key>` for the fallback vocabulary), no longer one of ten hardcoded
+  // strings that matched almost no product.
   const [selectedCategory, setSelectedCategory] = useState("all");
   // Real unread count — same source the tab badge polls in (tabs)/_layout.
   // Guests have no notifications, so they see nothing.
@@ -159,6 +179,9 @@ export default function HomeTab() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // An empty catalog from a device that could NOT reach the backend is a
+  // failure with a retry button, not "the shop has nothing".
+  const [catalogUnreachable, setCatalogUnreachable] = useState(false);
 
   useEffect(() => {
     if (!user?.id) { setNotifCount(0); return; }
@@ -169,9 +192,11 @@ export default function HomeTab() {
     return () => { cancelled = true; };
   }, [user?.id]);
 
-  // ── Trending this week — event-ranked, read through the offline-first layer ──
+  // ── The shelf: staff picks, then the live event ranking, then marketplace sales ──
   const [trendingItems, setTrendingItems] = useState<TrendingItem[]>([]);
   const [trendingStatus, setTrendingStatus] = useState<TrendingStatus>("unavailable");
+  // Where each card came from, so the heading can describe the shelf honestly.
+  const [trendingMix, setTrendingMix] = useState({ pinned: 0, behaviour: 0, bestseller: 0 });
   const [trendingLoading, setTrendingLoading] = useState(true);
   // Engagement only counts once the row is on screen (see TrendingRow).
   const [trendingOnScreen, setTrendingOnScreen] = useState(false);
@@ -183,6 +208,18 @@ export default function HomeTab() {
     try {
       const data = await getProducts(force);
       setProducts(data);
+      if (data.length === 0) {
+        // Distinguish "the catalog is empty" from "nothing answered".
+        let online = true;
+        try {
+          online = await isBackendOnline();
+        } catch {
+          online = false;
+        }
+        setCatalogUnreachable(!online);
+      } else {
+        setCatalogUnreachable(false);
+      }
     } catch (e) {
       console.warn("[home] products failed", e);
       setError(true);
@@ -196,6 +233,11 @@ export default function HomeTab() {
       const feed = await getTrendingFeed({ force });
       setTrendingItems(feed.items);
       setTrendingStatus(feed.status);
+      setTrendingMix({
+        pinned: feed.pinnedCount,
+        behaviour: feed.behaviourCount,
+        bestseller: feed.bestsellerCount,
+      });
     } catch (e) {
       console.warn("[home] trending feed failed", e);
       // A trending feed must never be why home failed to render.
@@ -246,54 +288,197 @@ export default function HomeTab() {
     }
   }, [trendingOnScreen]);
 
+  // Real categories: table rows with honest counts; falls back to the texts
+  // the cached catalog actually carries if the table read has nothing.
+  const browse = useBrowseCategories(products);
+
   // Memoized: the 200-item filter+sort must not re-run on every render
   // (refresh spinners, notif polling, trending state…) — only when the
   // inputs actually change.
   const catalogBySales = useMemo(
     () =>
-      products
-        .filter((p) => selectedCategory === "all" || p.category === selectedCategory)
+      filterProductsByCategory(products, browse.categories, selectedCategory)
         .slice()
         .sort((a, b) => b.sales_count - a.sales_count),
-    [products, selectedCategory]
+    [products, browse.categories, selectedCategory]
   );
 
-  // "showAll" means: the category filter emptied the slice but the catalog
-  // itself has products — so fall back to showing the whole catalog. The old
-  // render consumed this flag inverted: it showed "No products yet" when
-  // products existed and a blank grid when the catalog was truly empty.
-  const showAll = catalogBySales.length <= 0 && products.length > 0;
+  // Virtualised payload: rows of two cards, computed once per input change.
+  const gridRows = useMemo(() => chunkRows(catalogBySales), [catalogBySales]);
+
+  const selectedBrowseCat =
+    selectedCategory !== "all"
+      ? browse.categories.find((c) => c.id === selectedCategory) ?? null
+      : null;
 
   // Nothing to show and nothing honest to say → the section disappears rather
   // than leaving a broken spinner or an empty card.
   const showTrendingSection =
     trendingLoading || trendingItems.length > 0 || trendingStatus === "empty";
 
-  return (
-    <ErrorBoundary>
-      <View style={{ flex: 1 }}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={{ paddingTop: insets.top + SPACING.lg }}
-        showsVerticalScrollIndicator={false}
-        onScroll={onHomeScroll}
-        scrollEventThrottle={64}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={COLORS.primary}
-            colors={[COLORS.primary]}
-          />
-        }
-      >
+  /**
+   * What the shelf actually IS, in the customer's language. Calling a staff-picked
+   * list "Trending this week" would sell our own choice as demand, and the ledger
+   * is empty in production today, so the heading follows the mix the feed reported:
+   * behaviour present → trending; picks only → picked for you; marketplace sales
+   * only → popular on the Chinese marketplaces (which is where that number lives).
+   */
+  const trendingHeading = (() => {
+    const { pinned, behaviour, bestseller } = trendingMix;
+    const isSo = locale === "so";
+    if (behaviour > 0) {
+      return {
+        title: isSo ? "Alaabta ugu caansan toddobaadkan" : "Trending this week",
+        caption:
+          pinned > 0
+            ? isSo
+              ? `${pinned} aan soo xulnay · inta kalena waxa lagu darajeyay daawashada dhabta ah`
+              : `${pinned} picked by our team · the rest ranked by real views and carts`
+            : isSo
+              ? "Waxa lagu darajeyay daawashada iyo kartan dhabta ah"
+              : "Ranked by real views and carts this week",
+      };
+    }
+    if (pinned > 0) {
+      return {
+        title: isSo ? "Waxa kuu soo xulnay" : "Picked for you",
+        caption: isSo
+          ? "Kooxda ChinaSuuq ayaa soo xushay — maaha darajaada caan-nimada"
+          : "Chosen by the ChinaSuuq team — not a popularity ranking",
+      };
+    }
+    if (bestseller > 0) {
+      return {
+        title: isSo ? "Caan ka ah suuqyada Shiinaha" : "Popular on the Chinese marketplaces",
+        caption: isSo
+          ? "Tirada la iibiyay suuqyada Shiinaha, maaha ChinaSuuq"
+          : "Units sold on the Chinese marketplaces, not on ChinaSuuq",
+      };
+    }
+    return {
+      title: isSo ? "Alaabta ugu caansan toddobaadkan" : "Trending this week",
+      caption: "",
+    };
+  })();
+
+  /**
+   * The grid's own states, rendered as ListEmptyComponent so they sit INSIDE
+   * the virtualised list and pull-to-refresh keeps working over them:
+   *  loading → skeleton (never a spinner for a grid),
+   *  failed read → retry,
+   *  0-match category → "this shelf is empty" + browse-all (reads as 0, per
+   *  the count on its chip — NOT the old auto-fallback that silently ignored
+   *  the filter the customer just chose),
+   *  empty catalog → friendly empty + retry.
+   */
+  const renderGridEmpty = useCallback(() => {
+    if (loading) {
+      return (
+        <View style={styles.gridEmptyWrap}>
+          <View style={styles.skeletonRow}>
+            <ProductCardSkeleton />
+            <ProductCardSkeleton />
+          </View>
+          <View style={styles.skeletonRow}>
+            <ProductCardSkeleton />
+            <ProductCardSkeleton />
+          </View>
+        </View>
+      );
+    }
+    if (error || catalogUnreachable) {
+      return (
+        <View style={styles.sectionFallback}>
+          <Text style={styles.fallbackEmoji}>⚠️</Text>
+          <Text style={styles.fallbackTitle}>
+            {locale === "en" ? "Couldn't load the catalog" : "Kataloogga lama soo dejin karin"}
+          </Text>
+          <Text style={styles.fallbackSubtitle}>
+            {locale === "en"
+              ? "The store didn't answer — what you see below is saved data. Pull down or tap retry."
+              : "Dukanka kama uusan jawaabin — waxa aad aragto hoose waa xog la keydiyay. Hoos u jiid ama riig isku day mar kale."}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            activeOpacity={0.8}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              loadProducts(true);
+            }}
+          >
+            <Text style={styles.retryButtonText}>
+              {locale === "en" ? "Try again" : "Isku day mar kale"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    if (selectedBrowseCat && catalogBySales.length === 0) {
+      return (
+        <View style={styles.sectionFallback}>
+          <Text style={styles.fallbackEmoji}>🗂️</Text>
+          <Text style={styles.fallbackTitle}>
+            {locale === "en"
+              ? `Nothing in ${categoryLabel(selectedBrowseCat, locale)} yet`
+              : `Weli alaab ma jiro ${categoryLabel(selectedBrowseCat, locale)}`}
+          </Text>
+          <Text style={styles.fallbackSubtitle}>
+            {locale === "en"
+              ? "This shelf is empty (its chip shows 0). Browse everything else instead."
+              : "Safka waxba kuma jiro (chip-kiisu 0 ayuu muujinayaa). Eeg dhammaan alaabta."}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            activeOpacity={0.8}
+            onPress={() => {
+              void Haptics.selectionAsync();
+              setSelectedCategory("all");
+            }}
+          >
+            <Text style={styles.retryButtonText}>
+              {locale === "en" ? "Browse all products" : "Eeg alaabta oo dhan"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.sectionFallback}>
+        <Text style={styles.fallbackEmoji}>🛍️</Text>
+        <Text style={styles.fallbackTitle}>
+          {locale === "en" ? "No products yet" : "Weli alaab lama helin"}
+        </Text>
+        <Text style={styles.fallbackSubtitle}>
+          {locale === "en"
+            ? "New products will appear here once the catalog is loaded."
+            : "Alaabta cusub ayaa halkan ka muuqan doonta marka katalooggu shubo."}
+        </Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          activeOpacity={0.8}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            loadProducts(true);
+          }}
+        >
+          <Text style={styles.retryButtonText}>
+            {locale === "en" ? "Try again" : "Isku day mar kale"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }, [loading, error, catalogUnreachable, selectedBrowseCat, catalogBySales.length, locale, loadProducts]);
+
+  const renderHeader = useCallback(
+    () => (
+      <View>
         {/* Staff Entry Banner */}
         <StaffEntryBanner />
-        
+
         {/* ── Clean App Header ── */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <Image source={LOGO} style={styles.headerLogo} resizeMode="contain" />
+            <Image source={LOGO} style={styles.headerLogo} contentFit="contain" transition={120} />
             <View>
               <Text style={styles.greeting}>
                 {locale === "en" ? "Good day" : "Maalin wanaagsan"} 👋
@@ -347,9 +532,12 @@ export default function HomeTab() {
             }
           >
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>
-                {locale === "en" ? "Trending this week" : "Alaabta Trending ee toddobaadkan"}
-              </Text>
+              <View style={styles.sectionHeadingText}>
+                <Text style={styles.sectionTitle}>{trendingHeading.title}</Text>
+                {trendingHeading.caption !== "" && (
+                  <Text style={styles.sectionCaption}>{trendingHeading.caption}</Text>
+                )}
+              </View>
               <TouchableOpacity onPress={() => router.push("/search")}>
                 <Text style={styles.seeAll}>{t("home.seeAll")}</Text>
               </TouchableOpacity>
@@ -409,7 +597,7 @@ export default function HomeTab() {
                   });
                 }}
               >
-                <Image source={m.icon} style={styles.marketIconImg} resizeMode="contain" />
+                <Image source={m.icon} style={styles.marketIconImg} contentFit="contain" cachePolicy="disk" recyclingKey={m.id} />
                 <Text style={styles.marketName}>{m.name}</Text>
                 <Text style={styles.marketDesc} numberOfLines={1}>
                   {locale === "en" ? m.tagline_en : m.tagline_so}
@@ -419,12 +607,17 @@ export default function HomeTab() {
           </ScrollView>
         </View>
 
-        {/* ── Category filter chips ── */}
+        {/* ── Category filter chips — the REAL categories, with counts ── */}
         <View style={styles.section}>
-          <CategoryChips selected={selectedCategory} onSelect={setSelectedCategory} />
+          <CategoryChips
+            categories={browse.categories}
+            selected={selectedCategory}
+            onSelect={setSelectedCategory}
+            totalCount={products.length}
+          />
         </View>
 
-        {/* ── Product Grid ── */}
+        {/* ── Product Grid header (the grid itself is the list body) ── */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             {/* "Trending" belongs to the event-ranked row above; this grid is
@@ -435,7 +628,7 @@ export default function HomeTab() {
               </Text>
               <View style={styles.countPill}>
                 <Text style={styles.countPillText}>
-                  {showAll ? products.length : catalogBySales.length} items
+                  {loading ? "…" : `${catalogBySales.length} items`}
                 </Text>
               </View>
             </View>
@@ -443,79 +636,91 @@ export default function HomeTab() {
               <Text style={styles.seeAll}>{t("home.seeAll")}</Text>
             </TouchableOpacity>
           </View>
-
-          {loading ? (
-            <View style={styles.productGrid}>
-              {[0, 1, 2, 3].map((i) => (
-                <ProductCardSkeleton key={i} />
-              ))}
-            </View>
-          ) : error ? (
-            <View style={styles.sectionFallback}>
-              <Text style={styles.fallbackEmoji}>⚠️</Text>
-              <Text style={styles.fallbackTitle}>Something went wrong</Text>
-              <Text style={styles.fallbackSubtitle}>
-                We couldn't load products right now. Pull to refresh.
-              </Text>
-            </View>
-          ) : showAll ? (
-            // Category filter matched nothing — show the whole catalog rather
-            // than a dead end.
-            <View style={styles.productGrid}>
-              {products.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  onPress={() => router.push(`/product/${product.id}`)}
-                />
-              ))}
-            </View>
-          ) : catalogBySales.length === 0 ? (
-            // The live catalog is genuinely empty — say so with a friendly
-            // empty state and a retry, never a blank grid.
-            <View style={styles.sectionFallback}>
-              <Text style={styles.fallbackEmoji}>🛍️</Text>
-              <Text style={styles.fallbackTitle}>
-                {locale === "en" ? "No products yet" : "Weli alaab lama helin"}
-              </Text>
-              <Text style={styles.fallbackSubtitle}>
-                {locale === "en"
-                  ? "New products will appear here once the catalog is loaded."
-                  : "Alaabta cusub ayaa halkan ka muuqan doonta marka katalooggu shubo."}
-              </Text>
-              <TouchableOpacity
-                style={styles.retryButton}
-                activeOpacity={0.8}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  loadProducts(true);
-                }}
-              >
-                <Text style={styles.retryButtonText}>
-                  {locale === "en" ? "Try again" : "Isku day mar kale"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.productGrid}>
-              {catalogBySales.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  onPress={() => router.push(`/product/${product.id}`)}
-                />
-              ))}
-            </View>
-          )}
         </View>
+      </View>
+    ),
+    [
+      locale,
+      notifCount,
+      router,
+      t,
+      showTrendingSection,
+      trendingLoading,
+      trendingItems,
+      trendingStatus,
+      trendingOnScreen,
+      onTrendingLayout,
+      browse.categories,
+      selectedCategory,
+      products.length,
+      catalogBySales.length,
+      loading,
+    ]
+  );
 
-        {/* ── WhatsApp Card ── */}
-        <WhatsAppCard />
+  const renderItem = useCallback(
+    ({ item }: { item: Product[] }) => (
+      <View style={styles.gridRow}>
+        {item.map((product) => (
+          <ProductCard
+            key={product.id}
+            product={product}
+            onPress={() => router.push(`/product/${product.id}`)}
+          />
+        ))}
+        {/* Keeps an odd trailing card left-aligned exactly where the second
+            column would have started. */}
+        {item.length === 1 ? <View style={styles.gridOddSpacer} /> : null}
+      </View>
+    ),
+    [router]
+  );
 
-        {/* ── Bottom spacer ── */}
-        <View style={styles.bottomSpacer} />
-      </ScrollView>
-      <FloatingCartButton />
+  const keyExtractor = useCallback((row: Product[]) => row[0]?.id ?? "row", []);
+
+  return (
+    <ErrorBoundary>
+      <View style={{ flex: 1 }}>
+        {/*
+         * ONE FlatList: every long list is virtualised (a 200-item catalog
+         * mounts visible rows only) while pull-to-refresh, the trending
+         * on-screen detection and the section layout ride on it unchanged —
+         * the ScrollView alternative kept mounting all 200 cards eagerly.
+         */}
+        <FlatList
+          style={styles.container}
+          contentContainerStyle={{
+            paddingTop: insets.top + SPACING.lg,
+            paddingBottom: 100,
+          }}
+          showsVerticalScrollIndicator={false}
+          data={gridRows}
+          ListHeaderComponent={renderHeader}
+          ListEmptyComponent={renderGridEmpty}
+          ListFooterComponent={
+            <View style={styles.section}>
+              <WhatsAppCard />
+            </View>
+          }
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          onScroll={onHomeScroll}
+          scrollEventThrottle={64}
+          initialNumToRender={6}
+          maxToRenderPerBatch={6}
+          windowSize={7}
+          removeClippedSubviews
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={COLORS.primary}
+              colors={[COLORS.primary]}
+            />
+          }
+        />
+
+        <FloatingCartButton />
       </View>
     </ErrorBoundary>
   );
@@ -673,6 +878,17 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.semibold,
     color: COLORS.black,
   },
+  sectionHeadingText: {
+    flex: 1,
+    paddingRight: SPACING.sm,
+    gap: 2,
+  },
+  sectionCaption: {
+    fontSize: 11.5,
+    fontFamily: FONTS.regular,
+    color: COLORS.textMuted,
+    lineHeight: 15,
+  },
   seeAll: {
     fontSize: 13,
     fontFamily: FONTS.medium,
@@ -713,12 +929,20 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textAlign: "center",
   },
-  // Product grid
-  productGrid: {
+  // Product grid rows (virtualised: two ProductCards per row)
+  gridRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    paddingHorizontal: SPACING.lg,
     justifyContent: "space-between",
+    paddingHorizontal: SPACING.lg,
+  },
+  gridOddSpacer: { width: "48%" },
+  skeletonRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: SPACING.lg,
+  },
+  gridEmptyWrap: {
+    paddingTop: 0,
   },
   // Fallback states
   sectionFallback: {
@@ -755,8 +979,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: FONTS.semibold,
     color: COLORS.white,
-  },
-  bottomSpacer: {
-    height: 100,
   },
 });

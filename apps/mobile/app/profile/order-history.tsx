@@ -81,7 +81,7 @@ export default function OrderHistoryScreen() {
           <Image source={EMPTY_ORDERS_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
           <Text style={styles.emptyTitle}>No orders yet</Text>
           <Text style={styles.emptySub}>Your orders from China will appear here with live tracking.</Text>
-          <Pressable style={styles.shopBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/(tabs)" as any); }}>
+          <Pressable style={styles.shopBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.replace("/(tabs)/home"); }}>
             <Text style={styles.shopBtnText}>Start Shopping</Text>
           </Pressable>
         </View>

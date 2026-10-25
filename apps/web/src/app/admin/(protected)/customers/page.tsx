@@ -25,15 +25,17 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Users, X, MapPin, Save, MessageSquare, Package, DollarSign,
-  CalendarDays, Download, Filter, User as UserIcon, RotateCcw,
+  CalendarDays, Download, Filter, User as UserIcon, RotateCcw, Plus, Trash2, Pencil,
 } from "lucide-react";
-import { listCustomers } from "@/lib/admin/supabase-data";
+import { listCustomers, createCustomer, updateCustomer, deleteCustomer } from "@/lib/admin/supabase-data";
+import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/components/admin/Toast";
 import {
   PageHeader, StatCard, PageGrid, SectionCard, SearchInput, FilterChips,
-  TableShell, SkeletonTable, EMPTY_IMAGES,
+  TableShell, SkeletonTable, EMPTY_IMAGES, SidePanel, Field,
 } from "@/components/admin/ui";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { TableControls } from "@/components/admin/TableControls";
 import { useUrlFilters, useDebouncedFilterValue } from "@/components/admin/useUrlFilters";
 import { useTablePrefs } from "@/components/admin/useTablePrefs";
@@ -260,6 +262,105 @@ function CustomersPageContent() {
 
   const anyFilter = !!committedSearch || typeFilter !== "All" || !!cityFilter || !!dateFrom || !!dateTo;
 
+  /* ── Customer CRUD (SidePanel) ─────────────────────────────── */
+
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  interface CustomerForm {
+    full_name: string;
+    email: string;
+    phone: string;
+    city: string;
+    customer_type: "business" | "individual";
+    business_name: string;
+    tier: string;
+  }
+  const emptyForm: CustomerForm = {
+    full_name: "",
+    email: "",
+    phone: "",
+    city: "",
+    customer_type: "individual",
+    business_name: "",
+    tier: "",
+  };
+  const [form, setForm] = useState<CustomerForm>(emptyForm);
+
+  const openCreate = () => {
+    setEditingCustomer(null);
+    setForm(emptyForm);
+    setPanelOpen(true);
+  };
+
+  const openEdit = (c: any) => {
+    setEditingCustomer(c);
+    setForm({
+      full_name: c.full_name || "",
+      email: c.email || "",
+      phone: c.phone || "",
+      city: c.city || "",
+      customer_type: c.customer_type === "business" ? "business" : "individual",
+      business_name: c.business_name || "",
+      tier: c.tier || "",
+    });
+    setPanelOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.full_name.trim() && !form.email.trim()) {
+      toastError("Name or email is required");
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = {
+        full_name: form.full_name.trim() || undefined,
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        city: form.city.trim() || undefined,
+        customer_type: form.customer_type,
+        business_name: form.business_name.trim() || undefined,
+        tier: form.tier.trim() || undefined,
+      };
+      let res;
+      if (editingCustomer) {
+        res = await updateCustomer(editingCustomer.id, payload);
+      } else {
+        res = await createCustomer(payload);
+      }
+      if (!res.ok) throw new Error(res.error || "Save failed");
+      success(editingCustomer ? "Customer updated" : "Customer created");
+      setPanelOpen(false);
+      setEditingCustomer(null);
+      setForm(emptyForm);
+      load(committedSearch);
+    } catch (e) {
+      toastError(e instanceof Error ? e.message : "Failed to save customer");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeleting(true);
+    try {
+      const res = await deleteCustomer(id);
+      if (!res.ok) throw new Error(res.error || "Delete failed");
+      success("Customer deleted");
+      setDeleteTargetId(null);
+      if (selected?.id === id) setSelected(null);
+      load(committedSearch);
+    } catch (e) {
+      toastError(e instanceof Error ? e.message : "Failed to delete customer");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   /* ── Render ──────────────────────────────────────────────────── */
 
   return (
@@ -269,6 +370,10 @@ function CustomersPageContent() {
         subtitle="Everyone who buys through ChinaSuuq"
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <button onClick={openCreate} className="admin-btn-primary">
+              <Plus className="h-4 w-4" />
+              Create Customer
+            </button>
             <TableControls columns={CUSTOMER_COLUMNS} prefs={tablePrefs} />
             {isFiltered && (
               <button
@@ -474,6 +579,7 @@ function CustomersPageContent() {
                     Notes (this device)
                   </th>
                 )}
+                <th className="w-16"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-dark-900/[0.04]">
@@ -556,6 +662,26 @@ function CustomersPageContent() {
                       )}
                     </td>
                   )}
+                  <td className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => openEdit(c)}
+                        className="rounded-lg p-1.5 text-dark-400 transition-colors hover:bg-brand-500/10 hover:text-brand-600"
+                        title="Edit customer"
+                        aria-label={`Edit ${c.full_name || c.email}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => setDeleteTargetId(c.id)}
+                        className="rounded-lg p-1.5 text-dark-400 transition-colors hover:bg-error/10 hover:text-error"
+                        title="Delete customer"
+                        aria-label={`Delete ${c.full_name || c.email}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -631,6 +757,120 @@ function CustomersPageContent() {
           />
         )}
       </AnimatePresence>
+
+      {/* ── Create / Edit Customer Panel ── */}
+      <SidePanel
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        title={editingCustomer ? "Edit Customer" : "Create Customer"}
+        subtitle={editingCustomer ? `Editing ${editingCustomer.full_name || editingCustomer.email}` : "Add a new customer profile"}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setPanelOpen(false)} className="admin-btn-ghost">
+              Cancel
+            </button>
+            <button onClick={handleSave} disabled={saving} className="admin-btn-primary">
+              {saving ? "Saving…" : editingCustomer ? "Save Changes" : "Create Customer"}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Full Name" required>
+            <input
+              value={form.full_name}
+              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+              placeholder="e.g. Ahmed Ali"
+              className="admin-input"
+            />
+          </Field>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Email" required>
+              <input
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                placeholder="ahmed@example.com"
+                className="admin-input"
+              />
+            </Field>
+            <Field label="Phone">
+              <input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                placeholder="+252 …"
+                className="admin-input"
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="City">
+              <input
+                value={form.city}
+                onChange={(e) => setForm({ ...form, city: e.target.value })}
+                placeholder="Mogadishu"
+                className="admin-input"
+              />
+            </Field>
+            <Field label="Tier">
+              <select
+                value={form.tier}
+                onChange={(e) => setForm({ ...form, tier: e.target.value })}
+                className="admin-input"
+              >
+                <option value="">— None —</option>
+                <option value="Bronze">Bronze</option>
+                <option value="Silver">Silver</option>
+                <option value="Gold">Gold</option>
+                <option value="VIP">VIP</option>
+              </select>
+            </Field>
+          </div>
+
+          <Field label="Customer Type">
+            <div className="flex gap-4">
+              {(["individual", "business"] as const).map((t) => (
+                <label key={t} className="flex cursor-pointer items-center gap-2 text-sm text-dark-700">
+                  <input
+                    type="radio"
+                    name="customer_type"
+                    value={t}
+                    checked={form.customer_type === t}
+                    onChange={(e) => setForm({ ...form, customer_type: e.target.value as typeof t })}
+                    className="h-4 w-4 accent-brand-500"
+                  />
+                  {t === "business" ? "Business" : "Individual"}
+                </label>
+              ))}
+            </div>
+          </Field>
+
+          {form.customer_type === "business" && (
+            <Field label="Business Name">
+              <input
+                value={form.business_name}
+                onChange={(e) => setForm({ ...form, business_name: e.target.value })}
+                placeholder="Company or trade name"
+                className="admin-input"
+              />
+            </Field>
+          )}
+        </div>
+      </SidePanel>
+
+      {/* ── Delete confirmation ── */}
+      <ConfirmDialog
+        open={deleteTargetId !== null}
+        title="Delete Customer"
+        message="Delete this customer? Their order history will remain but they will no longer appear in the customer directory."
+        onCancel={() => setDeleteTargetId(null)}
+        onConfirm={() => deleteTargetId && handleDelete(deleteTargetId)}
+        confirmText="Delete"
+        loading={deleting}
+        danger
+      />
     </div>
   );
 }

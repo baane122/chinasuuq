@@ -1,5 +1,5 @@
 /**
- * ChinaSuuq mobile AI client — routes through Supabase Edge Functions only.
+ * ChinaSuuq mobile AI client.
  *
  * NO provider key ships in this bundle anymore (the old hardcoded direct
  * credential leaked into the APK and is being rotated). Every
@@ -9,8 +9,11 @@
  * no app release. Logged-out or failed calls return null and callers fall
  * back gracefully — nothing here ever throws.
  *
- * Translation goes to `ai-translate` via src/api/translate.ts (paid cache,
- * JWT-gated).
+ * Translation is the exception to the edge-function rule: on the owner's
+ * decision it is a commodity lookup, so it goes to Google's free endpoint via
+ * src/api/translate.ts and never to the paid `ai-translate` function. Only the
+ * generative capabilities (chat, ranking, vision in aiVision.ts) still use
+ * Mission Control.
  */
 import { supabase as sb } from "./supabase";
 import { translateTexts } from "../api/translate";
@@ -62,18 +65,15 @@ export function extractJson<T = unknown>(text: string): T | null {
 }
 
 /**
- * Translate product text to EN + SO through the ai-translate edge function
- * (server-side provider + durable cache; JWT attached by invoke()). Returns
- * null when nothing could be translated — logged out, offline, or the server
- * refused — so the caller shows its honest retry message instead of a
- * silent passthrough of the Chinese original.
+ * Product translation (aiTranslateProduct, below) goes through
+ * src/api/translate.ts — Google's free endpoint plus the client LRU/AsyncStorage
+ * cache — not the paid ai-translate edge function.
  *
- * On top of the server's durable cache, a small in-memory TTL cache keyed by
- * the exact source text makes repeat translations free: text translated in
- * the last 30 minutes is answered from memory with zero edge-function round
- * trips, and two simultaneous asks for the same text share one in-flight call
- * instead of firing twice. Failed (null) results are deliberately NOT cached
- * so "try again" really retries.
+ * A small in-memory TTL cache keyed by the exact source text makes repeat
+ * translations free: text translated in the last 30 minutes is answered from
+ * memory with zero network round trips, and two simultaneous asks for the same
+ * text share one in-flight call instead of firing twice. Failed (null) results
+ * are deliberately NOT cached so "try again" really retries.
  */
 const TRANSLATION_TTL_MS = 30 * 60 * 1000;
 const MAX_TRANSLATION_CACHE = 80;
@@ -96,6 +96,13 @@ function cacheProductTranslation(key: string, value: { en: string; so: string })
   }
 }
 
+/**
+ * Translate product text to EN + SO. Returns null when nothing could be
+ * translated — offline, the endpoint refused, or translate.ts's circuit breaker
+ * is open — so the caller shows its honest retry message instead of silently
+ * passing the Chinese original through. A Somali string Google will not serve
+ * comes back as English (translate.ts degrades so -> en), never as nothing.
+ */
 export async function aiTranslateProduct(
   title: string,
   description?: string

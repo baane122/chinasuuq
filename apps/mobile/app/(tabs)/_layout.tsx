@@ -37,6 +37,12 @@ export default function TabLayout() {
     };
   }, [authUser?.id]);
 
+  // No navigation happens here. A layout used to render `<Redirect href="/staff-info" />`
+  // whenever the staff store reported `isActive`, and isActive was set by every
+  // staff sign-in — so staff users could never reach a tab: the welcome screen
+  // sent them to `/` → `/(tabs)/home` → redirected again, on an infinite loop
+  // (and its own 3s timer re-fired it). Layouts must not redirect on derived
+  // state; staff mode is an opt-in surfaced by StaffEntryBanner on the tabs.
   return (
     <Tabs
       screenOptions={{

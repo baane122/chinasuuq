@@ -28,6 +28,7 @@ import {
   TrendingUp,
   Users,
   Zap,
+  Pin,
 } from "lucide-react";
 import { PageHeader, StatCard, PageGrid, SectionCard, FilterChips } from "@/components/admin/ui";
 import { STATUS_COLORS, chartPalette, marketplaceStyle } from "@/lib/admin/theme";
@@ -35,6 +36,7 @@ import { StatusBadge } from "@/components/admin/StatusBadge";
 import { useToast } from "@/components/admin/Toast";
 import { supabase } from "@/lib/supabase";
 import { formatUSD } from "@/lib/utils";
+import { fetchPinnedProducts, type CatalogProduct } from "@/lib/catalog";
 import { ORDERS_CSV_COLUMNS, downloadCsv, stamp, toCsv } from "@/lib/admin/csv";
 import { useLiveConnected, useLiveVersion } from "@/lib/admin/live-store";
 import {
@@ -89,6 +91,15 @@ interface TopProduct {
   marketplace: string;
   sales_count: number;
   price_usd_estimated: number;
+  source_images?: string[] | null;
+}
+
+interface LowStockProduct {
+  id: string;
+  title: string;
+  title_english: string;
+  marketplace: string;
+  stock_status: string;
   source_images?: string[] | null;
 }
 
@@ -456,7 +467,6 @@ function MarketplaceBreakdown({ data }: { data: MarketplaceRevenue[] }) {
                 animate={{ width: `${Math.max(pct, 2)}%` }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
                 className="h-full rounded-full"
-                // @ts-expect-error framer-motion style typing
                 style={{ backgroundColor: d.color }}
               />
             </div>
@@ -529,6 +539,9 @@ export default function AdminDashboard() {
   const [metrics, setMetrics] = useState<KpiMap>({});
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
+  /* The staff-picked shelf, read the same way the home page reads it, so this
+   * card cannot describe a pin as trending or an empty shelf as a broken read. */
+  const [trendingPins, setTrendingPins] = useState<CatalogProduct[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [dailyRevenue, setDailyRevenue] = useState<DailyRevenue[]>([]);
   const [orderStatusCounts, setOrderStatusCounts] = useState<OrderStatusCount[]>([]);
@@ -540,6 +553,7 @@ export default function AdminDashboard() {
     pendingSourcing: null,
     unreadNotifications: null,
   });
+  const [lowStockProducts, setLowStockProducts] = useState<LowStockProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /* The shell owns the single realtime channel; this page only refetches when a
@@ -619,7 +633,7 @@ export default function AdminDashboard() {
        * All) flows into all three RPCs through rpcDays — see DATE_RANGES for
        * why All maps to the RPCs' 365-day maximum. */
       const span = rpcDays(rangeDays);
-      const [kpiRes, dailyRes, statusRes, mpRes, ordersRes, productsRes, notifRes] =
+      const [kpiRes, dailyRes, statusRes, mpRes, ordersRes, productsRes, notifRes, pinsRes] =
         await Promise.all([
           getAdminKpis(),
           getAdminRevenueDaily(span),
@@ -641,6 +655,8 @@ export default function AdminDashboard() {
             .select("id, title, body, type, created_at")
             .order("created_at", { ascending: false })
             .limit(20),
+          // What the customer home shelf actually leads with right now.
+          fetchPinnedProducts("en"),
         ]);
 
       setMetrics(kpiRes.metrics);
@@ -669,6 +685,7 @@ export default function AdminDashboard() {
         mpRes.rows.map((r) => ({ ...r, ...marketplaceStyle(r.marketplace) }))
       );
       setRecentOrders((ordersRes.orders as RecentOrder[]) || []);
+      setTrendingPins(pinsRes);
 
       /* Top products — the query already orders by sales_count and stops at
        * six, so nothing is sliced or re-sorted here. */
@@ -764,8 +781,30 @@ export default function AdminDashboard() {
         pendingSourcing: src.error ? null : (src.count ?? 0),
         unreadNotifications: notif.error ? null : (notif.count ?? 0),
       });
+      /* Fetch the actual low-stock products for the warning panel */
+      if (!stock.error && ops.lowStock! > 0) {
+        const lpRes = await supabase
+          .from("source_products")
+          .select("id, title_english, marketplace, stock_status, images")
+          .eq("stock_status", "low_stock")
+          .limit(8);
+        if (!lpRes.error && lpRes.data) {
+          setLowStockProducts(
+            lpRes.data.map((p: any) => ({
+              id: p.id,
+              title: p.title_english || "",
+              title_english: p.title_english || "",
+              marketplace: p.marketplace || "",
+              stock_status: p.stock_status || "low_stock",
+              source_images: p.images as string[] | null,
+            }))
+          );
+        }
+      } else {
+        setLowStockProducts([]);
+      }
       /* A failed count stays null ("—"), never 0: the dashboard was rebuilt to
-       * stop reporting a broken query as an empty metric. */
+        * stop reporting a broken query as an empty metric. */
       if (!cats.error && cats.data) {
         setTopCategories(
           ((cats.data as { id: string; name_en: string; slug: string; image_url: string | null; product_count: number }[]) ?? [])
@@ -1012,6 +1051,81 @@ export default function AdminDashboard() {
           </motion.div>
         ))}
       </div>
+
+      {/* ─── Low Stock Warnings ───────────────────────────────── */}
+      {ops.lowStock! > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <SectionCard
+            title="Low Stock Warnings"
+            subtitle={`${ops.lowStock} product${ops.lowStock === 1 ? '' : 's'} below healthy levels — needs reorder attention`}
+            actions={
+              <a
+                href="/admin/products?stock_status=low_stock"
+                className="admin-btn-ghost h-7 px-2 text-xs"
+              >
+                View all low stock
+                <ChevronRight className="h-3.5 w-3.5 ml-1" />
+              </a>
+            }
+          >
+            {loading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-12 animate-pulse rounded-xl bg-amber-50" />
+                ))}
+              </div>
+            ) : lowStockProducts.length > 0 ? (
+              <div className="space-y-2">
+                {lowStockProducts.map((p, i) => (
+                  <motion.div
+                    key={p.id}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.05 * i }}
+                    className="flex items-center gap-3 rounded-xl border border-amber-200/60 bg-amber-50/50 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10"
+                  >
+                    {p.source_images?.[0] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={p.source_images[0]}
+                        alt={p.title_english || p.title}
+                        className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-dark-900/[0.06]"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 ring-1 ring-amber-200">
+                        <Package className="h-5 w-5 text-amber-500" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-dark-900 truncate">
+                        {p.title_english || p.title || "Untitled"}
+                      </p>
+                      <p className="text-[11px] text-dark-900/50">
+                        {p.marketplace || "Unknown marketplace"}
+                      </p>
+                    </div>
+                    <StatusBadge status="low_stock" />
+                    <a
+                      href="/admin/products"
+                      className="shrink-0 text-xs font-medium text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+                    >
+                      Restock →
+                    </a>
+                  </motion.div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-center text-sm text-dark-900/40 py-8">
+                Loading low stock products…
+              </p>
+            )}
+          </SectionCard>
+        </motion.div>
+      )}
 
       {/* ─── Revenue Chart + Order Status Donut ─────────────── */}
       <div className="grid gap-6 lg:grid-cols-3">
@@ -1277,14 +1391,21 @@ export default function AdminDashboard() {
           transition={{ delay: 0.3 }}
         >
         <SectionCard
-          title="Top Products"
+          title="Trending Shelf"
+          subtitle={
+            trendingPins.length > 0
+              ? "The staff picks that lead the customer home shelf, in the order they render"
+              : "No staff pins — the customer home falls back to marketplace best sellers"
+          }
           actions={
-            <a
-              href="/admin/products"
+            <Link
+              href="/admin/trending"
               className="admin-btn-ghost h-7 px-2 text-xs"
+              title="Open the Trending manager"
             >
-              View all →
-            </a>
+              Manage
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Link>
           }
         >
           {loading ? (
@@ -1293,8 +1414,69 @@ export default function AdminDashboard() {
                 <div key={i} className="h-12 animate-pulse rounded-xl bg-dark-50" />
               ))}
             </div>
+          ) : trendingPins.length > 0 ? (
+            <div className="space-y-2">
+              {trendingPins.slice(0, 6).map((p, i) => {
+                const price =
+                  p.priceUsd !== null
+                    ? `$${p.priceUsd.toFixed(2)}`
+                    : p.priceCnyMin !== null
+                      ? `¥${p.priceCnyMin.toFixed(0)} CNY`
+                      : "No price";
+                return (
+                  <motion.div
+                    key={p.id}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.35 + i * 0.04 }}
+                    className="flex items-center gap-3 rounded-xl p-2.5 transition-colors hover:bg-dark-50/50"
+                  >
+                    <span
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-brand-500 text-[10px] font-bold text-white"
+                      title={`Shelf position ${p.curation.rank ?? i + 1}`}
+                    >
+                      {p.curation.rank ?? i + 1}
+                    </span>
+                    {p.primaryImage ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={p.primaryImage}
+                        alt={p.title}
+                        className="h-10 w-10 shrink-0 rounded-xl object-cover ring-1 ring-dark-900/[0.06]"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 ring-1 ring-dark-900/[0.06]">
+                        <Boxes className="h-4 w-4 text-brand-500/60" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-dark-900">
+                        {p.title || "Untitled"}
+                      </p>
+                      <p className="text-[11px] text-dark-900/40">
+                        {p.marketplace || "unknown"} · {price}
+                      </p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-600">
+                      Staff pick
+                    </span>
+                  </motion.div>
+                );
+              })}
+              <p className="pt-1 text-[11px] leading-relaxed text-dark-900/45">
+                {trendingPins.length > 6 && `${trendingPins.length - 6} more pin(s) below the six shown. `}
+                A pin is a human choice, not customer demand — it renders on the home page as
+                “Selected for you”.
+              </p>
+            </div>
           ) : topProducts.length > 0 ? (
             <div className="space-y-2">
+              <p className="rounded-xl bg-warning/5 px-3 py-2 text-[11px] leading-relaxed text-warning">
+                Nothing is pinned, so the home shelf is serving the list below: ordered by{" "}
+                <span className="font-semibold">sales_count</span>, a number copied from the Chinese
+                marketplace that means “sold on 1688/Taobao” — not ChinaSuuq engagement. Pin products to
+                take that shelf back.
+              </p>
               {topProducts.map((p, i) => {
                 const img = p.source_images?.[0];
                 return (
@@ -1332,15 +1514,15 @@ export default function AdminDashboard() {
                     <p className="text-xs font-bold text-dark-900">
                       {p.sales_count || 0}
                     </p>
-                    <p className="text-[10px] text-dark-900/40">sales</p>
+                    <p className="text-[10px] text-dark-900/40">sold on mp</p>
                   </div>
                 </motion.div>
                 );
               })}
             </div>
           ) : (
-            <p className="text-center text-sm text-dark-900/40 py-8">
-              No products yet
+            <p className="py-8 text-center text-sm text-dark-900/40">
+              No products could be read — this is a failed or empty catalog read, not an empty shelf.
             </p>
           )}
         </SectionCard>

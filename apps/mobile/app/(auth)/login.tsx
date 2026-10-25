@@ -1,453 +1,249 @@
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
-  ActivityIndicator,
-  ScrollView,
-} from "react-native";
-import { useState, useCallback, useEffect, useRef } from "react";
-import { useRouter, Link } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useAuthStore } from "@/store/auth";
-import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Link, useRouter } from "expo-router";
+import { Lock, Mail } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
-import { Image } from "expo-image";
+import { COLORS, FONTS, SPACING } from "@/lib/theme";
+import { useI18n } from "@/lib/i18n";
+import { useAuthContract } from "@/components/auth/authContract";
+import {
+  AuthErrorBanner,
+  AuthHeading,
+  AuthScreen,
+  AuthTrustFooter,
+} from "@/components/auth/AuthScreen";
+import { AuthField } from "@/components/auth/AuthField";
+import { AuthSubmitButton } from "@/components/auth/AuthSubmitButton";
 
-const LOGO = require("../../assets/images/logo.jpg");
-
-const EMAIL_KEY = "chinasuuq-login-email";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const { signIn, error, clearError } = useAuthStore();
-  const router = useRouter();
-  const passwordInputRef = useRef<TextInput>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
 
-  // Load saved email
+  const { signIn, clearError } = useAuthContract();
+  const router = useRouter();
+  const passwordRef = useRef<TextInput>(null);
+  const { locale } = useI18n();
+
+  const t = useCallback(
+    (en: string, so: string) => (locale === "so" ? so : en),
+    [locale]
+  );
+
+  // Single error source: this screen renders only `errorMsg` (per attempt).
+  // The store's `error` is cleared on mount so a stale failure from a previous
+  // visit can never reappear here.
   useEffect(() => {
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(EMAIL_KEY);
-        if (saved) setEmail(saved);
-      } catch (e) {
-        console.warn("[login] saved email unreadable", e);
-      }
-    })();
-  }, []);
+    clearError();
+  }, [clearError]);
+
+  const goToVerify = useCallback(
+    (targetEmail: string) => {
+      router.replace({
+        pathname: "/(auth)/verify-email",
+        params: { email: targetEmail },
+      });
+    },
+    [router]
+  );
+
+  const validate = useCallback((): boolean => {
+    let ok = true;
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setEmailError(t("Enter your email address", "Geli cinwaanka iimaylkaaga"));
+      ok = false;
+    } else if (!EMAIL_RE.test(trimmedEmail)) {
+      setEmailError(t("That email doesn't look right", "Iimaylkaasi sax ma aha"));
+      ok = false;
+    }
+    if (!password) {
+      setPasswordError(t("Enter your password", "Geli code-xufiskaaga"));
+      ok = false;
+    }
+    return ok;
+  }, [email, password, t]);
 
   const handleLogin = useCallback(async () => {
-    if (!email.trim() || !password.trim()) {
-      Alert.alert(
-        platformText("Missing fields", "Buuxi dhammaan go'aanka"),
-        platformText("Please enter both email and password.", "Fadlan geli email iyo code-xufis.")
-      );
+    if (loading) return;
+    setErrorMsg(null);
+    setEmailError(null);
+    setPasswordError(null);
+    clearError();
+
+    if (!validate()) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
+
     setLoading(true);
-    setErrorMsg(null);
-    clearError();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     try {
       const result = await signIn(email.trim(), password);
+      if (result.requiresVerification) {
+        goToVerify(email.trim());
+        return;
+      }
       if (result.error) {
         const msg = result.error.toLowerCase();
-        if (msg.includes("invalid") || msg.includes("credentials")) {
-          setErrorMsg(platformText("Invalid email or password. Please try again.", "Email ama code-xufis khaldan. Fadlan isku day mar kale."));
-        } else if (msg.includes("network") || msg.includes("fetch")) {
-          setErrorMsg(platformText("Network error. Please check your connection and try again.", "Khalad shabaakad. Fadlan hubi isku xirkaaga."));
+        if (msg.includes("confirm")) {
+          // Verification may still be on server-side — send them to the
+          // verify screen instead of showing a raw Supabase message.
+          goToVerify(email.trim());
+          return;
+        }
+        if (msg.includes("network") || msg.includes("fetch") || msg.includes("connect")) {
+          setErrorMsg(
+            t("Network error. Please check your connection.", "Khalad shabaakad. Fadlan hubi isku xirka.")
+          );
+        } else if (msg.includes("too many") || msg.includes("wait")) {
+          setErrorMsg(
+            t("Too many attempts. Wait a minute and try again.", "Isku dayaad badan yihiin. Hal daqiiqo sug oo mar kale isku day.")
+          );
         } else {
-          setErrorMsg(platformText("Sign in failed. Please try again.", "Gal wax khasaare ah. Fadlan isku day mar kale."));
+          // The store already maps every GoTrue error code to a sentence meant
+          // for a customer, so showing it beats re-guessing here — a generic
+          // "Login failed" throws away the difference between a wrong password,
+          // an unknown email, and a rate limit, which are three different next
+          // actions for the person holding the phone.
+          setErrorMsg(result.error);
         }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } else {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // Remember email for next time
-        try { await AsyncStorage.setItem(EMAIL_KEY, email.trim()); } catch (e) {
-          console.warn("[login] could not remember email", e);
-        }
       }
-    } catch (e: any) {
-      setErrorMsg(platformText("Connection error. Please try again.", "Khalad xiriir. Fadlan isku day mar kale."));
+      // Success: the root layout redirect moves a signed-in user into the app.
+    } catch {
+      setErrorMsg(
+        t("Connection error. Please try again.", "Khalad xiriir. Fadlan isku day mar kale.")
+      );
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
     }
-  }, [email, password, signIn, clearError]);
-
-  const platformText = (en: string, so: string) => {
-    // Will be overridden by i18n in production; this is a fallback
-    return en;
-  };
+  }, [clearError, email, goToVerify, loading, password, signIn, t, validate]);
 
   return (
-    <ErrorBoundary>
-    <SafeAreaView style={styles.outerContainer}>
-      {/* Decorative gradient background */}
-      <View style={styles.bgOrb1} />
-      <View style={styles.bgOrb2} />
+    <AuthScreen
+      tagline={t("One account for shopping & tracking", "Aqal kaliya oo ganacsi iyo raadraac ah")}
+      footer={<AuthTrustFooter text={t("Your data is secure and encrypted", "Xogtaada waa ammaan")} />}
+    >
+      <AuthHeading
+        title={t("Welcome back", "Kusoo noqo")}
+        subtitle={t("Sign in to continue shopping", "Geli si aad wax u iibsato")}
+      />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.keyboardView}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Brand Header */}
-          <View style={styles.brandSection}>
-            <Image source={LOGO} style={styles.authLogo} resizeMode="contain" />
-            <Text style={styles.brandName}>ChinaSuuq</Text>
-            <Text style={styles.brandTagline}>Your trusted bridge from China to Somalia</Text>
-          </View>
+      {errorMsg ? <AuthErrorBanner message={errorMsg} /> : null}
 
-          {/* Login Card */}
-          <View style={styles.card}>
-            <Text style={styles.title}>Welcome Back</Text>
-            <Text style={styles.helper}>Sign in to track orders, save products and checkout faster.</Text>
+      <AuthField
+        label={t("Email address", "Cinwaanka iimaylka")}
+        value={email}
+        onChangeText={(v) => {
+          setEmail(v);
+          if (emailError) setEmailError(null);
+          if (errorMsg) setErrorMsg(null);
+        }}
+        placeholder={t("you@example.com", "tusaale@example.com")}
+        icon={<Mail size={18} color={COLORS.textMuted} />}
+        error={emailError}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
+        textContentType="emailAddress"
+        keyboardType="email-address"
+        returnKeyType="next"
+        editable={!loading}
+        onSubmitEditing={() => passwordRef.current?.focus()}
+        onBlur={() => {
+          if (email.trim() && !EMAIL_RE.test(email.trim())) {
+            setEmailError(t("That email doesn't look right", "Iimaylkaasi sax ma aha"));
+          }
+        }}
+      />
 
-            {errorMsg ? (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{errorMsg}</Text>
-                <TouchableOpacity onPress={() => setErrorMsg(null)} style={styles.errorDismiss}>
-                  <Text style={styles.errorDismissText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ) : error ? (
-              <View style={styles.errorBanner}>
-                <Text style={styles.errorText}>{error}</Text>
-                <TouchableOpacity onPress={clearError} style={styles.errorDismiss}>
-                  <Text style={styles.errorDismissText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-
-            {/* Email Input */}
-            <View style={styles.inputWrap}>
-              <Text style={styles.inputLabel}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="you@example.com"
-                placeholderTextColor={COLORS.gray400}
-                value={email}
-                onChangeText={(v) => { setEmail(v); setErrorMsg(null); }}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-                returnKeyType="next"
-                onSubmitEditing={() => passwordInputRef.current?.focus()}
-              />
-            </View>
-
-            {/* Password Input */}
-            <View style={styles.inputWrap}>
-              <View style={styles.inputLabelRow}>
-                <Text style={styles.inputLabel}>Password</Text>
-                <Link href="/(auth)/forgot-password" asChild>
-                  <TouchableOpacity style={styles.forgotBtn} activeOpacity={0.7}>
-                    <Text style={styles.forgotText}>Forgot?</Text>
-                  </TouchableOpacity>
-                </Link>
-              </View>
-              <View style={styles.passwordWrap}>
-                <TextInput
-                  ref={passwordInputRef}
-                  style={styles.input}
-                  placeholder="Enter your password"
-                  placeholderTextColor={COLORS.gray400}
-                  value={password}
-                  onChangeText={(v) => { setPassword(v); setErrorMsg(null); }}
-                  secureTextEntry={!showPass}
-                  autoComplete="password"
-                  returnKeyType="done"
-                  onSubmitEditing={handleLogin}
-                />
-                <TouchableOpacity
-                  onPress={() => setShowPass(!showPass)}
-                  style={styles.showPassBtn}
-                >
-                  <Text style={styles.showPassText}>{showPass ? "Hide" : "Show"}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Sign In Button */}
+      <AuthField
+        label={t("Password", "Code-xufis")}
+        value={password}
+        onChangeText={(v) => {
+          setPassword(v);
+          if (passwordError) setPasswordError(null);
+          if (errorMsg) setErrorMsg(null);
+        }}
+        placeholder={t("Enter your password", "Geli code-xufiskaaga")}
+        icon={<Lock size={18} color={COLORS.textMuted} />}
+        error={passwordError}
+        secure
+        showLabel={t("Show password", "Muuji code-xufiska")}
+        hideLabel={t("Hide password", "Qari code-xufiska")}
+        labelTrailing={
+          <Link href="/(auth)/forgot-password" asChild>
             <TouchableOpacity
-              style={[styles.btn, loading && styles.btnDisabled]}
-              onPress={handleLogin}
-              disabled={loading}
-              activeOpacity={0.85}
+              hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+              accessibilityRole="link"
+              accessibilityLabel={t("Forgot password?", "Ma ilowday code-xufiska?")}
             >
-              {loading ? (
-                <ActivityIndicator color={COLORS.white} />
-              ) : (
-                <Text style={styles.btnText}>Sign In</Text>
-              )}
+              <Text style={styles.forgotLink}>{t("Forgot?", "Ma ilowday?")}</Text>
             </TouchableOpacity>
+          </Link>
+        }
+        autoComplete="password"
+        textContentType="password"
+        returnKeyType="go"
+        editable={!loading}
+        inputRef={passwordRef}
+        onSubmitEditing={handleLogin}
+      />
 
-            {/* Sign Up Link */}
-            <Link href="/(auth)/signup" asChild>
-              <TouchableOpacity style={styles.link} activeOpacity={0.7}>
-                <Text style={styles.linkText}>
-                  Don't have an account? {" "}
-                  <Text style={styles.linkHighlight}>Sign Up</Text>
-                </Text>
-              </TouchableOpacity>
-            </Link>
+      <AuthSubmitButton
+        label={t("Sign In", "Gal")}
+        onPress={handleLogin}
+        loading={loading}
+      />
 
-            {/* Guest Skip */}
-            <TouchableOpacity
-              style={styles.skipBtn}
-              onPress={() => router.replace("/(tabs)/home")}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.skipText}>Continue as Guest</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Trust Footer */}
-          <View style={styles.trustFooter}>
-            <Text style={styles.trustText}>🔒 Secure · 🌍 Somalia-wide · ⚡ Fast Support</Text>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-    </ErrorBoundary>
+      <View style={styles.signupRow}>
+        <Text style={styles.signupText}>
+          {t("Don't have an account?", "Ma leedahay akoon?")}
+        </Text>
+        <Link href="/(auth)/signup" asChild>
+          <TouchableOpacity
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+            accessibilityRole="link"
+            accessibilityLabel={t("Sign up", "Diwaangeli")}
+          >
+            <Text style={styles.signupLink}>{t("Sign up", "Diwaangeli")}</Text>
+          </TouchableOpacity>
+        </Link>
+      </View>
+    </AuthScreen>
   );
 }
 
-
 const styles = StyleSheet.create({
-  outerContainer: {
-    flex: 1,
-    backgroundColor: COLORS.darkSurface,
-    overflow: "hidden",
+  forgotLink: {
+    fontSize: 13,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primary,
   },
-  bgOrb1: {
-    position: "absolute",
-    top: -80,
-    left: -80,
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: "rgba(255, 90, 10, 0.15)",
-  },
-  bgOrb2: {
-    position: "absolute",
-    bottom: -60,
-    right: -60,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: "rgba(255, 140, 60, 0.12)",
-  },
-  keyboardView: {
-    flex: 1,
-    paddingHorizontal: SPACING.xl,
-  },
-  scrollContent: {
-    flexGrow: 1,
+  signupRow: {
+    flexDirection: "row",
     justifyContent: "center",
-    paddingVertical: SPACING.xl,
-  },
-  brandSection: {
     alignItems: "center",
-    marginBottom: SPACING.xl,
+    minHeight: 44,
+    marginTop: SPACING.md,
   },
-  authLogo: {
-    width: 120,
-    height: 104,
-    borderRadius: RADIUS.xl,
-    marginBottom: SPACING.md,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  brandName: {
-    fontSize: 32,
-    fontFamily: FONTS.bold,
-    color: COLORS.white,
-    letterSpacing: 0.5,
-  },
-  brandTagline: {
-    fontSize: 13,
-    fontFamily: FONTS.medium,
-    color: "rgba(255,255,255,0.55)",
-    marginTop: 4,
-  },
-  card: {
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.xxl,
-    padding: SPACING.xl,
-    width: "100%",
-    shadowColor: COLORS.black,
-    shadowOpacity: 0.25,
-    shadowRadius: 32,
-    shadowOffset: { width: 0, height: 16 },
-    elevation: 12,
-  },
-  title: {
-    fontSize: 26,
-    fontFamily: FONTS.bold,
-    color: COLORS.black,
-    marginBottom: 6,
-  },
-  helper: {
-    fontSize: 13,
+  signupText: {
+    fontSize: 14,
     fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
-    marginBottom: SPACING.lg,
-    lineHeight: 19,
+    color: COLORS.gray500,
   },
-  inputWrap: {
-    marginBottom: SPACING.md,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontFamily: FONTS.semibold,
-    color: COLORS.gray600,
-    marginBottom: 6,
-  },
-  inputLabelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  input: {
-    width: "100%",
-    height: 52,
-    borderRadius: RADIUS.lg,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
-    paddingHorizontal: SPACING.lg,
-    fontSize: 15,
-    color: COLORS.black,
-    backgroundColor: COLORS.gray50,
-  },
-  passwordWrap: {
-    position: "relative",
-  },
-  showPassBtn: {
-    position: "absolute",
-    right: SPACING.md,
-    top: 14,
-    minHeight: 24,
-    justifyContent: "center",
-  },
-  showPassText: {
-    fontSize: 13,
-    fontFamily: FONTS.semibold,
-    color: COLORS.primary,
-  },
-  forgotBtn: {
-    minHeight: 24,
-    justifyContent: "center",
-  },
-  forgotText: {
-    fontSize: 13,
-    fontFamily: FONTS.semibold,
-    color: COLORS.primary,
-  },
-  btn: {
-    width: "100%",
-    height: 54,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: SPACING.md,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  btnDisabled: {
-    opacity: 0.6,
-  },
-  btnText: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontFamily: FONTS.bold,
-    letterSpacing: 0.3,
-  },
-  link: {
-    marginTop: SPACING.lg,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  linkText: {
+  signupLink: {
     fontSize: 14,
-    fontFamily: FONTS.medium,
-    color: COLORS.textSecondary,
-  },
-  linkHighlight: {
+    fontFamily: FONTS.semibold,
     color: COLORS.primary,
-    fontFamily: FONTS.bold,
-  },
-  skipBtn: {
-    marginTop: SPACING.md,
-    minHeight: 44,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: SPACING.sm,
-  },
-  skipText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    fontFamily: FONTS.medium,
-  },
-  errorBanner: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#FEF2F2",
-    borderWidth: 1,
-    borderColor: COLORS.error,
-    borderRadius: RADIUS.md,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-  },
-  errorText: {
-    color: COLORS.error,
-    fontSize: 13,
-    flex: 1,
-    paddingRight: SPACING.sm,
-  },
-  errorDismiss: {
-    minHeight: 24,
-    justifyContent: "center",
-  },
-  errorDismissText: {
-    color: COLORS.error,
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  trustFooter: {
-    marginTop: SPACING.xl,
-    alignItems: "center",
-  },
-  trustText: {
-    fontSize: 12,
-    fontFamily: FONTS.medium,
-    color: "rgba(255,255,255,0.45)",
+    marginLeft: SPACING.xs,
   },
 });

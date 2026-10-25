@@ -15,16 +15,118 @@ export const SUPABASE_ANON_KEY = supabaseAnonKey;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
+    // AsyncStorage, not SecureStore: a Supabase session JSON regularly exceeds
+    // SecureStore's ~2 KB per-item limit, and a silently-truncated write means
+    // every protected screen mass-logs-out on the next cold start.
     storage: AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
+    // RN has no URL to detect from; leaving this true only hid the real bug by
+    // making us believe the SDK was consuming the emailed link itself.
     detectSessionInUrl: false,
+    // GoTrue v2 email links carry ?code= and must be exchanged with PKCE.
+    flowType: "pkce",
   },
   // Increase timeout for network resilience
   global: {
     headers: { "x-timeout": "30000" }, // 30 second timeout
   },
 });
+
+// The pure URL parsing lives in ./auth-url.ts so it can be exercised in Node
+// without constructing this client (see scripts/verify-auth-url.mjs). Re-exported
+// here because every caller already reaches for it through this module.
+import {
+  APP_DEEP_LINK_PREFIX,
+  VERIFY_REDIRECT,
+  RECOVERY_REDIRECT,
+  parseAuthUrl,
+  type AuthRedirectKind,
+  type AuthUrlTicket,
+} from "./auth-url";
+
+export { APP_DEEP_LINK_PREFIX, VERIFY_REDIRECT, RECOVERY_REDIRECT, parseAuthUrl };
+export type { AuthRedirectKind, AuthUrlTicket };
+
+export interface ConsumeAuthUrlResult {
+  /** True when a live session now exists. */
+  ok: boolean;
+  kind: AuthRedirectKind;
+  /** False when the URL was not an auth link — caller should route it normally. */
+  wasAuthUrl: boolean;
+  /** Human-readable, already suitable for showing to a customer. */
+  error?: string;
+}
+
+/**
+ * Turn an emailed deep link into a signed-in session.
+ *
+ * Failure here is the single most expensive one in the app: the customer has
+ * already left the app, opened their mail, tapped a link, and come back. If we
+ * cannot consume the link they are stranded between two screens with no idea
+ * why, so every branch returns a message written for that person rather than a
+ * stack trace.
+ */
+export async function consumeAuthUrl(rawUrl: string): Promise<ConsumeAuthUrlResult> {
+  const ticket = parseAuthUrl(rawUrl);
+  if (!ticket) {
+    return { ok: false, kind: "unknown", wasAuthUrl: false };
+  }
+  if (ticket.error) {
+    return {
+      ok: false,
+      kind: ticket.kind,
+      wasAuthUrl: true,
+      error: "That link no longer works. It may already have been used.",
+    };
+  }
+  try {
+    if (ticket.code) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(ticket.code);
+      if (error) {
+        console.warn("[auth] exchangeCodeForSession failed:", error.code ?? "-", error.message);
+        return {
+          ok: false,
+          kind: ticket.kind,
+          wasAuthUrl: true,
+          error:
+            "We could not complete the sign-in from that link. Please open the link on this phone, or request a new one.",
+        };
+      }
+      return { ok: !!data.session, kind: ticket.kind, wasAuthUrl: true };
+    }
+    if (ticket.accessToken && ticket.refreshToken) {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: ticket.accessToken,
+        refresh_token: ticket.refreshToken,
+      });
+      if (error) {
+        console.warn("[auth] legacy setSession failed:", error.message);
+        return {
+          ok: false,
+          kind: ticket.kind,
+          wasAuthUrl: true,
+          error: "That sign-in link has expired. Please request a new one.",
+        };
+      }
+      return { ok: !!data.session, kind: ticket.kind, wasAuthUrl: true };
+    }
+    return {
+      ok: false,
+      kind: ticket.kind,
+      wasAuthUrl: true,
+      error: "That link is missing its sign-in details. Please request a new one.",
+    };
+  } catch (e: any) {
+    console.warn("[auth] consumeAuthUrl threw:", e?.message ?? e);
+    return {
+      ok: false,
+      kind: ticket.kind,
+      wasAuthUrl: true,
+      error: "Connection problem while completing sign-in. Please try again.",
+    };
+  }
+}
 
 // ---- Marketplace session helpers (session-cookie model) ----
 // Customer WebView paths inject ONLY the shared session cookies fetched via

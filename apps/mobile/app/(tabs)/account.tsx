@@ -100,7 +100,11 @@ export default function AccountScreen() {
     })();
   }, [user?.id]);
 
-  const displayName = user?.full_name || "Guest User";
+  // Guard against a brief window where the store fires a stale / null user
+  // object during session hydration. Without this, a guest sees a crash when
+  // account.tsx tries to read `user.id` before the real session is loaded.
+  const safeUser = user ?? null;
+  const displayName = safeUser?.full_name || "Guest User";
   const displayEmail = user?.email || "";
   const displayLocation = user?.city || "Somalia";
 
@@ -116,6 +120,7 @@ export default function AccountScreen() {
           style: "destructive",
           onPress: async () => {
             await signOut();
+            router.replace("/(auth)/login");
           },
         },
       ]

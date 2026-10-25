@@ -219,7 +219,7 @@ export default function OrdersScreen() {
                   const img = item.product.images?.[0];
                   const mName = item.product.marketplace;
                   return (
-                    <View key={item.id} style={styles.card}>
+                    <View key={`${item.product_id}-${item.id}`} style={styles.card}>
                       {/* Product image */}
                       <View style={styles.cardIconWrap}>
                         {img ? (

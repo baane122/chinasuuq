@@ -1,4 +1,12 @@
-// AI Translation for WebView - uses app's ai-translate edge function
+// In-page translation for the marketplace WebView.
+//
+// THIS SCRIPT NEVER TOUCHES THE NETWORK. It only owns the DOM half: find the
+// Chinese, ask the RN app, apply the answer it hands back. All translation
+// traffic is src/api/translate.ts in the app layer, which now resolves through
+// Google's free endpoint instead of the paid ai-translate edge function. That
+// separation is why the deleted-in-d75318c Google script is not being
+// reintroduced: it fetched from inside the page on a permanent 600ms interval
+// with hanging 5s requests, and that architecture is what made pages crawl.
 //
 // The script runs INSIDE the marketplace page and owns the whole pipeline:
 //  1. collect() walks the DOM for Chinese text nodes, scored by viewport
@@ -6,7 +14,10 @@
 //     parent with data-cs-orig (the trimmed original) + data-cs-tr="1",
 //     registers the live node refs in state.map, then posts a FLAT message
 //     {type:"TRANSLATE_REQUEST", texts, targetLang} to the RN app.
-//  2. The app translates the batch and injects ONLY
+//  2. ONE batch may be in flight at a time (state.inflight). A pass while a
+//     batch is unanswered does nothing but count; after STALE_TICKS unanswered
+//     passes the guard is released so a dropped answer cannot freeze the page.
+//     The app translates the batch and injects ONLY
 //     window.__csApplyTranslations(originals, translated) — the DOM swap
 //     lives here (single source), not in the app layer.
 //  3. On a target-language change the script restores the originals from
@@ -14,26 +25,36 @@
 //     The app's RESTORE_SCRIPT performs the same undo for "show original".
 //
 // The schedule loop STOPS by itself once the per-page text budget is spent
-// or the page goes quiet (IDLE_STOP consecutive empty passes) — it no longer
-// ticks every 3s forever. Re-injection (page load / SPA NAV) revives it.
+// (MAX_REQUESTS), the page goes quiet (IDLE_STOP consecutive empty passes), or
+// the document is being torn down (pagehide clears the timer and retires the
+// task) — it no longer ticks every 3s forever. Re-injection (page load / SPA
+// NAV) revives it.
 
 import { RISK_INSIDE_FN } from "./webviewScripts.risk";
 
 export const AI_TRANSLATE_SCRIPT = `
 (function () {
   var TARGET = window.__CS_TL || "en";
-  // 40, not 60: the edge function caps a request at 40 texts and the app
-  // chunks at 40, so a 60-text pass cost TWO sequential paid round-trips (each
-  // with an edge cold-start) for one page region. One pass now = one request.
+  // 40, not 60: src/api/translate.ts batches at 40 (the cap the paid path used
+  // too), so one pass here is exactly one request there. A 60-text pass cost
+  // two sequential round trips for one page region.
   var GROUP_SIZE = 40;      // distinct texts posted per pass
-  var MAX_REQUESTS = 120;   // text budget per page / target language
+  var MAX_REQUESTS = 120;   // hard text budget per page / target language
   var INTERVAL_MS = 600;    // burst cadence while the page still has new text
   var IDLE_STOP = 4;        // consecutive empty passes before the loop quits
+  // An unanswered batch must not freeze the page, but releasing the one-in-flight
+  // guard must also happen BEFORE IDLE_STOP quiet passes retire the task, or the
+  // stale path can never run. 3 unanswered passes at the 600ms cadence (which
+  // backs off to ~2.4s) is already several seconds of the app not answering.
+  var STALE_TICKS = 3;      // unanswered passes after which the in-flight batch
+                            // is abandoned (an app that died mid-batch must not
+                            // stop the page translating the rest)
 
   if (typeof window.__csAiTrState === "undefined") {
     window.__csAiTrState = {
       requests: 0, done: {}, pending: {}, results: {}, map: {}, fails: {},
-      target: null, installed: false, timer: 0, href: "", idle: 0
+      target: null, installed: false, timer: 0, href: "", idle: 0,
+      inflight: 0, wait: 0
     };
   }
   var state = window.__csAiTrState;
@@ -110,6 +131,8 @@ export const AI_TRANSLATE_SCRIPT = `
   if (state.href !== HREF || state.target !== TARGET) {
     state.requests = 0;
     state.idle = 0;
+    state.inflight = 0;
+    state.wait = 0;
     state.done = {};
     state.pending = {};
     state.results = {};
@@ -119,6 +142,23 @@ export const AI_TRANSLATE_SCRIPT = `
   state.target = TARGET;
   state.href = HREF;
   state.installed = true;
+
+  // TEARDOWN. Registered once per document: a real navigation replaces the
+  // document (so its timers die with it), but a soft unload must still retire
+  // the task and clear the private timer chain instead of leaving it pending
+  // against state that no longer has a page.
+  if (!window.__csAiTeardown) {
+    window.__csAiTeardown = true;
+    try {
+      window.addEventListener("pagehide", function () {
+        try {
+          if (state.timer) { clearTimeout(state.timer); state.timer = 0; }
+          if (window.__csAiTimer) { clearTimeout(window.__csAiTimer); window.__csAiTimer = 0; }
+          if (window.__cs && window.__cs.stop) window.__cs.stop("translate");
+        } catch (e) {}
+      });
+    } catch (e) {}
+  }
 
   // Viewport-prioritised collection (scoring ported from the old Google
   // path): visible nodes get score 0, off-screen ones their distance —
@@ -200,13 +240,24 @@ export const AI_TRANSLATE_SCRIPT = `
     }
     if (!texts.length) return;
     state.requests += texts.length;
+    var posted = false;
     try {
-      window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({
-        type: "TRANSLATE_REQUEST",
-        texts: texts,
-        targetLang: TARGET
-      }));
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: "TRANSLATE_REQUEST",
+          texts: texts,
+          targetLang: TARGET
+        }));
+        posted = true;
+      }
     } catch (e) {}
+    // ONE batch in flight, and only for a batch that actually left the page:
+    // the guard is cleared by the answer (__csApplyTranslations /
+    // __csTranslateFailed) or by STALE_TICKS unanswered passes.
+    if (posted) {
+      state.inflight = 1;
+      state.wait = 0;
+    }
   }
 
   // THE DOM SWAP (single source of truth). The app injects exactly:
@@ -216,6 +267,11 @@ export const AI_TRANSLATE_SCRIPT = `
   window.__csApplyTranslations = function (originals, translated) {
     try {
       if (!originals || !originals.length) return true;
+      // The batch we were waiting for has been answered: release the in-flight
+      // guard and wake the schedule if the budget is still unspent.
+      state.inflight = 0;
+      state.wait = 0;
+      if (window.__cs && state.requests < MAX_REQUESTS) window.__cs.reset("translate");
       for (var i = 0; i < originals.length; i++) {
         var key = String(originals[i] || "").trim();
         if (!key) continue;
@@ -251,6 +307,8 @@ export const AI_TRANSLATE_SCRIPT = `
   window.__csTranslateFailed = function (originals) {
     try {
       if (!originals || !originals.length) return true;
+      state.inflight = 0;
+      state.wait = 0;
       var revived = false;
       for (var i = 0; i < originals.length; i++) {
         var key = String(originals[i] || "").trim();
@@ -294,6 +352,17 @@ export const AI_TRANSLATE_SCRIPT = `
   // timers the page was already running.
   function tick() {
     if (state.requests >= MAX_REQUESTS) return 0;
+    // ONE in-flight batch. A pass while a batch is unanswered only counts; it
+    // does not scan the DOM and does not post, so a slow endpoint can never
+    // stack requests behind each other. STALE_TICKS unanswered passes mean the
+    // answer is never coming (the app unmounted, the message was dropped) and
+    // the page must not stay frozen with half its text untranslated.
+    if (state.inflight) {
+      state.wait++;
+      if (state.wait < STALE_TICKS) return 0;
+      state.inflight = 0;
+      state.wait = 0;
+    }
     var nodes = collect();
     if (nodes.length > 0) {
       state.idle = 0;

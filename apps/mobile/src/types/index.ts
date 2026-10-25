@@ -16,6 +16,39 @@ export interface ProductVariant {
   stock: number;
 }
 
+/**
+ * Staff-chosen placement for one product, read from the RESERVED key
+ * `_curation` inside `source_products.attributes` (shape: {featured, rank,
+ * note, pinned_by, pinned_at}). The website's Mission Control writes it; this
+ * app only reads it, and `src/db` strips every `_`-prefixed key out of
+ * `attributes` so staff metadata can never render to a customer as a spec.
+ * Optional because cart lines, WebView captures and cache rows written before
+ * this field existed carry no curation at all.
+ */
+export interface ProductCuration {
+  featured: boolean;
+  /** 1 = first staff pick on the shelf. Lower number wins. null = not ranked. */
+  rank: number | null;
+}
+
+/**
+ * One row of the live `categories` table (verified columns 2026-10-16):
+ * name_en/name_so bilingual labels, slug, emoji or URL icon, image_url,
+ * sort_order and is_active. parent_id exists for future sub-categories but the
+ * browse surfaces are flat today.
+ */
+export interface Category {
+  id: string;
+  name_en: string | null;
+  name_so: string | null;
+  slug: string | null;
+  icon: string | null;
+  image_url: string | null;
+  parent_id: string | null;
+  sort_order: number | null;
+  is_active: boolean | null;
+}
+
 export interface Product {
   id: string;
   marketplace: Marketplace;
@@ -30,7 +63,16 @@ export interface Product {
   images: string[];
   video?: string;
   category: string;
+  /** FK to `categories.id` as the database returns it. POPULATION IS ~0% in
+   *  production (see 202610161301_category_wiring.sql): the real categorisation
+   *  today is the text column above, which holds English NAMES. Never filter
+   *  products on this alone — use src/api/categories productInCategory(). */
+  category_id?: string | null;
+  /** Internal keys (`_curation`, any `_`-prefixed staff metadata) are stripped
+   *  from this map by mapRowToProduct() before a row is ever cached or shown. */
   attributes: Record<string, string>;
+  /** Read-only placement derived from the reserved `_curation` attribute. */
+  curation?: ProductCuration | null;
   variants: ProductVariant[];
   moq: number;
   /** Provenance of `moq`: manual = a human typed/confirmed it, regex = the

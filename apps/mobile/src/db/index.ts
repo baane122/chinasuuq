@@ -631,8 +631,27 @@ export async function updateOrderStatus(
 // PRODUCTS — real products, local cache + Supabase `source_products` table
 // (matches the web admin's Products CRUD table)
 // =====================================================================
-import type { Product } from "@/types";
+import type { Product, Category, ProductCuration } from "@/types";
 const PRODUCTS_KEY = "chinasuuq-local-products";
+
+/**
+ * The catalog cache is a JSON envelope `{ rows, fetchedAt }`. The envelope is
+ * what adds the TTL: before this the device served its AsyncStorage catalog
+ * FOREVER when the 5-minute-old row was a month old, because getProducts() only
+ * ever went remote when the cache was empty. Legacy payloads (a bare array, the
+ * old format) are read as fetchedAt=0 — i.e. instantly stale, refreshed on the
+ * next read, but still served if the refresh fails, so an offline device never
+ * loses its catalog.
+ */
+interface ProductCacheEnvelope {
+  rows: Product[];
+  fetchedAt: number;
+}
+
+/** A cached catalog younger than this is served without touching the network. */
+export const CATALOG_TTL_MS = 5 * 60_000;
+/** Categories change when staff add one; an hour is invisible and keeps offline reads fast. */
+const CATEGORIES_TTL_MS = 60 * 60_000;
 
 /**
  * THE ONE RATE, APPLIED HERE.
@@ -663,17 +682,11 @@ function withLivePrice<T extends { price_cny_min?: number; price_usd_estimated?:
  * search, wishlist, cart, orders — shows the live rate rather than a stale one.
  */
 async function repriceProductCache(): Promise<void> {
-  const raw = await safeGet(PRODUCTS_KEY);
-  if (!raw) return;
-  try {
-    const all = JSON.parse(raw) as Product[];
-    if (!Array.isArray(all)) return;
-    const next = all.map(withLivePrice);
-    const changed = next.some((p, i) => p.price_usd_estimated !== all[i]?.price_usd_estimated);
-    if (changed) await safeSet(PRODUCTS_KEY, JSON.stringify(next));
-  } catch {
-    /* corrupt cache — the next forced sync rebuilds it */
-  }
+  const cached = await readProductCache();
+  if (!cached || cached.rows.length === 0) return;
+  const next = cached.rows.map(withLivePrice);
+  const changed = next.some((p, i) => p.price_usd_estimated !== cached.rows[i]?.price_usd_estimated);
+  if (changed) await writeProductCache(next);
 }
 
 // One module-level subscription: the FX store is the only rate source, and this
@@ -682,43 +695,200 @@ subscribeFx(() => {
   void repriceProductCache();
 });
 
-export async function getProducts(force = false): Promise<Product[]> {
-  if (!force) {
-    const raw = await safeGet(PRODUCTS_KEY);
-    if (raw) {
-      try {
-        const cached = JSON.parse(raw) as Product[];
-        const live = cached.map(withLivePrice);
-        // Persist only when the live rate actually moved a figure.
-        if (live.some((p, i) => p.price_usd_estimated !== cached[i]?.price_usd_estimated)) {
-          await safeSet(PRODUCTS_KEY, JSON.stringify(live));
-        }
-        return live;
-      } catch (e) { logDbError("getProducts", e); }
+/**
+ * Live declares `price_cny_min NUMERIC NOT NULL DEFAULT 0`, so 0 is the column's
+ * own word for "nobody priced this" — the same absence as NULL. Carrying it
+ * through renders a real product as free on every screen.
+ */
+function positiveOr(value: number | null): number | null {
+  return value !== null && value > 0 ? value : null;
+}
+
+/**
+ * Read the catalog cache envelope. `null` means "this device has never held a
+ * catalog" — distinct from an envelope whose rows are empty. Accepts the legacy
+ * bare-array payload (no TTL existed) as fetchedAt 0, so it is stale-but-served
+ * rather than silently dropped on the first read after this deploy.
+ */
+async function readProductCache(): Promise<ProductCacheEnvelope | null> {
+  const raw = await safeGet(PRODUCTS_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return { rows: parsed as Product[], fetchedAt: 0 };
+    if (parsed && Array.isArray(parsed.rows)) {
+      return { rows: parsed.rows as Product[], fetchedAt: Number(parsed.fetchedAt) || 0 };
     }
+    return null;
+  } catch (e) {
+    logDbError("readProductCache", e);
+    return null;
   }
-  // seed empty, try supabase
+}
+
+async function writeProductCache(rows: Product[]): Promise<void> {
+  await safeSet(PRODUCTS_KEY, JSON.stringify({ rows, fetchedAt: Date.now() }));
+}
+
+/** Shared getProducts() calls for concurrent readers (home + trending hydrate + search). */
+let productsInFlight: Promise<Product[]> | null = null;
+
+export async function getProducts(force = false): Promise<Product[]> {
+  if (productsInFlight) return productsInFlight;
+  const run = (async () => {
+    const cached = await readProductCache();
+    const fresh =
+      cached !== null && Date.now() - cached.fetchedAt < CATALOG_TTL_MS;
+
+    // Fresh cache wins the round — same instant paint as always.
+    if (!force && fresh && cached) {
+      const live = cached.rows.map(withLivePrice);
+      // Persist only when the live rate actually moved a figure.
+      if (live.some((p, i) => p.price_usd_estimated !== cached.rows[i]?.price_usd_estimated)) {
+        await writeProductCache(live);
+      }
+      return live;
+    }
+
+    // Stale or empty (or an explicit refresh): try Supabase, but a failed
+    // network read MUST fall through to the stale cache — that is the whole
+    // offline-first contract. A stale month-old row is better than a blank
+    // shop, and the next successful sync replaces it wholesale.
+    try {
+      if (await isBackendOnline()) {
+        const { data, error } = await supabase.from("source_products").select("*").limit(200);
+        if (!error && data && data.length) {
+          const mapped = data.map((p: any) => mapRowToProduct(p));
+          await writeProductCache(mapped);
+          return mapped;
+        }
+        if (error) logDbError("getProducts", error);
+      }
+    } catch (e) {
+      logDbError("getProducts", e);
+    }
+
+    // The refresh did not answer: serve the stale cache (repriced), never [].
+    if (cached && cached.rows.length > 0) {
+      return cached.rows.map(withLivePrice);
+    }
+    return [];
+  })();
+  try {
+    return await run;
+  } finally {
+    productsInFlight = null;
+  }
+}
+
+/**
+ * Rows the local catalog actually holds for a category text value — used by the
+ * browse surfaces as the FALLBACK vocabulary when the `categories` table read
+ * returns nothing (offline on a fresh device, or a blocked table). Never the
+ * old hardcoded chip list: these are the values products really carry.
+ */
+export async function getDistinctProductCategories(): Promise<string[]> {
+  const all = await getProducts();
+  const set = new Set<string>();
+  for (const p of all) {
+    const t = (p.category || "").trim();
+    if (t) set.add(t);
+  }
+  return Array.from(set).sort();
+}
+
+// =====================================================================
+// CATEGORIES — the real `categories` table (12 live rows), local-first
+// =====================================================================
+/**
+ * Same envelope shape as the product cache: `{ rows, fetchedAt }`. Categories
+ * are quasi-static staff data, so the TTL is an hour rather than five minutes.
+ * The list query is the exact column set of the live table (verified against
+ * production PostgREST 2026-10-16; see apps/web/supabase/migrations/
+ * 202610161301_category_wiring.sql for WHY `name` alone is not enough).
+ */
+const CATEGORIES_KEY = "chinasuuq-local-categories";
+const CATEGORY_COLUMNS = "id,name_en,name_so,slug,icon,image_url,parent_id,sort_order,is_active";
+
+interface CategoryCacheEnvelope {
+  rows: Category[];
+  fetchedAt: number;
+}
+
+async function readCategoryCache(): Promise<CategoryCacheEnvelope | null> {
+  const raw = await safeGet(CATEGORIES_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.rows)) {
+      return { rows: parsed.rows as Category[], fetchedAt: Number(parsed.fetchedAt) || 0 };
+    }
+    return null;
+  } catch (e) {
+    logDbError("readCategoryCache", e);
+    return null;
+  }
+}
+
+/** Coerce one row without trusting any column — the browse chips must not crash on a half-written row. */
+function mapRowToCategory(r: any): Category {
+  const sort = Number(r?.sort_order);
+  return {
+    id: String(r?.id ?? ""),
+    name_en: typeof r?.name_en === "string" && r.name_en.trim() ? r.name_en : null,
+    name_so: typeof r?.name_so === "string" && r.name_so.trim() ? r.name_so : null,
+    slug: typeof r?.slug === "string" && r.slug.trim() ? r.slug : null,
+    icon: typeof r?.icon === "string" && r.icon.trim() ? r.icon : null,
+    image_url: typeof r?.image_url === "string" && r.image_url.trim() ? r.image_url : null,
+    parent_id: typeof r?.parent_id === "string" && r.parent_id ? r.parent_id : null,
+    sort_order: Number.isFinite(sort) ? sort : null,
+    is_active: typeof r?.is_active === "boolean" ? r.is_active : null,
+  };
+}
+
+/**
+ * The live `categories` rows, ordered by sort_order, active-only.
+ *
+ * Local-first like every other read here: a fresh cache answers instantly and
+ * offline; a stale one is refreshed but NEVER replaced by a blank list when the
+ * network fails; an unreadable table returns [] and the caller falls back to
+ * the category texts the products actually carry. It never throws, and it is
+ * never a "spinner forever" source — worst case is [] in a few hundred ms.
+ */
+export async function getCategories(force = false): Promise<Category[]> {
+  const cached = await readCategoryCache();
+  const fresh = cached !== null && Date.now() - cached.fetchedAt < CATEGORIES_TTL_MS;
+  if (!force && fresh && cached) return cached.rows;
+
   try {
     if (await isBackendOnline()) {
-      const { data } = await supabase.from("source_products").select("*").limit(200);
-      if (data && data.length) {
-        const mapped = data.map((p: any) => mapRowToProduct(p));
-        await safeSet(PRODUCTS_KEY, JSON.stringify(mapped));
-        return mapped;
+      const { data, error } = await supabase
+        .from("categories")
+        .select(CATEGORY_COLUMNS)
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true })
+        .order("name_en", { ascending: true })
+        .limit(100);
+      if (!error && Array.isArray(data)) {
+        const rows = (data as any[])
+          .map(mapRowToCategory)
+          .filter((c) => c.id && (c.name_en || c.name_so || c.slug));
+        if (rows.length > 0) {
+          await safeSet(CATEGORIES_KEY, JSON.stringify({ rows, fetchedAt: Date.now() }));
+          return rows;
+        }
+        // The table answered with nothing active: same fallback vocabulary as
+        // a failed read, not the old hardcoded chip list.
+        if (cached) return cached.rows;
+        return [];
       }
+      if (error) logDbError("getCategories", error);
     }
-  } catch (e) { logDbError("getProducts", e); }
-  // Fall back to local product cache (kept intact even when force=false only —
-  // a force refresh still returns [] rather than stale cache if the backend fails).
-  if (force) {
-    const raw = await safeGet(PRODUCTS_KEY);
-    if (raw) {
-      try {
-        return (JSON.parse(raw) as Product[]).map(withLivePrice);
-      } catch (e) { logDbError("getProducts", e); }
-    }
+  } catch (e) {
+    logDbError("getCategories", e);
   }
-  return [];
+  // Could not refresh: stale cache beats nothing.
+  return cached ? cached.rows : [];
 }
 
 export async function getProductById(id: string): Promise<Product | null> {
@@ -791,10 +961,15 @@ function mapRowToProduct(p: any): Product {
     description_somali: firstText(p.description_somali) || undefined,
     images,
     category: firstText(p.category) || "",
-    attributes:
-      p.attributes && typeof p.attributes === "object" && !Array.isArray(p.attributes)
-        ? p.attributes
-        : {},
+    // The FK exists in production but is ~0% populated (202610160002_category_
+    // wiring.sql): it is read so a future sync makes `category_id` filtering
+    // exact, while the text above stays the fallback matcher.
+    category_id: typeof p.category_id === "string" && p.category_id ? p.category_id : null,
+    // Staff metadata lives under `_`-prefixed keys of this jsonb. It is stripped
+    // here so no screen rendering attributes as specs can leak `_curation`
+    // notes; the placement itself is re-exposed on the typed `curation` field.
+    attributes: sanitizeAttributes(p.attributes),
+    curation: readCuration(p.attributes),
     variants: Array.isArray(p.variants) ? p.variants : [],
     moq: p.moq ?? 1,
     // MOQ provenance (migration 202609250003_moq_extraction). Kept as-is so
@@ -832,21 +1007,67 @@ function firstText(...values: unknown[]): string {
   return "";
 }
 
+// =====================================================================
+// INTERNAL ATTRIBUTES — the reserved `_` namespace
+// =====================================================================
+/**
+ * The website's Mission Control stores staff metadata inside
+ * `source_products.attributes` under keys prefixed with "_" (today:
+ * `_curation` = {featured, rank, note, pinned_by, pinned_at}). That column is
+ * documented as customer-facing product specs ("{ color: red }") and BOTH apps
+ * render it to customers, so the strip must happen HERE — at hydration, before
+ * a row is ever cached or handed to a screen. A screen that prints attributes
+ * then physically cannot leak staff notes.
+ */
+export const INTERNAL_ATTRIBUTE_PREFIX = "_";
+export const CURATION_ATTRIBUTE_KEY = "_curation";
+
+/** Stripped copy of a raw attributes map, typed to the app's Record<string,string>. */
+function sanitizeAttributes(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (k.startsWith(INTERNAL_ATTRIBUTE_PREFIX)) continue;
+    if (typeof v === "string") out[k] = v;
+    else if (v !== null && v !== undefined) out[k] = String(v);
+  }
+  return out;
+}
+
+/**
+ * The small curation reader the browse cards use for a "Featured" ribbon.
+ * Tolerant of half-written values: anything unusable reads as "no placement",
+ * never as a crash and never as featured-by-accident.
+ */
+export function readCuration(rawAttributes: unknown): ProductCuration {
+  const none: ProductCuration = { featured: false, rank: null };
+  let obj: Record<string, unknown> | null = null;
+  if (rawAttributes && typeof rawAttributes === "object" && !Array.isArray(rawAttributes)) {
+    obj = rawAttributes as Record<string, unknown>;
+  } else if (typeof rawAttributes === "string" && rawAttributes.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(rawAttributes);
+      if (parsed && typeof parsed === "object") obj = parsed as Record<string, unknown>;
+    } catch {
+      return none;
+    }
+  }
+  const node = obj?.[CURATION_ATTRIBUTE_KEY];
+  if (!node || typeof node !== "object" || Array.isArray(node)) return none;
+  const c = node as Record<string, unknown>;
+  const rank = Number(c.rank);
+  return {
+    featured: c.featured === true,
+    rank: Number.isFinite(rank) && rank >= 1 ? Math.round(rank) : null,
+  };
+}
+
 function firstNumber(...values: unknown[]): number | null {
   for (const v of values) {
     const n = typeof v === "string" ? Number(v) : v;
     if (typeof n === "number" && Number.isFinite(n)) return n;
   }
   return null;
-}
-
-/**
- * Live declares `price_cny_min NUMERIC NOT NULL DEFAULT 0`, so 0 is the column's
- * own word for "nobody priced this" — the same absence as NULL. Carrying it
- * through renders a real product as free on every screen.
- */
-function positiveOr(value: number | null): number | null {
-  return value !== null && value > 0 ? value : null;
 }
 
 /**
@@ -906,7 +1127,7 @@ async function applyMoqToLocalCache(productId: string, d: MoqDecision): Promise<
       moq_confidence: d.confidence,
       moq_raw_text: d.rawText ?? null,
     };
-    await safeSet(PRODUCTS_KEY, JSON.stringify(all));
+    await writeProductCache(all);
   } catch (e) { logDbError("applyMoqToLocalCache", e); }
 }
 

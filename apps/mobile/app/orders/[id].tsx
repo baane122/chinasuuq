@@ -33,7 +33,7 @@ import { COLORS, SPACING, RADIUS, FONTS, WHATSAPP_LINK, whatsappOrderLink } from
 import { ORDER_STATUS_LABELS, PAYMENT_METHOD_LABELS } from "@/lib/constants";
 import { useI18n } from "@/lib/i18n";
 import { getOrderById, updateOrderStatus } from "@/db/index";
-import type { LocalOrder } from "@/db/index";
+import type { LocalOrder, OrderLookupState } from "@/db/index";
 import { useAuthStore } from "@/store/auth";
 import { supabase } from "@/lib/supabase";
 import { Timeline, TimelineEvent } from "@/components/orders/Timeline";
@@ -197,11 +197,16 @@ function OrderDetailScreenContent() {
         setLocked(true);
         return;
       }
-      const data = await getOrderById(id);
+      const lookup: OrderLookupState = { readFailed: false };
+      const data = await getOrderById(id, lookup);
       if (!data) {
         orderRef.current = null;
         setOrder(null);
         setLocked(false);
+        // A read that could not reach the server is not "no such order":
+        // surface the retry state instead of a false "Order Not Found" on a
+        // paid order that exists on another device or with an admin.
+        if (lookup.readFailed) setLoadError(true);
         return;
       }
       let allowed = isStaff;

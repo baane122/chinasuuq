@@ -3,25 +3,25 @@ import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useRouter } from "expo-router";
+import { useI18n } from "@/lib/i18n";
 
 const EMPTY_IMG = require("../../../assets/screens/empty_cart.png");
 
 export default function EmptyCart() {
   const router = useRouter();
+  const { t } = useI18n();
 
   return (
     <View style={styles.container}>
       <Image source={EMPTY_IMG} style={styles.illustration} contentFit="contain" />
-      <Text style={styles.title}>Your cart is empty</Text>
-      <Text style={styles.subtitle}>
-        Browse products from China and start adding to your cart
-      </Text>
+      <Text style={styles.title}>{t("cart.emptyTitle")}</Text>
+      <Text style={styles.subtitle}>{t("cart.emptySubtitle")}</Text>
       <TouchableOpacity
         style={styles.btn}
         onPress={() => router.push("/")}
         activeOpacity={0.8}
       >
-        <Text style={styles.btnText}>Start Shopping</Text>
+        <Text style={styles.btnText}>{t("cart.startShopping")}</Text>
       </TouchableOpacity>
     </View>
   );

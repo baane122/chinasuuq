@@ -7,37 +7,36 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
+import { categoryLabel, type BrowseCategory } from "@/api/categories";
 
 interface CategoryChipsProps {
+  /** The real categories (from `useBrowseCategories`) — already sorted and counted. */
+  categories: BrowseCategory[];
   selected?: string;
   onSelect?: (id: string) => void;
+  /** Total products behind the "All" chip; omit to hide the number. */
+  totalCount?: number;
 }
-
-const CATEGORIES = [
-  { id: "all", emoji: "🔥", labelKey: "All" },
-  { id: "electronics", emoji: "📱", labelKey: "Electronics" },
-  { id: "clothing", emoji: "👔", labelKey: "Clothing" },
-  { id: "home", emoji: "🏠", labelKey: "Home" },
-  { id: "beauty", emoji: "💄", labelKey: "Beauty" },
-  { id: "toys", emoji: "🧸", labelKey: "Toys" },
-  { id: "sports", emoji: "⚽", labelKey: "Sports" },
-  { id: "automotive", emoji: "🚗", labelKey: "Auto" },
-  { id: "jewelry", emoji: "💎", labelKey: "Jewelry" },
-  { id: "bags", emoji: "👜", labelKey: "Bags" },
-];
 
 function AnimatedChip({
   isActive,
   emoji,
+  iconUrl,
   label,
+  count,
+  showCount,
   onPress,
 }: {
   isActive: boolean;
-  emoji: string;
+  emoji: string | null;
+  iconUrl: string | null;
   label: string;
+  count: number;
+  showCount: boolean;
   onPress: () => void;
 }) {
   const scale = useRef(new Animated.Value(isActive ? 1 : 0.92)).current;
@@ -63,23 +62,55 @@ function AnimatedChip({
         activeOpacity={0.75}
         onPress={onPress}
       >
-        <Text style={styles.emoji}>{emoji}</Text>
+        {iconUrl ? (
+          <Image
+            source={{ uri: iconUrl }}
+            style={styles.chipIconImg}
+            contentFit="cover"
+            transition={120}
+            cachePolicy="memory-disk"
+          />
+        ) : emoji ? (
+          <Text style={styles.emoji}>{emoji}</Text>
+        ) : null}
         {isActive && <View style={styles.activeDot} />}
-        <Text style={[styles.label, isActive && styles.labelActive]}>
+        <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1}>
           {label}
         </Text>
+        {showCount && (
+          <View style={[styles.countBadge, isActive && styles.countBadgeActive]}>
+            <Text style={[styles.countText, isActive && styles.countTextActive]}>
+              {count}
+            </Text>
+          </View>
+        )}
       </TouchableOpacity>
     </Animated.View>
   );
 }
 
-export function CategoryChips({ selected = "all", onSelect }: CategoryChipsProps) {
-  const { t } = useI18n();
+/**
+ * The category row, driven by the REAL `categories` table (name_so/name_en per
+ * app locale, icon or image, sort_order) with an honest per-shelf count — a
+ * category with no products reads as 0 and the grid says so, instead of the old
+ * behaviour where ten hardcoded ids matched almost nothing.
+ */
+export function CategoryChips({
+  categories,
+  selected = "all",
+  onSelect,
+  totalCount,
+}: CategoryChipsProps) {
+  const { locale } = useI18n();
 
   const handlePress = (id: string) => {
     void Haptics.selectionAsync();
     onSelect?.(id);
   };
+
+  // Counts only become meaningful once the catalog itself is on screen; until
+  // then chips show no number rather than a misleading row of zeroes.
+  const showCounts = totalCount !== undefined && totalCount > 0;
 
   return (
     <ScrollView
@@ -88,18 +119,28 @@ export function CategoryChips({ selected = "all", onSelect }: CategoryChipsProps
       decelerationRate="fast"
       contentContainerStyle={styles.container}
     >
-      {CATEGORIES.map((cat) => {
-        // t() echoes the key back when a translation is missing; fall back to
-        // the built-in English label in that case (this is what the earlier
-        // `t(key) || labelKey` expression could never do — a key is truthy).
-        const key = `categories.${cat.id}`;
-        const translated = t(key);
+      <AnimatedChip
+        isActive={selected === "all"}
+        emoji="🔥"
+        iconUrl={null}
+        label={locale === "so" ? "Dhammaan" : "All"}
+        count={totalCount ?? 0}
+        showCount={showCounts}
+        onPress={() => handlePress("all")}
+      />
+      {categories.map((cat) => {
+        // The icon column is loose data: an http(s) value is an image, anything
+        // else (an emoji like 🏠) is text. Either way it is optional.
+        const iconIsUrl = Boolean(cat.icon && /^https?:\/\//i.test(cat.icon));
         return (
           <AnimatedChip
             key={cat.id}
             isActive={selected === cat.id}
-            emoji={cat.emoji}
-            label={translated === key ? cat.labelKey : translated}
+            emoji={iconIsUrl ? null : cat.icon}
+            iconUrl={iconIsUrl ? cat.icon : cat.imageUrl}
+            label={categoryLabel(cat, locale)}
+            count={cat.count}
+            showCount={showCounts}
             onPress={() => handlePress(cat.id)}
           />
         );
@@ -144,6 +185,12 @@ const styles = StyleSheet.create({
   emoji: {
     fontSize: 15,
   },
+  chipIconImg: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: COLORS.gray100,
+  },
   activeDot: {
     width: 4,
     height: 4,
@@ -158,5 +205,24 @@ const styles = StyleSheet.create({
   labelActive: {
     color: COLORS.white,
     fontFamily: FONTS.semibold,
+  },
+  countBadge: {
+    minWidth: 20,
+    alignItems: "center",
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    backgroundColor: COLORS.gray100,
+  },
+  countBadgeActive: {
+    backgroundColor: "rgba(255,255,255,0.25)",
+  },
+  countText: {
+    fontSize: 10,
+    fontFamily: FONTS.semibold,
+    color: COLORS.textSecondary,
+  },
+  countTextActive: {
+    color: COLORS.white,
   },
 });

@@ -144,7 +144,7 @@ const RESTORE_SCRIPT =
   "p.removeAttribute('data-cs-tr');p.removeAttribute('data-cs-orig');}" +
   "var marked=document.querySelectorAll('[data-cs-tr=' + String.fromCharCode(34) + '1' + String.fromCharCode(34) + ']');" +
   "for(var m=0;m<marked.length;m++){marked[m].removeAttribute('data-cs-tr');}" +
-  "if(s){s.target=null;s.installed=false;s.done={};s.pending={};s.results={};s.map={};s.requests=0;s.idle=0;}" +
+  "if(s){s.target=null;s.installed=false;s.done={};s.pending={};s.results={};s.map={};s.requests=0;s.idle=0;s.inflight=0;s.wait=0;}" +
   "}catch(e){}})();true;";
 
 export default function MarketplaceBrowser() {
@@ -550,16 +550,22 @@ export default function MarketplaceBrowser() {
   // All DOM application lives in the script (single source) — the app only
   // answers with window.__csApplyTranslations(originals, translated).
   //
-  // PERF: requests are SERIALIZED through one queue instead of firing a
-  // function call per message. A product page posts several bursts while it
-  // mounts, and each used to start its own paid round-trip while the previous
-  // one was still in flight — the extra cold starts and the bandwidth race are
-  // what made translation arrive late. Whatever arrives while a batch is out
-  // gets merged into the next single call.
+  // PERF: requests are SERIALIZED through one queue instead of firing a request
+  // per message. A product page posts several bursts while it mounts, and each
+  // used to start its own network round-trip while the previous one was still in
+  // flight — the extra calls and the bandwidth race are what made translation
+  // arrive late. Whatever arrives while a batch is out gets merged into the next
+  // single call. translate.ts is the only thing that talks to the network here
+  // (Google's free endpoint, batched at 40, time-boxed, circuit-broken); the page
+  // itself never fetches.
   const translateQueueRef = useRef<{ lang: string; texts: string[] }>({ lang: "", texts: [] });
   const translateBusyRef = useRef(false);
+  // False once the screen unmounts: a batch that lands after navigation must
+  // not inject into a WebView that is gone, and the queued texts are stale.
+  const translateAliveRef = useRef(true);
 
   const applyToPage = useCallback((originals: string[], translated: string[]) => {
+    if (!translateAliveRef.current) return;
     try {
       webRef.current?.injectJavaScript?.(
         "window.__csApplyTranslations && window.__csApplyTranslations(" +
@@ -574,6 +580,7 @@ export default function MarketplaceBrowser() {
   }, []);
 
   const releaseToPage = useCallback((originals: string[]) => {
+    if (!translateAliveRef.current) return;
     try {
       webRef.current?.injectJavaScript?.(
         "window.__csTranslateFailed && window.__csTranslateFailed(" +
@@ -596,6 +603,7 @@ export default function MarketplaceBrowser() {
     try {
       const { translateTextsDetailed } = await import("@/api/translate");
       const { map, failed } = await translateTextsDetailed(originals, targetLang);
+      if (!translateAliveRef.current) return;
       // translateTextsDetailed keys by the TRIMMED source string — request with
       // the same key the page stamped so lookups can't miss on whitespace.
       const translated = originals.map((t) => map[t] || t);
@@ -609,7 +617,9 @@ export default function MarketplaceBrowser() {
     } finally {
       translateBusyRef.current = false;
     }
-    if (translateQueueRef.current.texts.length > 0) await drainTranslateQueue();
+    if (translateAliveRef.current && translateQueueRef.current.texts.length > 0) {
+      await drainTranslateQueue();
+    }
   }, [applyToPage, releaseToPage]);
 
   const handleTranslateRequest = useCallback(
@@ -632,6 +642,19 @@ export default function MarketplaceBrowser() {
     },
     [drainTranslateQueue]
   );
+
+  // TEARDOWN. On unmount (back, tab switch, router.replace) stop the drain loop
+  // and drop whatever is still queued: a batch that resolves after this screen
+  // is gone must not inject into a detached WebView, and its texts are stale
+  // for the next page. Inside the document, AI_TRANSLATE_SCRIPT registers its
+  // own pagehide hook; RESTORE_SCRIPT retires the task for "show original".
+  useEffect(() => {
+    translateAliveRef.current = true;
+    return () => {
+      translateAliveRef.current = false;
+      translateQueueRef.current = { lang: "", texts: [] };
+    };
+  }, []);
 
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -881,11 +904,15 @@ export default function MarketplaceBrowser() {
   }, [url, locale]);
 
   // ---- Language control (Translate to English / Somali / Original) ----
-  // EN/SO now go through the AI path (same as the auto-translated suite):
+  // EN/SO go through the AI path (same as the auto-translated suite):
   // re-injecting AI_TRANSLATE_SCRIPT with a new window.__CS_TL makes the page
   // script itself restore the previous target's originals and re-translate.
-  // The Google TRANSLATE_SCRIPT is gone — its blocked-in-China fetch endpoints
-  // (translate.googleapis.com / api.mymemory) were the source of the slowness.
+  // The page NEVER fetches: it posts TRANSLATE_REQUEST and the app answers via
+  // src/api/translate.ts, which resolves through Google's free endpoint (the
+  // paid ai-translate edge function is no longer in this path). The old
+  // self-contained Google TRANSLATE_SCRIPT is still gone — what made pages crawl
+  // was its permanent 600ms interval and hanging in-page fetches, not the
+  // endpoint, and that architecture has not come back.
   const setLanguage = useCallback(
     async (next: string | null) => {
       Haptics.selectionAsync();

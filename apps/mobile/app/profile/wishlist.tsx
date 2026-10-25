@@ -122,7 +122,7 @@ export default function WishlistScreen() {
           <ExpoImage source={EMPTY_WISHLIST_IMG} style={styles.emptyImg} contentFit="contain" transition={150} />
           <Text style={styles.emptyTitle}>{t("wishlist.emptyTitle")}</Text>
           <Text style={styles.emptySub}>{t("wishlist.emptySub")}</Text>
-          <Pressable style={styles.shopBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push("/(tabs)" as any); }}>
+          <Pressable style={styles.shopBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.replace("/(tabs)/home"); }}>
             <Text style={styles.shopBtnText}>{t("wishlist.browse")}</Text>
           </Pressable>
         </View>

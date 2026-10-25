@@ -1,7 +1,13 @@
-import React, { useCallback, useMemo } from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Animated,
+} from "react-native";
 import { Image } from "expo-image";
-import { Plus } from "lucide-react-native";
+import { Plus, Package } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import type { Product } from "@/types";
@@ -9,10 +15,19 @@ import { useCartStore } from "@/store/cart";
 import { parseMOQ, getMOQText } from "@/lib/shipping";
 import { useFx, DEFAULT_CNY_PER_USD } from "@/lib/exchange";
 import { useI18n } from "@/lib/i18n";
+import { trackAddToCart, trackProductView, trackSearchClick } from "@/api/browseEvents";
+import { prefersReduceMotion } from "@/lib/useReduceMotion";
 
 interface ProductCardProps {
   product: Product;
   onPress?: () => void;
+  /**
+   * Which engagement the opening of THIS card reports. "view" is a browse
+   * surface (home grid, wishlist); "search_click" is a search result. The
+   * server throttles (product, event, 60 s), so the detail screen's own view
+   * event never double-counts a card opened one moment earlier.
+   */
+  eventKind?: "view" | "search_click";
 }
 
 /** Bundled gray placeholder — replaces the old external picsum.photos URL. */
@@ -28,15 +43,39 @@ const MARKETPLACE_BADGE_COLORS: Record<string, string> = {
 };
 
 export const ProductCard = React.memo(
-  function ProductCard({
-    product,
-    onPress,
-  }: ProductCardProps) {
+  function ProductCard({ product, onPress, eventKind = "view" }: ProductCardProps) {
     const { locale } = useI18n();
     const addItem = useCartStore((s) => s.addItem);
     const { cnyPerUsd } = useFx();
-    // Bundled gray placeholder — no external picsum dependency.
-    const thumbnail = product.images?.[0] || null;
+
+    // Image pipeline: the FIRST photo is the card; a second, slimmer photo
+    // peeks along the right edge so a multi-image listing reads as "there is
+    // more here" without any carousel machinery in a list cell (that would
+    // cost a scroll listener and an animation per card). If the photo CDN
+    // rejects the request the card degrades to the bundled placeholder plus a
+    // "No photo" caption — a loaded-looking empty grey box is the failure this
+    // used to have.
+    const photos = product.images ?? [];
+    const thumb = photos[0] || null;
+    const second = photos.length > 1 ? photos[1] : null;
+    const [failedUri, setFailedUri] = useState<string | null>(null);
+    const thumbFailed = failedUri === thumb;
+    const showPhoto = thumb !== null && !thumbFailed;
+
+    // Title chain that finally includes Somali: in Somali mode the Somali
+    // title wins, then English, then the original Chinese; in English mode
+    // English wins but a Somali translation still beats nothing rather than
+    // falling straight to a Chinese-only title.
+    const displayTitle = useMemo(() => {
+      const chain =
+        locale === "so"
+          ? [product.title_somali, product.title_english, product.title_original]
+          : [product.title_english, product.title_somali, product.title_original];
+      for (const candidate of chain) {
+        if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+      }
+      return "";
+    }, [product, locale]);
 
     // `price_usd_estimated` is a snapshot taken when the row was cached — often at
     // the cold-start default, and it never moves when the admin changes the rate.
@@ -61,126 +100,254 @@ export const ProductCard = React.memo(
       [product]
     );
 
+    // Press feedback: a small scale/elevation dip (the old card only dimmed via
+    // activeOpacity). Honours the device's reduce-motion setting; the flag is
+    // read imperatively so a list of memoized cards never re-renders for it.
+    const pressScale = useRef(new Animated.Value(1)).current;
+    const beginPress = useCallback(() => {
+      if (prefersReduceMotion()) return;
+      Animated.spring(pressScale, {
+        toValue: 0.97,
+        friction: 6,
+        tension: 200,
+        useNativeDriver: true,
+      }).start();
+    }, [pressScale]);
+    const endPress = useCallback(() => {
+      if (prefersReduceMotion()) return;
+      Animated.spring(pressScale, {
+        toValue: 1,
+        friction: 5,
+        tension: 160,
+        useNativeDriver: true,
+      }).start();
+    }, [pressScale]);
+
+    const handleOpen = useCallback(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      // Real browsing feeds the trending ledger from here on — this card, not
+      // only TrendingRow, reports its own opens.
+      if (eventKind === "search_click") trackSearchClick(product);
+      else trackProductView(product);
+      onPress?.();
+    }, [eventKind, onPress, product]);
+
     const handleAdd = useCallback(() => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       addItem(product, smartMOQ);
+      trackAddToCart(product);
     }, [addItem, product, smartMOQ]);
 
+    const featured = product.curation?.featured === true;
+
     return (
-    <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={onPress}>
-      <Image
-        source={thumbnail ? { uri: thumbnail } : PLACEHOLDER_IMAGE}
-        style={styles.image}
-        contentFit="cover"
-        transition={150}
-        cachePolicy="memory-disk"
-        recyclingKey={thumbnail ?? `placeholder-${product.id}`}
-        placeholder={COLORS.gray100}
-      />
-
-      {/* Marketplace badge */}
-      <View
-        style={[
-          styles.marketBadge,
-          { backgroundColor: MARKETPLACE_BADGE_COLORS[product.marketplace] || COLORS.primary },
-        ]}
+    <Animated.View style={[styles.cardOuter, { transform: [{ scale: pressScale }] }]}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.9}
+        onPress={handleOpen}
+        onPressIn={beginPress}
+        onPressOut={endPress}
       >
-        <Text style={styles.marketBadgeText}>{product.marketplace}</Text>
-      </View>
+        <View style={styles.photoBox}>
+          {showPhoto ? (
+            <Image
+              source={{ uri: thumb }}
+              style={styles.image}
+              contentFit="cover"
+              transition={150}
+              cachePolicy="memory-disk"
+              recyclingKey={thumb ?? `placeholder-${product.id}`}
+              placeholder={COLORS.gray100}
+              onError={() => setFailedUri(thumb)}
+            />
+          ) : (
+            <View style={styles.imageFallback}>
+              <Package size={26} color={COLORS.gray400} strokeWidth={1.6} />
+              <Text style={styles.imageFallbackText} numberOfLines={1}>
+                {locale === "so" ? "Sawir ma jiro" : "No photo yet"}
+              </Text>
+            </View>
+          )}
 
-      {/* Image count pill */}
-      {product.images.length > 1 && (
-        <View style={styles.imageCountPill}>
-          <Text style={styles.imageCountText}>{product.images.length} photos</Text>
-        </View>
-      )}
+          {/* Second-photo peek: a slim strip of images[1] on the right edge,
+              reading as a stacked deck. Static — costs nothing while scrolling. */}
+          {second && showPhoto && (
+            <View style={styles.peekWrap}>
+              <Image
+                source={{ uri: second }}
+                style={styles.peekImage}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                recyclingKey={second}
+                placeholder={COLORS.gray100}
+              />
+            </View>
+          )}
 
-      <View style={styles.info}>
-        <Text style={styles.title} numberOfLines={2}>
-          {product.title_english || product.title_original}
-        </Text>
+          {/* Photo count: the peek alone cannot say how deep the stack is. */}
+          {photos.length > 1 && (
+            <View style={styles.imageCountPill}>
+              <Text style={styles.imageCountText}>1/{photos.length}</Text>
+            </View>
+          )}
 
-        <View style={styles.priceRow}>
-          <Text style={styles.price}>
-            ${usdPrice.toFixed(2)}
-          </Text>
+          {/* Marketplace badge */}
           <View
             style={[
-              styles.stockDot,
-              {
-                backgroundColor:
-                  product.stock_status === "in_stock"
-                    ? COLORS.success
-                    : COLORS.warning,
-              },
+              styles.marketBadge,
+              { backgroundColor: MARKETPLACE_BADGE_COLORS[product.marketplace] || COLORS.primary },
             ]}
-          />
-          {product.price_cny_max > product.price_cny_min && (
-            <Text style={styles.cnyRange}>
-              ¥{product.price_cny_min}~{product.price_cny_max}
-            </Text>
+          >
+            <Text style={styles.marketBadgeText}>{product.marketplace}</Text>
+          </View>
+
+          {/* Featured ribbon — the staff pick the website's Mission Control
+              pins via the reserved `_curation` attribute; rank 1 reads "#1 pick". */}
+          {featured && (
+            <View style={styles.ribbonWrap}>
+              <Text style={styles.ribbonText}>
+                {product.curation?.rank
+                  ? `${locale === "so" ? "Dooro" : "Pick"} #${product.curation.rank}`
+                  : locale === "so"
+                    ? "La Doortay"
+                    : "Featured"}
+              </Text>
+            </View>
           )}
         </View>
 
-        {(product.sales_count > 0 || product.supplier_rating > 0) && (
-          <View style={styles.statsRow}>
-            {product.sales_count > 0 && (
-              <Text style={styles.stat}>
-                {locale === "so"
-                  ? `🔥 ${product.sales_count}+ la iibsaday`
-                  : `🔥 ${product.sales_count}+ sold`}
+        <View style={styles.info}>
+          <Text style={styles.title} numberOfLines={2}>
+            {displayTitle}
+          </Text>
+
+          <View style={styles.priceRow}>
+            <Text style={styles.price}>
+              ${usdPrice.toFixed(2)}
+            </Text>
+            <View
+              style={[
+                styles.stockDot,
+                {
+                  backgroundColor:
+                    product.stock_status === "in_stock"
+                      ? COLORS.success
+                      : COLORS.warning,
+                },
+              ]}
+            />
+            {product.price_cny_max > product.price_cny_min && (
+              <Text style={styles.cnyRange}>
+                ¥{product.price_cny_min}~{product.price_cny_max}
               </Text>
             )}
-            {product.supplier_rating > 0 && (
-              <Text style={styles.stat}>⭐ {product.supplier_rating.toFixed(1)}</Text>
+          </View>
+
+          {(product.sales_count > 0 || product.supplier_rating > 0) && (
+            <View style={styles.statsRow}>
+              {product.sales_count > 0 && (
+                <Text style={styles.stat}>
+                  {locale === "so"
+                    ? `🔥 ${product.sales_count}+ la iibsaday`
+                    : `🔥 ${product.sales_count}+ sold`}
+                </Text>
+              )}
+              {product.supplier_rating > 0 && (
+                <Text style={styles.stat}>⭐ {product.supplier_rating.toFixed(1)}</Text>
+              )}
+            </View>
+          )}
+
+          <View style={styles.metaRow}>
+            <View style={styles.moqChip}>
+              <Text style={styles.moqChipText}>{getMOQText(smartMOQ)}</Text>
+            </View>
+            {Boolean(product.category) && (
+              <Text style={styles.categoryChip} numberOfLines={1}>
+                {product.category}
+              </Text>
             )}
           </View>
-        )}
-
-        <View style={styles.moqChip}>
-          <Text style={styles.moqChipText}>{getMOQText(smartMOQ)}</Text>
         </View>
-      </View>
 
-      <TouchableOpacity
-        style={styles.addButton}
-        activeOpacity={0.7}
-        onPress={handleAdd}
-      >
-        <Plus size={19} color={COLORS.white} strokeWidth={2.5} />
+        <TouchableOpacity
+          style={styles.addButton}
+          activeOpacity={0.7}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          onPress={handleAdd}
+        >
+          <Plus size={19} color={COLORS.white} strokeWidth={2.5} />
+        </TouchableOpacity>
       </TouchableOpacity>
-    </TouchableOpacity>
+    </Animated.View>
   );
   },
   // Lists (home grid, search results) hand every card a fresh inline `onPress`
   // closure on each parent render, which defeats the default shallow compare.
-  // The only value that closure captures and that ever changes is `product`
-  // itself, so comparing product identity is sufficient — a "stale" onPress
-  // from the previous render still navigates to the same id. Prices stay live
-  // because useFx() subscribes inside the card and re-renders it on rate
-  // changes regardless of this comparator.
-  (prev, next) => prev.product === next.product
+  // The only values that closure captures and that ever change are `product`
+  // and the constant `eventKind`, so comparing those two is sufficient — a
+  // "stale" onPress from the previous render still navigates to the same id.
+  // Prices stay live because useFx() subscribes inside the card and re-renders
+  // it on rate changes regardless of this comparator.
+  (prev, next) => prev.product === next.product && prev.eventKind === next.eventKind
 );
 
 const styles = StyleSheet.create({
-  card: {
+  cardOuter: {
     width: "48%",
+    marginBottom: SPACING.md,
+  },
+  card: {
+    flex: 1,
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
     borderColor: COLORS.border,
     overflow: "hidden",
-    marginBottom: SPACING.md,
     shadowColor: COLORS.black,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
   },
-  image: {
+  photoBox: {
     width: "100%",
     height: 170,
     backgroundColor: COLORS.gray100,
+    position: "relative",
+  },
+  image: {
+    width: "100%",
+    height: "100%",
+  },
+  imageFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.softOrange,
+    paddingHorizontal: SPACING.sm,
+    gap: SPACING.xs,
+  },
+  imageFallbackText: {
+    fontSize: 10,
+    fontFamily: FONTS.regular,
+    color: COLORS.textMuted,
+  },
+  peekWrap: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    bottom: 6,
+    width: 14,
+    borderRadius: RADIUS.sm,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.8)",
+  },
+  peekImage: {
+    width: "100%",
+    height: "100%",
   },
   marketBadge: {
     position: "absolute",
@@ -196,10 +363,27 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     textTransform: "uppercase",
   },
+  ribbonWrap: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    backgroundColor: COLORS.black,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+  },
+  ribbonText: {
+    fontSize: 9,
+    fontFamily: FONTS.bold,
+    color: COLORS.primary,
+    letterSpacing: 0.3,
+  },
   imageCountPill: {
     position: "absolute",
     bottom: SPACING.sm,
-    right: SPACING.sm,
+    right: 30,
     backgroundColor: "rgba(17,17,17,0.65)",
     borderRadius: RADIUS.pill,
     paddingHorizontal: 8,
@@ -248,6 +432,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: COLORS.textSecondary,
   },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 2,
+  },
   moqChip: {
     alignSelf: "flex-start",
     backgroundColor: COLORS.softOrange,
@@ -259,6 +449,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: FONTS.semibold,
     color: COLORS.primaryDark,
+  },
+  categoryChip: {
+    flex: 1,
+    fontSize: 10,
+    fontFamily: FONTS.regular,
+    color: COLORS.textMuted,
   },
   addButton: {
     position: "absolute",

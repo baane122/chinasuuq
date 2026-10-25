@@ -15,6 +15,14 @@
  * same string the app injects), runs it against a stub document in `node:vm`,
  * and drives the passes the way the shared heartbeat would.
  *
+ * WHAT THE PIPELINE NOW IS: the page never touches the network. It posts
+ * TRANSLATE_REQUEST, the app answers from src/api/translate.ts (Google's free
+ * endpoint since the owner took translation off the paid edge function), and the
+ * page applies the reply. Which makes the in-page contract — one batch in flight,
+ * a hard per-page text budget, no self-installed interval, the data-cs-orig /
+ * data-cs-tr stamps and the __csTranslateFailed refund path — the only thing this
+ * gate can regress.
+ *
  * Run from apps/mobile:  npm run verify:translate-inpage
  * No device, no network, no paid provider call. Non-zero exit on any failure.
  */
@@ -166,12 +174,46 @@ check("one pass posts one flat request and stamps every node it asked about", ()
   }
 });
 
-check("a pass never posts more than the server's 40-text cap", () => {
+check("a pass never posts more than the app's 40-text batch cap", () => {
   const texts = Array.from({ length: 90 }, () => ZH());
   const page = makePage({ texts });
   page.inject("en");
   page.pass();
-  assert.equal(page.messages[0].texts.length, 40, "GROUP_SIZE must stay at the ai-translate cap");
+  assert.equal(page.messages[0].texts.length, 40, "GROUP_SIZE must stay at src/api/translate.ts's batch cap");
+});
+
+check("ONE batch in flight: a pass while a request is unanswered posts nothing", () => {
+  // The policy that replaced the old self-fetching script: the page may never
+  // stack requests behind each other, because a queue of hanging fetches is
+  // what made every marketplace page crawl before d75318c.
+  const texts = Array.from({ length: 80 }, () => ZH());
+  const page = makePage({ texts });
+  page.inject("en");
+  page.pass();
+  assert.equal(page.messages.length, 1);
+  page.pass();
+  page.pass();
+  assert.equal(page.messages.length, 1, "the page stacked a second request behind an unanswered one");
+  assert.equal(page.state().requests, 40, "a blocked pass spent budget it never asked about");
+  assert.equal(page.state().inflight, 1, "the in-flight guard must stay set until the answer arrives");
+  const batch = page.messages[0].texts;
+  page.apply(batch, batch.map((text) => "EN " + text));
+  assert.equal(page.state().inflight, 0, "an answer must release the guard");
+  page.pass();
+  assert.equal(page.messages.length, 2, "the page never resumed after its batch was answered");
+});
+
+check("a batch the app never answers is abandoned, not waited on forever", () => {
+  const texts = Array.from({ length: 90 }, () => ZH());
+  const page = makePage({ texts });
+  page.inject("en");
+  page.pass(); // posted, and the app is never going to answer
+  page.pass();
+  page.pass();
+  assert.equal(page.messages.length, 1, "the guard released before STALE_TICKS unanswered passes");
+  page.pass(); // the stale pass: release the batch and carry on with the page
+  assert.equal(page.messages.length, 2, "an unanswered batch froze the page forever");
+  assert.equal(page.state().inflight, 1, "the replacement batch must re-arm the guard");
 });
 
 check("the same string on two nodes costs one request, and one answer covers both", () => {
@@ -265,7 +307,19 @@ check("the per-page text budget stops the pipeline at 120 strings", () => {
   const texts = Array.from({ length: 130 }, () => ZH());
   const page = makePage({ texts });
   page.inject("en");
-  for (let i = 0; i < 5; i++) page.pass();
+  // The batch cap is a HARD budget, not a rate: a page may never ask for more
+  // than 120 distinct strings for one target language, however long it keeps
+  // mounting content. Each pass is answered here because one batch in flight is
+  // the policy (see the scenario above) — the loop only continues when the app
+  // actually replied, which is exactly what a real page does.
+  for (let i = 0; i < 6; i++) {
+    const before = page.messages.length;
+    page.pass();
+    if (page.messages.length > before) {
+      const batch = page.messages[page.messages.length - 1].texts;
+      page.apply(batch, batch.map((text) => "EN " + text));
+    }
+  }
   assert.equal(page.messages.length, 3, `expected 3 batches (40+40+40), got ${page.messages.length}`);
   assert.equal(page.requested().length, 120, "the 120-text budget is not enforced");
   assert.equal(page.state().requests, 120);
@@ -356,6 +410,49 @@ check("a fresh SPA route resets the budget and the cache", () => {
   page.pass();
   assert.deepEqual(page.messages[page.messages.length - 1].texts, ["支持退换"], "text on the new route was not requested");
   assert.equal(fresh.parentNode.getAttribute("data-cs-tr"), "1", "the new route did not stamp its nodes");
+});
+
+check("the script installs no self-owned interval (the d75318c regression)", () => {
+  // WHY THIS EXISTS: the translator deleted in d75318c re-installed a permanent
+  // 600ms interval plus a MutationObserver, and its hanging in-page fetches made
+  // every marketplace page crawl. Whatever backend answers the texts, the page
+  // must never own a repeating timer again — this fails the build if one returns.
+  const page = makePage({ texts: ["现货批发"] });
+  runInContext(
+    "window.__intervals = []; setInterval = function (fn, ms) { window.__intervals.push(ms); return 1; };",
+    page.ctx
+  );
+  page.inject("en");
+  for (let i = 0; i < 12; i++) page.pass();
+  // `.length` is compared inside the realm on purpose: assert.deepEqual against a
+  // host [] fails on the cross-realm prototype, not on the behaviour.
+  assert.equal(
+    runInContext("window.__intervals.length", page.ctx),
+    0,
+    "AI_TRANSLATE_SCRIPT re-introduced a self-installed interval"
+  );
+  assert.ok(page.state().inflight <= 1, "more than one batch is in flight");
+});
+
+check("pagehide tears the pipeline down instead of leaving it ticking", () => {
+  // Teardown on document unload: the private fallback chain and the shared task
+  // must both stop, or a navigation away from the page keeps a scheduler alive.
+  const page = makePage({ texts: ["海外直邮"], cs: false });
+  runInContext(
+    "window.__listeners = {}; window.addEventListener = function (name, fn) {" +
+      " (window.__listeners[name] = window.__listeners[name] || []).push(fn); };",
+    page.ctx
+  );
+  page.inject("en");
+  const listeners = runInContext("window.__listeners", page.ctx);
+  assert.ok(listeners.pagehide && listeners.pagehide.length === 1, "no pagehide teardown was registered");
+  assert.equal(page.timers.filter((t) => !t.cleared).length, 1, "the fallback should own exactly one timer");
+  listeners.pagehide[0]();
+  assert.equal(
+    page.timers.filter((t) => !t.cleared).length,
+    0,
+    "pagehide left the private timer chain running after the document went away"
+  );
 });
 
 // ── report ─────────────────────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ import {
   Sparkles,
   ListChecks,
   Megaphone,
+  Flame,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ToastProvider } from "@/components/admin/Toast";
@@ -52,6 +53,7 @@ const NAV_ITEMS_BASE: Omit<NavItem, "badge">[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard, match: ["/admin"] },
   { href: "/admin/customers", label: "Customers", icon: Users },
   { href: "/admin/products", label: "Products", icon: Package },
+  { href: "/admin/trending", label: "Trending", icon: Flame },
   { href: "/admin/orders", label: "Orders", icon: ShoppingBag },
   { href: "/admin/marketplaces", label: "Marketplaces", icon: Globe },
   { href: "/admin/payments", label: "Payments", icon: CreditCard },
@@ -75,7 +77,10 @@ const NAV_SECTIONS: { title: string; hrefs: string[] }[] = [
     title: "Operations",
     hrefs: ["/admin/sourcing", "/admin/shipments", "/admin/warehouse", "/admin/queue"],
   },
-  { title: "Catalog", hrefs: ["/admin/products", "/admin/marketplaces", "/admin/rates"] },
+  {
+    title: "Catalog",
+    hrefs: ["/admin/products", "/admin/trending", "/admin/marketplaces", "/admin/rates"],
+  },
   {
     title: "Office",
     hrefs: ["/admin/quotes", "/admin/notifications", "/admin/staff", "/admin/settings", "/admin/ai"],
@@ -100,7 +105,13 @@ const ALL_ROUTES: SearchResult[] = NAV_ITEMS_BASE.map((item) => ({
 /* ─── Realtime: tables whose writes invalidate the admin shell ────
  * source_products is here because the Products screen and the dashboard's
  * category badges read it, and without a membership it only ever refreshed on
- * an unrelated order write. */
+ * an unrelated order write. It also means a pin written by another staff tab
+ * lands on /admin/trending without any extra subscription.
+ *
+ * product_events is deliberately NOT added: one customer view per product per
+ * 60 s would bump every unfiltered listener — the dashboard reloads its whole
+ * rollup set on any burst — so a busy shop would keep Mission Control
+ * re-querying all day. Trending refreshes that ledger through its own buttons. */
 const LIVE_TABLES = [
   "orders",
   "sourcing_requests",

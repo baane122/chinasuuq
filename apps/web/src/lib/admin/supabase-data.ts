@@ -501,13 +501,21 @@ export const SESSION_DEAD_MESSAGE =
  * "permission denied for view …". That wording reads like a broken database and
  * sends staff hunting for an RLS bug; the real fix is one click. Same for the
  * "JWSError"/"invalid JWT" variants of a token the gateway rejected.
+ *
+ * WRITES add one more shape: a table like exchange_rates or settings that has
+ * no anon policy answers an anon insert/update as
+ * "new row violates row-level security policy for table …" (Postgres 42501,
+ * surfaced by PostgREST as 401). The admin save is the real-world case — the
+ * layout's role gate already proved the person is staff, so an RLS write
+ * violation here means the JWT lapsed, not the schema. (Live-verified 2026-10-25:
+ * anon POST → 401/42501 RLS violation; fresh admin JWT POST → 201.)
  */
 export function isSessionDeadError(
   error: { code?: string; message?: string } | null | undefined
 ): boolean {
   if (!error) return false;
   if (error.code === "42501" || error.code === "401" || error.code === "PGRST301") return true;
-  return /permission denied for (view|table)|JWSError|invalid JWT|JWT expired|token has already been used|no api key/i.test(
+  return /permission denied for (view|table)|row-level security policy|JWSError|invalid JWT|JWT expired|token has already been used|no api key/i.test(
     error.message ?? ""
   );
 }
@@ -676,7 +684,12 @@ export async function saveExchangeRate(r: any) {
     let res;
     if (r.id) res = await supabase.from("exchange_rates").update(row).eq("id", r.id).select().single();
     else res = await supabase.from("exchange_rates").insert(row).select().single();
-    return { ok: !res.error, rate: res.data, error: res.error?.message };
+    // Route the error through adminErrorMessage: when the admin's JWT has lapsed,
+    // the insert goes out as anon and Postgres answers 42501 "new row violates
+    // row-level security policy for table exchange_rates" — which is exactly the
+    // raw string the Settings → Currency screen used to show. The friendly
+    // "your session expired — sign in again" wording is the real fix.
+    return { ok: !res.error, rate: res.data, error: adminErrorMessage(res.error, "Failed to save exchange rate") };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
@@ -976,6 +989,67 @@ export async function setSetting(key: string, value: any) {
     const { error } = await supabase
       .from("settings")
       .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+    return { ok: !error, error: error?.message };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+// ─── Customers CRUD ──────────────────────────────────────────────
+
+export interface CustomerPayload {
+  full_name?: string;
+  email?: string;
+  phone?: string;
+  city?: string;
+  customer_type?: "business" | "individual";
+  business_name?: string;
+  tier?: string;
+  role?: string;
+}
+
+export interface CustomerResult {
+  ok: boolean;
+  error?: string;
+  id?: string;
+}
+
+/** Create a new customer profile row in the `profiles` table. */
+export async function createCustomer(payload: CustomerPayload): Promise<CustomerResult> {
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .insert({
+        ...payload,
+        role: payload.role ?? "customer",
+        created_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, id: data?.id };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/** Update selected fields on an existing customer profile. */
+export async function updateCustomer(id: string, patch: CustomerPayload): Promise<CustomerResult> {
+  try {
+    const { error } = await supabase.from("profiles").update(patch).eq("id", id);
+    return { ok: !error, error: error?.message };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/** Soft-delete a customer profile by setting deleted_at. */
+export async function deleteCustomer(id: string): Promise<CustomerResult> {
+  try {
+    const { error } = await supabase
+      .from("profiles")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id);
     return { ok: !error, error: error?.message };
   } catch (e) {
     return { ok: false, error: String(e) };

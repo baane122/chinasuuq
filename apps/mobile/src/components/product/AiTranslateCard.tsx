@@ -1,9 +1,11 @@
 /**
  * AI Translate card — on-product translation to English + Somali.
- * Goes through the ai-translate edge function (server-side provider, paid
- * cache, JWT-gated). On failure — logged out, offline, server refused — it
- * shows a friendly retry message and nothing else. No direct-key fallback and
- * no third-party translate endpoint. Never crashes the screen.
+ * Translation is Google's free endpoint (src/api/translate.ts) on the owner's
+ * decision, with the client LRU + AsyncStorage cache in front of it, so a warm
+ * product costs zero network calls. On failure — offline, rate limited, or the
+ * endpoint's per-session circuit breaker open — it shows a friendly retry
+ * message and nothing else; it never renders a blank translation and never
+ * falls back to a bundled key. Never crashes the screen.
  */
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from "react-native";

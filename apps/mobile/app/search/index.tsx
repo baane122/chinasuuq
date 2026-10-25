@@ -19,12 +19,19 @@ import {
   SlidersHorizontal,
   ArrowUpDown,
   RefreshCw,
+  Link as LinkIcon,
 } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { getProducts } from "@/db";
 import { ProductCard } from "@/components/home/ProductCard";
+import { CategoryChips } from "@/components/home/CategoryChips";
+import { useBrowseCategories } from "@/components/home/useBrowseCategories";
+import { SmartAddSheet } from "@/components/home/SmartAddSheet";
+import { productInCategory } from "@/api/categories";
+import { detectProductLink } from "@/lib/productLink";
+import { useI18n } from "@/lib/i18n";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { RouteErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { Image } from "expo-image";
@@ -88,6 +95,7 @@ export default function SearchScreen() {
 function SearchScreenContent() {
   const router = useRouter();
   const params = useLocalSearchParams<{ marketplace?: string; q?: string }>();
+  const { locale } = useI18n();
 
   const [query, setQuery] = useState(params.q ?? "");
   // Filtering (and therefore list re-layout) follows the settled query, not
@@ -146,10 +154,19 @@ function SearchScreenContent() {
     return () => clearTimeout(id);
   }, [query]);
 
-  const categories = useMemo(() => {
-    const set = new Set(products.map((p) => p.category).filter(Boolean));
-    return Array.from(set).sort();
-  }, [products]);
+  /* ── Native smart-add: this search bar is also the paste target its home
+     placeholder promises ("Search products or paste a link"). A 1688/Taobao/
+     Pinduoduo/Alibaba/YiwuGo/ChinaGoods PRODUCT url turns the field into a
+     detected-link banner and opens the EXISTING capture pipeline — not a new
+     results list for a url that can never match a title. ── */
+  const detectedLink = useMemo(() => detectProductLink(debouncedQuery), [debouncedQuery]);
+  const [smartAddVisible, setSmartAddVisible] = useState(false);
+
+  // The SAME real-category vocabulary the home chips use (live `categories`
+  // rows with bilingual names, sorted, counted; the cached catalog's own text
+  // values only as fallback). Two ad-hoc chip lists — one raw-text here, one
+  // hardcoded there — is exactly what this replaces.
+  const browse = useBrowseCategories(products);
 
   const marketplaces = useMemo(() => {
     const set = new Set(products.map((p) => p.marketplace).filter(Boolean));
@@ -158,22 +175,28 @@ function SearchScreenContent() {
 
   // Split the settled query into tokens once; the filter then only does
   // string.includes per product instead of re-splitting the query per product.
+  // (A pasted product link therefore yields "0 found" below the detected-link
+  // banner — honest, and the banner is the actionable path for it.)
   const queryTokens = useMemo(
     () => normalize(debouncedQuery).split(/\s+/).filter(Boolean),
     [debouncedQuery]
   );
 
   const filteredProducts = useMemo(() => {
-    // The chips share one selection state: a bare value is a marketplace,
-    // a "cat:<name>" value is a category, "all"/"category-all" mean no
-    // narrowing. Filtering used to compare EVERY value against
-    // p.marketplace — so category chips matched nothing and yielded 0.
+    // The chips share one selection state: a bare value is a marketplace, a
+    // "cat:<id>" value is a real category (uuid, or `text:<key>` for derived
+    // fallback rows), "all"/"category-all" mean no narrowing. Matching goes
+    // through productInCategory — FK id OR the normalized text alias — so the
+    // 0%-populated `category_id` in production can never hollow out results.
     const isCategoryFilter = marketplaceFilter.startsWith("cat:");
     const categoryValue = isCategoryFilter ? marketplaceFilter.slice(4) : "";
+    const selectedCat = isCategoryFilter
+      ? browse.categories.find((c) => c.id === categoryValue) ?? null
+      : null;
     let list = products.filter((p) => {
       if (marketplaceFilter !== "all" && marketplaceFilter !== "category-all") {
         if (isCategoryFilter) {
-          if (p.category !== categoryValue) return false;
+          if (!selectedCat || !productInCategory(p, selectedCat)) return false;
         } else if (p.marketplace !== marketplaceFilter) {
           return false;
         }
@@ -197,7 +220,7 @@ function SearchScreenContent() {
       }
     });
     return list;
-  }, [products, queryTokens, marketplaceFilter, sort]);
+  }, [products, queryTokens, marketplaceFilter, sort, browse.categories]);
 
   const pickSort = (key: SortKey) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -328,6 +351,25 @@ function SearchScreenContent() {
           </TouchableOpacity>
         </View>
 
+        {/* Detected product link — native smart-add entry */}
+        {detectedLink && (
+          <TouchableOpacity
+            style={styles.linkBanner}
+            activeOpacity={0.8}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setSmartAddVisible(true);
+            }}
+          >
+            <LinkIcon size={15} color={COLORS.primary} />
+            <Text style={styles.linkBannerText} numberOfLines={1}>
+              {locale === "so"
+                ? `Link ${detectedLink.label} waa la aqoonsaday — taabo si aad u darto`
+                : `${detectedLink.label} link detected — tap to add this product`}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* Loading */}
         {loading ? (
           <LoadingSpinner fullScreen />
@@ -363,39 +405,19 @@ function SearchScreenContent() {
                 ))}
               </ScrollView>
 
-              {/* Category filter row */}
-              {categories.length > 0 && (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.filterContent}
-                >
-                  <TouchableOpacity
-                    onPress={() => setMarketplaceFilter("category-all")}
-                    style={[styles.chip, marketplaceFilter === "category-all" && styles.chipActive]}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.chipText, marketplaceFilter === "category-all" && styles.chipTextActive]}>
-                      All categories
-                    </Text>
-                  </TouchableOpacity>
-                  {categories.map((c) => (
-                    <TouchableOpacity
-                      key={c}
-                      onPress={() =>
-                        // store category selection in a distinct sentinel key
-                        setMarketplaceFilter(`cat:${c}`)
-                      }
-                      style={[styles.chip, marketplaceFilter === `cat:${c}` && styles.chipActive]}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.chipText, marketplaceFilter === `cat:${c}` && styles.chipActive && styles.chipTextActive]}>
-                        {c}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
+              {/* Category filter row — the home chips' component, same real
+                  categories, same counts, so the two screens can never show
+                  different shelves again. */}
+              <CategoryChips
+                categories={browse.categories}
+                selected={
+                  marketplaceFilter.startsWith("cat:") ? marketplaceFilter.slice(4) : "all"
+                }
+                onSelect={(id) =>
+                  setMarketplaceFilter(id === "all" ? "category-all" : `cat:${id}`)
+                }
+                totalCount={products.length}
+              />
             </View>
 
             {/* Sort dropdown */}
@@ -521,6 +543,9 @@ function SearchScreenContent() {
                       <ProductCard
                         key={p.id}
                         product={p}
+                        // A search result the customer opens is search_click
+                        // — a different weight from a home browse, same funnel.
+                        eventKind="search_click"
                         onPress={() => router.push(`/product/${p.id}`)}
                       />
                     ))}
@@ -537,6 +562,14 @@ function SearchScreenContent() {
           </>
         )}
       </KeyboardAvoidingView>
+
+      {/* Reuses the marketplace capture pipeline (SmartProductForm + MOQ +
+          sourcing) with the parsed link — no second scraper is introduced. */}
+      <SmartAddSheet
+        visible={smartAddVisible}
+        link={detectedLink}
+        onClose={() => setSmartAddVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -575,6 +608,25 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   filterBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  linkBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.sm,
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.softOrange,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  linkBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: FONTS.semibold,
+    color: COLORS.primaryDark,
+  },
   filterContent: { paddingHorizontal: SPACING.lg, gap: SPACING.sm, paddingBottom: SPACING.sm },
   chip: {
     paddingHorizontal: SPACING.lg,

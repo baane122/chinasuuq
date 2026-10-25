@@ -20,7 +20,7 @@
  * Run from apps/mobile:  npm run verify:session
  */
 
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, copyFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,17 +35,34 @@ const CARD = join(ROOT, "src", "components", "staff", "StaffMarketplaceCard.tsx"
 
 const original = readFileSync(SRC, "utf8");
 // Exactly the three environment boundaries get replaced; every line of real
-// logic stays the line that ships.
+// logic stays the line that ships. The fourth rewrite is an import specifier,
+// not a boundary — see the resolution-shim comment below.
 const source = original
   .replace('import { createClient } from "@supabase/supabase-js";', "const createClient = globalThis.__createClient;")
   .replace('import AsyncStorage from "@react-native-async-storage/async-storage";', "const AsyncStorage = globalThis.__storage;")
-  .replace('import Constants from "expo-constants";', "const Constants = globalThis.__constants;");
+  .replace('import Constants from "expo-constants";', "const Constants = globalThis.__constants;")
+  // Not a stub — a resolution shim. Metro and tsc both resolve `./auth-url`, but
+  // Node ESM refuses an extensionless relative specifier, so the real file is
+  // loaded under its explicit name.
+  .replace('} from "./auth-url";', '} from "./auth-url.ts";');
 for (const left of ["@supabase/supabase-js", "@react-native-async-storage", "expo-constants"]) {
   assert.ok(!source.includes(left), `stubbing the ${left} import failed`);
 }
+// Fail here rather than with a confusing ERR_MODULE_NOT_FOUND if the import is
+// ever restructured (named, renamed, or moved behind a barrel).
+assert.ok(
+  source.includes('} from "./auth-url.ts";'),
+  "the ./auth-url import specifier was not rewritten — src/lib/supabase.ts imports it differently now"
+);
 const dir = mkdtempSync(join(tmpdir(), "cs-session-verify-"));
 const modulePath = join(dir, "supabase.ts");
 writeFileSync(modulePath, source);
+// supabase.ts also imports `./auth-url.ts`, the pure deep-link parser. It is NOT
+// stubbed — it has no imports of its own, so the shipped file is copied next to
+// the module and exercised as-is. Stubbing it would let this harness pass while
+// the real re-export broke, which is the failure mode this whole file exists to
+// avoid.
+copyFileSync(join(ROOT, "src", "lib", "auth-url.ts"), join(dir, "auth-url.ts"));
 
 // ── stubs ─────────────────────────────────────────────────────────────────────
 globalThis.__storage = {
