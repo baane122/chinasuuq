@@ -467,8 +467,15 @@ function MarketplaceBreakdown({ data }: { data: MarketplaceRevenue[] }) {
                 animate={{ width: `${Math.max(pct, 2)}%` }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
                 className="h-full rounded-full"
-                style={{ backgroundColor: d.color }}
-              />
+              >
+                {/* background color on a plain child: framer-motion's typed
+                    MotionStyle rejects non-motion CSS props like
+                    backgroundColor under the locked next/typescript versions */}
+                <div
+                  className="h-full w-full rounded-full"
+                  style={{ backgroundColor: d.color }}
+                />
+              </motion.div>
             </div>
           </Link>
         );
