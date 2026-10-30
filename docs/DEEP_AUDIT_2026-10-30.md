@@ -350,3 +350,43 @@ Note: running the build locally also let `expo` reconcile `package.json`
 (version 1.0.5, expo `~58.0.21`). The full 146-check suite and `tsc` were re-run **after**
 that and still pass, but the published artifact above was compiled against SDK 57.
 If SDK 58 is not wanted, revert `package.json`/`package-lock.json` to the pre-build state.
+
+---
+
+## 12. Migration drift — how far the file tree is from live
+
+`supabase_migrations.schema_migrations` holds only **5** rows:
+
+```
+202610010001_ai_provider_tasks
+20261003191547
+202610040002
+202610040003
+202610040004
+```
+
+That is not the truth — 66 migration files exist and the live database clearly reflects
+most of them. Conclusion: **most migrations were applied by hand (Dashboard SQL Editor /
+psql), not by the CLI**, so the history table cannot be trusted as an applied/not-applied
+ledger. Do not use `supabase db push` against this project without reconciling first: it
+would try to replay ~60 migrations and could fail halfway.
+
+The only reliable test is behavioural. Spot-checked the ones that mattered:
+
+| Migration | Behavioural test | Verdict |
+|---|---|---|
+| `202610040003_rls_lockdown` | `is_staff_or_admin()` body is the tightened version (`auth.jwt()->>'role'='authenticated'` **AND** an explicit `profiles.role IN (staff,super_admin,admin)` EXISTS) — not the old permissive "any logged-in user" form | **applied** |
+| `202610040004_permissions_readable_by_staff` | listed in history + `permissions` readable by staff | applied |
+| `202610040005_settings_rls_lockdown` | revoke had happened but **grants were missing**, so policies could not fire → fixed today (§2.3) | applied, was incomplete |
+| `202610040006_ai_provider_rls` | 2 policies present on both `ai_provider_*`, anon `401` | applied |
+| `202610040007_payment_order_sync` | `orders_payment_status_sync` trigger behaviour present via `sync_order_payment_status` | applied |
+| `202610030007_fx_single_source` | one-active-row-per-pair trigger fires (verified the hard way, §9) | applied |
+| `202610161300/161301/161400` (product media, category wiring, catalog staff writes) | `source_products` staff CRUD verified 201/200/204 | applied |
+
+Privilege-escalation check (the risk `rls_lockdown` existed to close):
+`anon PATCH profiles?role=…` returns `200 []` — zero rows matched. `profiles_guard_role_change`
++ `settings_secret_guard_trigger` + `orders_money_guard_trigger` are all present, and all 5
+profiles kept their original roles afterwards. **No escalation path found.**
+
+Recommended follow-up (not done — needs a decision): backfill
+`supabase_migrations.schema_migrations` with the 66 filenames so future CLI usage is safe.
