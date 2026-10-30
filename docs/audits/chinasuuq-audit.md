@@ -248,7 +248,7 @@ Core tables: profiles, addresses, marketplaces, marketplace_accounts, categories
 - missionControl.ts: typed operational queue (kinds, priority, SLA, ownership, evidence, recommended action, approval level), payment-proof state machine, HIGH_IMPACT_ACTIONS + second-approver rule.
 ### Phase 4 — AI Gateway / Security · CONTRACT LAYER DONE (server enforcement is later)
 - aiGateway.ts: per-role policies (extraction has toolsEnabled=false, schemaRequired=true; redaction fields; budgets; authorization), GroundedAnswer citations rule, injection-guard content validator.
-- plans/chinasuuq-security-checklist.md: prompt-injection, WebView bridge, credentials, SSRF, payment/inspection honesty, high-impact approval rules.
+- docs/guides/SECURITY_CHECKLIST.md: prompt-injection, WebView bridge, credentials, SSRF, payment/inspection honesty, high-impact approval rules.
 
 ### Phase 5 — Somalia-first foundations · PARTIAL
 - destinations.ts: enabled-destination registry (Somalia/Mogadishu), delivery routes, payment methods, phone validation; low-data offline-draft rule.

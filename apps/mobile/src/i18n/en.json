@@ -81,7 +81,8 @@
     "tryAgain": "Try again",
     "anotherMarketplace": "Try another marketplace",
     "sessionExpired": "Your session may have expired. Try reloading the page.",
-    "checkoutWhatsapp": "Checkout on WhatsApp"
+    "checkoutWhatsapp": "Checkout on WhatsApp",
+    "syncUnavailable": "Native cookie access is not available on this build — the marketplace session stays inside the app."
   },
   "reviewSheet": {
     "productIdentity": "Product",

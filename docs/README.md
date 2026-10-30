@@ -9,7 +9,8 @@ short version; **`doc.md` is the authoritative reference** for how the system ac
 |---|---|
 | `../doc.md` | **The reference.** Architecture, routes, admin console, schema + RLS, edge functions, security model, mobile app, design system, deployment, known gaps. |
 | `../README.md` | Two-minute orientation: what the product is, how to run it locally, how to deploy. |
-| `PRODUCTION_READINESS.md` | Current ship/no-ship state and what blocks it. |
+| `PRODUCTION_READINESS.md` | Current ship/no-ship verdict, verified against the live project. |
+| `BRAND_AND_ROADMAP_BLUEPRINT.md` | Brand identity and the forward-looking product roadmap. |
 | `audits/CURRENT_AUDIT_2026-10-30.md` | **Most recent full audit** — every finding, every fix, with live verification. Read this before touching the DB or RLS. |
 
 ## `audits/` — historical, newest first
@@ -27,6 +28,8 @@ were on its date. Where a later audit contradicts an earlier one, the later one 
 - `MOBILE_BUILD.md` — Expo/EAS build and store submission
 - `PAYMENT_OPS_SOP.md` — confirming mobile-money payments by hand (the current live flow)
 - `SHIPPING_CHECKLIST.md` — freight booking → consolidation → delivery
+- `SECURITY_CHECKLIST.md` — pre-ship security rules (untrusted input, prompt-injection posture)
+- `LIVE_SCHEMA_CONTRACT.md` — the verified column contract for the live database
 
 ## Operational documents
 

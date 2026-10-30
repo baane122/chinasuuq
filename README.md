@@ -1,6 +1,10 @@
 # ChinaSuuq
 
-**China-to-Somalia e-commerce marketplace.**
+**China-to-Somalia e-commerce marketplace.** · **v0.0.1**
+
+> **Documentation**: [`docs/README.md`](docs/README.md) is the index. [`doc.md`](doc.md) is the
+> authoritative reference (architecture, schema + RLS, edge functions, security model, deployment).
+> Most recent audit: [`docs/audits/CURRENT_AUDIT_2026-10-30.md`](docs/audits/CURRENT_AUDIT_2026-10-30.md).
 
 Browse products from four Chinese marketplaces (1688, Taobao, YiwuGo, ChinaGoods) plus the 1$ Dollar Store, get quotes, and ship by air or sea freight to Somali cities. This repository contains the public web experience, a full admin operations console, and the mobile app, all backed by one Supabase project.
 

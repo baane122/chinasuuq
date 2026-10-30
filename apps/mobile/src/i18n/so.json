@@ -81,7 +81,8 @@
     "tryAgain": "Mar kale isku day",
     "anotherMarketplace": "Isku day suuq kale",
     "sessionExpired": "Fadhigaaga waa laga yaabaa inuu dhacay. Isku day bogga cusboonaysiinta.",
-    "checkoutWhatsapp": "Xisaabinta WhatsApp"
+    "checkoutWhatsapp": "Xisaabinta WhatsApp",
+    "syncUnavailable": "Helitaanka cookies-ka asalka ah kuma jiro build-kan — fadhiga suuqu wuxuu ku sii jiraa gudaha app-ka."
   },
   "reviewSheet": {
     "productIdentity": "Alaabta",

@@ -55,6 +55,7 @@ import {
 } from "@/lib/webviewScripts.risk";
 import { aiVisionScanListing } from "@/lib/aiVision";
 import { captureRef } from "react-native-view-shot";
+import { getNativeCookieManager, nativeCookiesLikelyAvailable } from "@/lib/nativeCookies";
 import { useFx } from "@/lib/exchange";
 import { marketplaceBySlug } from "@/config/marketplaceRegistry";
 import { getMarketplaceProducts } from "@/db";
@@ -280,12 +281,36 @@ export default function MarketplaceBrowser() {
         const s = await AsyncStorage.getItem(TL_KEY);
         // Instant English: default to EN translation on first launch instead
         // of raw Chinese. Users can still switch to SO or original.
+        let resolved: string | null;
         if (s === null) {
           // AUTO-SET translation to English immediately for faster experience
-          setTranslateLang("en");
+          resolved = "en";
           await AsyncStorage.setItem(TL_KEY, JSON.stringify("en"));
         } else {
-          setTranslateLang(JSON.parse(s));
+          try {
+            resolved = JSON.parse(s);
+          } catch {
+            resolved = "en";
+          }
+        }
+        setTranslateLang(resolved);
+        // THE RACE THIS FIXES: the WebView starts loading on the FIRST render,
+        // while this read is still in flight. The per-page suite is injected
+        // from onProgress/onLoadEnd and it only pushes AI_TRANSLATE_SCRIPT when
+        // `translateLang` is truthy — so on a fast page the suite went in with
+        // translateLang still null and the page stayed Chinese until the user
+        // manually re-picked a language. That is the "some marketplaces don't
+        // translate" report: the faster the marketplace, the more often it lost
+        // the race. Now, if the suite already went in before the preference
+        // resolved, push the translation task in explicitly.
+        if (resolved && earlySuiteRef.current) {
+          try {
+            webRef.current?.injectJavaScript?.(
+              "window.__CS_TL=" + JSON.stringify(resolved) + ";" + AI_TRANSLATE_SCRIPT
+            );
+          } catch {
+            // the onLoadEnd pass will catch it
+          }
         }
         const tip = await AsyncStorage.getItem(TIP_KEY);
         setTipDismissed(tip === "1");
@@ -360,34 +385,30 @@ export default function MarketplaceBrowser() {
   // ---- Staff: read this WebView's native cookies and push them server-side.
   // httpOnly cookies (1688's `cookie2` etc.) are ONLY readable through the
   // native cookie store — never via document.cookie — which is why we use
-  // @react-native-cookies/cookies. In Expo Go / web the native module is
-  // absent, so require() throws and we show a clear message instead.
+  // @react-native-cookies/cookies. Loading it is only safe where the native
+  // module is actually registered (see src/lib/nativeCookies.ts): the package
+  // throws during module evaluation otherwise. Where it is absent the button is
+  // not rendered at all.
   const syncSession = useCallback(async () => {
     if (syncing) return;
     setSyncing(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const title = t("browser.syncSession");
     try {
-      let CookieManager: any = null;
-      
-      // Check if we're in Expo Go (native modules not available)
-      // Use dynamic import instead of require to avoid Invariant Violation crashes
-      // when the native module is missing (Expo Go, web, or unlinked package)
-      if (Platform.OS !== "web") {
-        try {
-          // Dynamic import is safer than require() for optional native modules
-          const mod = await import("@react-native-cookies/cookies");
-          CookieManager = mod?.default ?? mod;
-        } catch (e) {
-          console.log("[SyncSession] Native cookie module not available - using WebView directly");
-          CookieManager = null;
-        }
-      }
-      
+      // Native cookie reads go through src/lib/nativeCookies.ts, which is the
+      // only module that imports @react-native-cookies/cookies. That package
+      // throws at module-evaluation time on iOS (invariant: RNCookieManagerIOS
+      // not linked), which escapes a try/catch around the dynamic import — it
+      // was crashing the whole screen. The helper confines the import to
+      // Android and returns null everywhere else.
+      const CookieManager = await getNativeCookieManager();
+
       if (!CookieManager) {
-        // Gracefully handle missing native module - show info instead of crash
-        console.log("[SyncSession] Native cookie module not available - using WebView directly");
-        // Don't crash, just return - the WebView will still work
+        // No native store here (iOS currently, or a build without the module).
+        // Say so instead of silently doing nothing — a button that appears to
+        // work and does not is worse than one that reports it is unavailable.
+        console.log("[SyncSession] native cookie store unavailable on this platform");
+        Alert.alert(title, t("browser.syncUnavailable"));
         return;
       }
       const id = marketplace || "1688";
@@ -472,13 +493,28 @@ export default function MarketplaceBrowser() {
           // setInterval/MutationObserver of their own. It is idempotent, so
           // re-injecting per navigation costs one `if` inside the page.
           //
-          // A live slide-captcha is the one page we do not touch: no text
-          // rewriting, no price overlay, no chrome hiding. Watcher + route
-          // sentinel only, so the verification widget keeps its own DOM.
+          // A live slide-captcha is a page we must not restyle: the verification
+          // widget owns its own DOM and rewriting its text breaks the slide
+          // puzzle. But "do not restyle the widget" is NOT "do not convert
+          // prices": login-walled marketplaces (Taobao especially) sit behind a
+          // verification wall for the first seconds of every session, and the
+          // old early-return meant those marketplaces silently showed raw ¥ and
+          // Chinese until the wall cleared. So the DOM-safe subset still goes in:
+          // the runtime, the watchers, and both the price overlay and the
+          // translation task — each of which is scoped to text NODES and skips
+          // anything inside a captcha/verification container (RISK_INSIDE_FN).
           if (riskActiveRef.current) {
-            webview?.injectJavaScript?.(
-              "(function(){" + [CS_RUNTIME_SCRIPT, NAV_WATCH_SCRIPT, RISK_WATCH_SCRIPT].join(";") + "})();true;"
-            );
+            const riskParts: string[] = [CS_RUNTIME_SCRIPT, NAV_WATCH_SCRIPT, RISK_WATCH_SCRIPT];
+            const riskUsd = usdOn ? usdPriceScript(fxRate) : "";
+            if (riskUsd) {
+              riskParts.push("window.__CS_RATE=" + fxRate + ";" + riskUsd);
+            }
+            if (translateLang) {
+              riskParts.push(
+                "window.__CS_TL=" + JSON.stringify(translateLang) + ";" + AI_TRANSLATE_SCRIPT
+              );
+            }
+            webview?.injectJavaScript?.("(function(){" + riskParts.join(";") + "})();true;");
             return;
           }
           const parts: string[] = [];
@@ -1120,8 +1156,12 @@ export default function MarketplaceBrowser() {
             </View>
           </View>
 
-          {/* 2 essential buttons: jump to market home + cart */}
-          {isStaff && (
+          {/* 2 essential buttons: jump to market home + cart.
+              The staff sync button is only rendered where native cookie reads
+              can actually work. In Expo Go the native module does not exist, so
+              the button used to be offered, tapped, and then fail — the correct
+              behaviour is not to advertise a capability this build lacks. */}
+          {isStaff && nativeCookiesLikelyAvailable() && (
             <TouchableOpacity
               onPress={() => { syncSession().catch(() => {}); }}
               style={styles.headerBtn}

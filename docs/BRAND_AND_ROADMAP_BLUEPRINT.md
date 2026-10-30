@@ -1,4 +1,4 @@
-# 🚀 ChinaSuuq Production Readiness Blueprint
+# ChinaSuuq — Brand & Roadmap Blueprint
 
 ## Objective
 Make ChinaSuuq the best Somali e-commerce app — production-ready, polished, fast, secure, and user-friendly across all platforms.
