@@ -19,9 +19,10 @@
     "verify:session": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-marketplace-session.mjs",
     "verify:states": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-cart-and-states.mjs",
     "verify:authurl": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/verify-auth-url.mjs",
-    "verify": "npm run tsc && npm run verify:webview && npm run verify:translate && npm run verify:translate-inpage && npm run verify:usd && npm run verify:inbatches && npm run verify:session && npm run verify:states && npm run verify:authurl && npm run verify:native-cookies && npm run verify:risk-suite",
+    "verify": "npm run tsc && npm run verify:webview && npm run verify:translate && npm run verify:translate-inpage && npm run verify:usd && npm run verify:inbatches && npm run verify:session && npm run verify:states && npm run verify:authurl && npm run verify:native-cookies && npm run verify:risk-suite && npm run verify:usd-worded",
     "verify:native-cookies": "node scripts/verify-native-cookies.mjs",
-    "verify:risk-suite": "node scripts/verify-risk-suite.mjs"
+    "verify:risk-suite": "node scripts/verify-risk-suite.mjs",
+    "verify:usd-worded": "node scripts/verify-usd-worded.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

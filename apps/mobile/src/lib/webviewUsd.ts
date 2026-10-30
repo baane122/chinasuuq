@@ -71,6 +71,23 @@ export function usdPriceScript(cnyPerUsd: number): string {
     // ChinaGoods wholesale prices do print the separator, so without the group
     // clause the overlay showed four-figure products at eighteen cents.
     var CNY_RE = /[¥￥]\\s?([0-9０-９]+(?:,[0-9]{3})*(?:[.,][0-9０-９]{1,2})?)/g;
+    /**
+     * Worded / suffixed yuan — the shape YiwuGo and ChinaGoods actually print.
+     * CNY_RE only fires on a leading ¥, so "35.00元", "价格：35.00" and
+     * "RMB 35" were never converted: the marketplace looked like the exchange
+     * rate was broken rather than the pattern being too narrow.
+     *
+     * Deliberately narrow, because these forms appear in lots of non-price
+     * text (weights, sizes, counts, ids):
+     *  - the number must be followed by 元 / 圆 / 块, or
+     *  - it must be preceded by a price label (价格 / 售价 / 单价 / 批发价 /
+     *    现价 / 原价 / 券后 / 到手价) with only a colon/￥ separator between,
+     *  - or it must be preceded by the word CNY / RMB.
+     * A bare number is NEVER converted — that is how you turn "500g" into "$71".
+     */
+    var CNY_SUFFIX_RE = /([0-9０-９]+(?:,[0-9]{3})*(?:[.,][0-9０-９]{1,2})?)\\s*(?:元|圆|块钱|块)/g;
+    var CNY_LABEL_RE = /(?:(?:价格|售价|单价|批发价|现价|原价|券后价?|到手价|起批价|市场价)\\s*[:：]?\\s*)([0-9０-９]+(?:,[0-9]{3})*(?:[.,][0-9０-９]{1,2})?)/g;
+    var CNY_CODE_RE = /(?:CNY|RMB)\\s*([0-9０-９]+(?:,[0-9]{3})*(?:[.,][0-9０-９]{1,2})?)/g;
     // Cheap head test for the split-span sweep: the element must START with a
     // currency sign (spaces allowed). Rejects the vast majority of <span>s on
     // the page before any normalisation or ancestor walk happens.
@@ -110,11 +127,35 @@ export function usdPriceScript(cnyPerUsd: number): string {
 
     function convertTextNode(node) {
       var t = node.nodeValue || "";
-      if (t.indexOf("¥") === -1 && t.indexOf("￥") === -1) return;
+      var hasSymbol = t.indexOf("¥") !== -1 || t.indexOf("￥") !== -1;
+      // Worded forms must be detected too, or YiwuGo/ChinaGoods prices survive.
+      var hasWorded = !hasSymbol &&
+        (/(?:元|圆|块)/.test(t) || /(?:CNY|RMB)/.test(t) ||
+         /(?:价格|售价|单价|批发价|现价|原价|券后价?|到手价|起批价|市场价)/.test(t));
+      if (!hasSymbol && !hasWorded) return;
       if (inSkip(node.parentElement)) return;
-      var replaced = t.replace(CNY_RE, function (m, num) {
+      var replaced = t;
+      if (hasSymbol) {
+        replaced = replaced.replace(CNY_RE, function (m, num) {
+          var u = toUsd(num);
+          return u != null ? u : m;
+        });
+      }
+      // Suffixed yuan: "35.00元" → "$5.30" (the unit is consumed with the number,
+      // because leaving "元" beside a dollar figure reads as a typo).
+      replaced = replaced.replace(CNY_SUFFIX_RE, function (m, num) {
         var u = toUsd(num);
         return u != null ? u : m;
+      });
+      // Labelled price: "价格：35.00" → "价格：$5.30" (label kept, it is the
+      // marketplace's own wording and removing it would look broken).
+      replaced = replaced.replace(CNY_LABEL_RE, function (m, num) {
+        var u = toUsd(num);
+        return u != null ? m.replace(num, u) : m;
+      });
+      replaced = replaced.replace(CNY_CODE_RE, function (m, num) {
+        var u = toUsd(num);
+        return u != null ? m.replace(num, u) : m;
       });
       if (replaced !== t) {
         var par = node.parentElement;
@@ -250,7 +291,15 @@ export function usdPriceScript(cnyPerUsd: number): string {
       var batch = [];
       while ((n = walker.nextNode())) {
         var v = n.nodeValue || "";
-        if (v.indexOf("¥") !== -1 || v.indexOf("￥") !== -1) batch.push(n);
+        // NOTE: this prefilter must mirror convertTextNode's own gate. When it
+        // only accepted ¥/￥, a worded price ("35.00元", "价格：88") never even
+        // reached the converter, so widening the regexes alone would not have
+        // fixed yiwugo/ChinaGoods.
+        if (
+          v.indexOf("¥") !== -1 || v.indexOf("￥") !== -1 ||
+          /(?:元|圆|块)/.test(v) || /(?:CNY|RMB)/.test(v) ||
+          /(?:价格|售价|单价|批发价|现价|原价|券后价?|到手价|起批价|市场价)/.test(v)
+        ) batch.push(n);
         if (batch.length >= 600) break;
       }
       for (var i = 0; i < batch.length; i++) convertTextNode(batch[i]);
