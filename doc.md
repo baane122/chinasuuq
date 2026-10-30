@@ -1,6 +1,6 @@
 # ChinaSuuq — Platform Documentation
 
-> **Version**: 0.0.1 (web + monorepo) · 1.0.6 (mobile, `versionCode` 1)
+> **Version**: 0.0.1 (web + monorepo) · 1.0.6 (mobile, `versionCode` 1) · APK shipped 2026-10-30
 > **Live**: https://chinasuuq.com · **Admin**: https://chinasuuq.com/admin · **APK**: https://chinasuuq.com/app/chinasuuq.apk
 > **Supabase project**: `athkmrvsaijwgsyvwrbp` (`athkmrvsaijwgsyvwrbp.supabase.co`)
 > This document describes the codebase as it is. For the short version see the root `README.md`.
@@ -696,6 +696,20 @@ Verified end to end through `ai-proxy` (4.87 s including function cold path) and
 18. ~~Mobile artwork~~ and ~~universal ABI weight~~ — DONE: `apps/mobile/assets/` went 51 MB → 12.9 MB and the `preview` profile is arm-only (`ORG_GRADLE_PROJECT_reactNativeArchitectures`), taking the APK from 151 MB to 74.6 MB (§9). The next lever is structural: the `.so` files are stored uncompressed and page-aligned, and there are no per-ABI downloads, so a device still fetches both ARM ABIs. Either serve per-ABI APKs beside the universal one or put the app on Play, where split delivery handles it.
 19. **Column-contract risk stays open** — the repo cannot be the source of truth for the live schema (§6). Any new projection must be checked against `information_schema` first, and the safest UI pattern is a fallback ladder or an explicit "unknown", because a single missing column voids the whole request.
 20. ~~CI does not validate the APK~~ — DONE: `ci.yml` now unzips `public/app/chinasuuq.apk`, fails under 500 entries, and `cmp`s it against the exported copy, so a truncated archive fails the build instead of shipping.
+21. **APK shipping rule (learned the hard way, 2026-10-30):** the APK at
+`apps/web/public/app/chinasuuq.apk` is a **checked-in binary** and does not rebuild itself. It sat
+at v1.0.2 from 2 October while the app moved to 1.0.6, so customers downloaded a five-week-old
+build with none of the fixes. After every `eas build`, download the artifact, copy it over that
+path, and verify before deploying:
+
+```bash
+unzip -l apps/web/public/app/chinasuuq.apk | tail -1   # expect ~1288 entries
+```
+
+To confirm a fix actually reached the bundle, probe `assets/index.android.bundle` — but search
+CJK strings as **UTF-16LE**, not UTF-8 (Metro writes them UTF-16, so a UTF-8 search always reports
+zero and looks like a stale build).
+
 21. **`.easignore` does not exclude `node_modules` the way its comment claims** — the EAS upload archive stayed at 226 MB after the app's own files shrank to ~14 MB, so dependencies are still being packed. Worth finding the real mechanism (EAS has a separate node-modules ignore file) before trusting the comment in `apps/mobile/.easignore`.
 22. **No iPhone build until someone pays or plugs in** — iOS has no installable artifact because the Expo account has no Apple team (`device:list` → "No Apple teams found"), not because of repo config; and App Store Expo Go is pinned to SDK 54 while this app is SDK 57. Both routes and their exact commands are in §9 "iOS". Blocked on user actions either way: accept the Xcode license, add an Apple ID to Xcode (free route), or buy the $99/yr Apple Developer Program (EAS/TestFlight route).
 23. **`eas.json`'s `submit` block has no `ios` half** — `apps/mobile/.eas/workflows/production.yml` defines `submit_ios`, so the workflow and the profile config disagree; submitting to TestFlight will need `appleTeamId` and an App Store Connect API key first.

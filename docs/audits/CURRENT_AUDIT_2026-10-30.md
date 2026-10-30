@@ -731,3 +731,50 @@ in the source — `setPrefsReady` was removed (the state was unused) and
 pre-edit module code, not a live defect. A fresh `expo start --clear` (or a reinstall) clears it.
 Worth stating rather than dismissing, because "it errors on my phone" and "it is broken" are
 different claims and only one was true.
+
+## 25. Release state after this round — the APK was the real gap
+
+The most consequential finding of the whole session came last, from a background deploy notice:
+**the APK served at `chinasuuq.com/app/chinasuuq.apk` was still v1.0.2 from 2 October.** Every fix
+in Parts 1–4 existed in the repo and in the web deployment, but a customer downloading the app
+today got a build with none of them — including the Expo Go cookie crash, the yiwugo price bug and
+the translation race. Web was current; mobile was five weeks stale.
+
+Shipped:
+
+| | Before | After |
+|---|---|---|
+| APK version | 1.0.2 (2 Oct) | **1.0.6** (30 Oct) |
+| Size | 74,681,825 B | 66,699,537 B |
+| Zip entries | ~1300 | 1288 |
+| Live commit | `18b50a3` | `8d82b01` (the FX fix) |
+
+The build (`03123a60`, then `3a1ae98b` for the FX fix) was verified to actually contain the new
+code before shipping, by probing `assets/index.android.bundle` inside the APK:
+
+```
+nativeCookiesLikelyAvailable  FOUND     (cookie guard shipped)
+__csUsdActive                FOUND     (price overlay shipped)
+syncUnavailable              FOUND     (i18n for the hidden sync button)
+```
+
+**A verification trap worth recording:** the Chinese terms (`元`, `价格`, `批发价`, `RMB`) read as
+*missing* when searched as UTF-8, because Metro writes those strings as **UTF-16LE**. Searching
+the UTF-8 encoding gave zero hits and nearly led to shipping a build believed to be stale:
+
+```
+元   utf8=0   utf16le=21      价格  utf8=0  utf16le=8
+块   utf8=0   utf16le=18      RMB   utf8=0  utf16le=6
+```
+
+Search APK bundles for CJK in UTF-16LE. UTF-8 will always report zero.
+
+The live file was then confirmed server-side without pulling 66 MB over a slow link (the full
+download timed out at 432 s with a partial file):
+
+- `content-length: 66699537` — byte-identical to the built artifact;
+- range-fetched the last 4 KB and parsed the End-of-Central-Directory record:
+  `PK\x05\x06` present, **1288 entries** — a complete, valid ZIP, not a truncated upload.
+
+Final state: web at `chinasuuq.com` 200 on all routes; APK 1.0.6 live; mobile suite 174 checks,
+0 failures; GitHub `main` at `dddd17d`.
