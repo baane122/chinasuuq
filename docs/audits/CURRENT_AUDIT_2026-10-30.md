@@ -534,3 +534,131 @@ Recorded as `apps/web/supabase/migrations/202610300002_grant_hardening_and_ai_ta
   Empty `screenshots/` and the stale root `BUILD-INSTRUCTIONS.md` removed.
 - `doc.md` updated with §8 grant hardening and §11.1 performance, including the measured numbers.
 - Gates: web `tsc` clean, web build 30/30 routes, mobile `tsc` clean, mobile verify 146/146.
+
+---
+
+# Part 3 — 2026-10-30 (owner-reported bugs, fixed)
+
+Four reports came in from the owner, from a real device session:
+
+1. "why the cookies not working"
+2. "some marketplace the exchange and the translation not"
+3. "staff login working keep the cookies"
+4. "smart cart extraction visual ai working"
+
+All four trace to three concrete defects. None were guesses — each is reproduced and
+regression-tested below.
+
+## 19. The cookie crash — root cause and why the old guard could never work
+
+The device log showed an app-level red screen:
+
+```
+ERROR [Invariant Violation: @react-native-community/cookies:
+       Add RNCookieManagerIOS.h and RNCookieManagerIOS.m to your Xcode project]
+```
+
+and a hard "Uncaught Error". The package throws **at module-evaluation time**, in its own
+top-level code:
+
+```js
+const RNCookieManagerIOS = NativeModules.RNCookieManagerIOS;
+if (Platform.OS === 'ios') {
+  invariant(RNCookieManagerIOS, 'Add RNCookieManagerIOS.h …');   // ← throws here
+}
+```
+
+The previous code wrapped a dynamic import in try/catch:
+
+```ts
+try { const mod = await import("@react-native-cookies/cookies"); } catch { /* ignore */ }
+```
+
+**That can never work.** The throw happens inside Metro's module registry while the module is
+being evaluated — before the `await` resolves, before the catch frame exists. A try/catch around
+the import cannot contain it. (This is why the crash persisted despite the code *looking* guarded,
+and why `Platform.OS !== "web"` did not help: iOS took the branch and threw.)
+
+The fix (`src/lib/nativeCookies.ts`) tests the **same condition the invariant tests** —
+`NativeModules.RNCookieManagerIOS` / `RNCookieManagerAndroid` are `undefined` rather than throwing
+when unlinked — and only imports when it will pass. Reading `NativeModules` is safe in every
+runtime, including Expo Go and web.
+
+Deliberately *not* used: a `Platform.OS === "android"` gate. That would fix Expo Go on iOS but
+silently disable a real iOS build where the pod **is** linked. The helper mirrors the library's
+own platform dispatch instead, so a linked iOS build still works.
+
+Behaviour now, stated plainly:
+
+| Runtime | Native cookie reads | Staff sync button |
+|---|---|---|
+| Android preview/release build | work | shown, works |
+| iOS build with the pod linked | work | shown, works |
+| Expo Go (both platforms) | impossible by design | **hidden** — not offered, not failing |
+| Web | none | hidden |
+
+The customer session is unaffected either way: the WebView keeps its own persistent cookie jar
+through `sharedCookiesEnabled` + `thirdPartyCookiesEnabled`, which is why browsing still holds a
+1688/Taobao login without the native module. The module only powers the *staff* "push cookies to
+the server" feature. The button is now hidden where it cannot work, rather than rendered, tapped,
+and failed — a button that looks functional and is not is worse than one that is absent.
+
+## 20. Price conversion and translation were skipped on login-walled marketplaces
+
+`runPerPageScripts()` had a risk-wall branch that early-returned with only the runtime and the two
+watchers — **no USD overlay, no translation**:
+
+```ts
+if (riskActiveRef.current) {
+  webview.injectJavaScript([CS_RUNTIME, NAV_WATCH, RISK_WATCH].join(";"));
+  return;                       // ← prices and text never touched
+}
+```
+
+Taobao (and the others) run a verification/login wall for the first seconds of every fresh
+session. While that wall was up, the page kept raw ¥ and Chinese — which is most of the first
+page view on mobile data. That is the "some marketplaces, the exchange and the translation not"
+report, and it explains why it looked marketplace-specific: it was wall-specific, and Taobao
+walls far more often than 1688.
+
+The branch now injects the DOM-safe subset: runtime, watchers, **the USD overlay**, and **the
+translation task**. The concern the old early-return was protecting is real — the slide-captcha
+widget owns its DOM and rewriting its text breaks the puzzle — but that is handled downstream:
+`usdPriceScript` and `AI_TRANSLATE_SCRIPT` both walk text nodes and skip anything inside a
+captcha container via `RISK_INSIDE_FN`. Both still respect the user's `$` and language toggles, so
+"show original" is not overridden.
+
+## 21. The translation race — why translation was intermittent on fast pages
+
+`translateLang` is restored from `AsyncStorage` in a `useEffect`, i.e. **after first render**, while
+the WebView starts loading on that first render. The per-page suite is injected from
+`onProgress`/`onLoadEnd` and only pushes `AI_TRANSLATE_SCRIPT` when `translateLang` is truthy. On a
+fast page the suite won the race, went in with `translateLang === null`, and the page stayed
+Chinese until the user manually re-picked a language.
+
+That is the *other* half of "some marketplaces don't translate", and it explains the shape of the
+report: **the faster the marketplace, the more often it lost.** Slower pages accidentally worked.
+
+Fix: the preference read now remembers its result and, if the early suite has already gone in,
+pushes the translation task explicitly once the language resolves. Both halves are now
+regression-tested.
+
+## 22. Verification
+
+Two new static suites, both wired into `npm run verify`:
+
+- `scripts/verify-native-cookies.mjs` (6 checks) — exactly one module imports the cookie package;
+  that module checks the native module before importing; it mirrors both `RNCookieManagerIOS` and
+  `RNCookieManagerAndroid`; it does not gate on platform alone; the sync button is gated.
+- `scripts/verify-risk-suite.mjs` (11 checks) — the risk branch carries the runtime, both watchers,
+  the USD overlay and the translation task; both respect their toggles; both skip captcha
+  containers; the translation race re-push exists.
+
+Full mobile suite: **163 checks, 0 failures**, exit 0. `expo export --platform ios` bundles clean,
+which is the platform that was crashing.
+
+On "smart cart extraction / visual AI": the AI scan path was already verified working in
+production in Part 1 §6.1 (bare base64 JPEG in → real listing out, both the screenshot and the
+fast snapshot-only path). What was broken around it was the page state — a marketplace stuck
+behind an un-translated wall does not surface the product text the extractor reads, so fixing §20
+and §21 is also what makes extraction fire reliably on the walled marketplaces.

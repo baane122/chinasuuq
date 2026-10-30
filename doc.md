@@ -388,6 +388,33 @@ Turns captured marketplace page text into structured MOQ/price data, and is the 
 
 Because the web app is a static export, Next.js `headers()`/`proxy.ts` never run in production; `proxy.ts` was deleted and `next.config.ts` documents that `vercel.json` is authoritative.
 
+### Marketplace WebView correctness (2026-10-30)
+
+Three defects found from a real device session, all with regression tests:
+
+1. **The cookie package crashed the screen on iOS/Expo Go.** `@react-native-cookies/cookies`
+   throws at *module-evaluation* time (`invariant` on `NativeModules.RNCookieManagerIOS`), so a
+   try/catch around `await import()` cannot contain it — the throw happens in Metro's module
+   registry before the catch frame exists. `src/lib/nativeCookies.ts` is now the single importer and
+   tests the same `NativeModules` condition the invariant tests before importing. It is
+   deliberately not a `Platform.OS === "android"` gate, which would disable a real iOS build with
+   the pod linked. Where native cookies are unavailable the staff sync button is **not rendered**.
+
+2. **Prices and translation were skipped behind a login wall.** The risk-wall branch of
+   `runPerPageScripts()` early-returned with watchers only, so walled marketplaces (Taobao most
+   often) stayed in raw ¥ and Chinese for the first seconds of every session. The branch now also
+   injects the USD overlay and the translation task; both skip captcha containers via
+   `RISK_INSIDE_FN`, so the verification widget's DOM is untouched.
+
+3. **Translation lost a race with the WebView.** `translateLang` is restored from AsyncStorage in a
+   `useEffect` (after first render) while the WebView loads on first render, so a fast page got the
+   suite with `translateLang === null` and stayed Chinese. The preference read now re-pushes the
+   translation task if the early suite already fired — which is why the bug looked
+   marketplace-specific: the *faster* the marketplace, the more often it lost.
+
+Verified: mobile `npm run verify` is **163 checks, 0 failures**; `expo export --platform ios`
+bundles clean.
+
 ### Grant hardening (2026-10-30)
 
 RLS was the *only* thing standing between the public anon key and the data. `anon` held
