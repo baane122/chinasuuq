@@ -711,18 +711,28 @@ export async function listQuotes() {
 
 export async function createQuote(q: any) {
   try {
+    // Exactly the live `quotes` columns. The old payload wrote
+    // sourcing_request_id / profile_id / subtotal / shipping_cost / total /
+    // currency, none of which exist on this table — every "New quote" insert
+    // died with PGRST204 and the admin form reported a generic failure.
+    // Live: request_id / user_id / total_cny / total_usd / exchange_rate /
+    // freight_estimate / discount / deposit_percent, all NOT NULL.
+    const rate = Number(q.exchange_rate) || 6.6;
+    const totalUsd = Number(q.total_usd) || Number(q.total) || 0;
     const row: any = {
-      sourcing_request_id: q.sourcing_request_id || null,
-      profile_id: q.profile_id,
-      subtotal: Number(q.subtotal) || 0,
-      shipping_cost: Number(q.shipping_cost) || 0,
+      request_id: q.request_id || q.sourcing_request_id || null,
+      user_id: q.user_id || q.profile_id,
+      reference: q.reference || `QT-${Date.now().toString(36).toUpperCase()}`,
+      total_cny: Number(q.total_cny) || Math.round(totalUsd * rate * 100) / 100,
+      total_usd: totalUsd,
+      exchange_rate: rate,
       service_fee: Number(q.service_fee) || 0,
-      tax_amount: Number(q.tax_amount) || 0,
-      discount_amount: Number(q.discount_amount) || 0,
-      total: Number(q.total) || 0,
-      currency: q.currency || "USD",
-      valid_until: q.valid_until || null,
-      notes: q.notes || null,
+      freight_estimate: Number(q.freight_estimate ?? q.shipping_cost) || 0,
+      discount: Number(q.discount ?? q.discount_amount) || 0,
+      deposit_percent: Number(q.deposit_percent) || 50,
+      valid_until: q.valid_until || new Date(Date.now() + 14 * 864e5).toISOString(),
+      status: q.status || "draft",
+      customer_notes: q.customer_notes ?? q.notes ?? null,
     };
     const res = await supabase.from("quotes").insert(row).select().single();
     return { ok: !res.error, quote: res.data, error: res.error?.message };
@@ -749,10 +759,13 @@ export async function createShipment(s: any) {
   try {
     // Exactly the live `shipments` columns — no order_id/origin_country/
     // weight_grams; freight quantity lives in total_packages.
+    // `status` defaults to "preparing": the shipment_status enum is
+    // (preparing, loaded, in_transit, arrived, customs, delivered) and has NO
+    // "pending", so the old default sent every create down as 22P02.
     const row: any = {
       reference: s.reference,
       method: s.method || "sea",
-      status: s.status || "pending",
+      status: s.status || "preparing",
       origin: s.origin || "",
       destination: s.destination || "",
       total_packages: Number(s.total_packages) || 0,
@@ -1046,9 +1059,12 @@ export async function updateCustomer(id: string, patch: CustomerPayload): Promis
 /** Soft-delete a customer profile by setting deleted_at. */
 export async function deleteCustomer(id: string): Promise<CustomerResult> {
   try {
+    // Soft-delete via `is_active`. `profiles` has NO deleted_at column, so the
+    // previous update always failed with PGRST204 and the admin "Delete
+    // customer" button silently did nothing.
     const { error } = await supabase
       .from("profiles")
-      .update({ deleted_at: new Date().toISOString() })
+      .update({ is_active: false })
       .eq("id", id);
     return { ok: !error, error: error?.message };
   } catch (e) {

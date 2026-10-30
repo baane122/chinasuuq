@@ -124,12 +124,16 @@ export default function TrackPage() {
       // The live orders schema uses `reference` + `total_usd` (20260813
       // migration); older generations used `order_number` + `total`. Try the
       // live shape first and fall back so both schema generations track.
-      const COLS_LIVE = "id, reference, status, total_usd, shipping_method, payment_status, created_at, updated_at";
-      const COLS_LEGACY = "id, order_number, status, total, shipping_method, payment_status, created_at, updated_at";
+      const COLS_LIVE = "id, order_number, status, payment_status, shipping_method, destination_city, created_at, updated_at";
+      // Only the live shape exists now: /track reads the guest-tracking VIEW
+      // (public.order_tracking_public), not `orders` directly. `orders` RLS only
+      // ever allows a signed-in owner or staff, so a guest hitting the table got
+      // zero rows and every real tracking number reported "not found". The view
+      // exposes non-PII columns only and treats the reference as the bearer token.
+      const COLS_LEGACY = COLS_LIVE;
 
       type TrackedRow = {
         id: string;
-        reference?: string;
         order_number?: string;
         status: string;
         total_usd?: number;
@@ -143,9 +147,9 @@ export default function TrackPage() {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
       let row: TrackedRow | null = null;
 
-      const attempt = async (cols: string, col: "reference" | "order_number") => {
+      const attempt = async (cols: string, col: "order_number") => {
         const { data, error } = await supabase
-          .from("orders")
+          .from("order_tracking_public")
           .select(cols)
           .ilike(col, ref)
           .maybeSingle();
@@ -158,9 +162,8 @@ export default function TrackPage() {
 
       // Probe the two schema generations in order, and stop the moment one
       // answers — a dead network must not cost a second doomed round trip.
-      const shapes: Array<[string, "reference" | "order_number"]> = [
-        [COLS_LIVE, "reference"],
-        [COLS_LEGACY, "order_number"],
+      const shapes: Array<[string, "order_number"]> = [
+        [COLS_LIVE, "order_number"],
       ];
       for (const [cols, col] of shapes) {
         row = await attempt(cols, col);
@@ -171,7 +174,7 @@ export default function TrackPage() {
       if (!row && isUuid && !sawTransportFailure) {
         const byId = async (cols: string) => {
           const { data, error } = await supabase
-            .from("orders")
+            .from("order_tracking_public")
             .select(cols)
             .eq("id", ref)
             .maybeSingle();
@@ -190,7 +193,7 @@ export default function TrackPage() {
       if (row) {
         setOrder({
           id: row.id,
-          order_number: row.reference ?? row.order_number ?? "",
+          order_number: row.order_number ?? "",
           status: row.status,
           total: row.total_usd ?? row.total ?? 0,
           shipping_method: row.shipping_method,

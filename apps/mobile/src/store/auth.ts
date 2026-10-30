@@ -73,9 +73,7 @@ interface AuthStore {
    * `createNewUser` defaults to true: a first-time number gets an account
    * created on OTP verify, matching the email flow.
    */
-  signInWithOtpPhone: (phone: string, createNewUser?: boolean) => Promise<AuthResult>;
   /** Verify the SMS code for `phone`; on success a session is applied. */
-  verifyOtpPhone: (phone: string, code: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
   loadSession: () => Promise<void>;
   clearError: () => void;
@@ -391,56 +389,6 @@ export const useAuthStore = create<AuthStore>((set, get) => {
           const message = friendlyAuthError(error);
           set({ error: message });
           return { error: message };
-        }
-        return {};
-      } catch (e: any) {
-        const message = friendlyAuthError(e);
-        set({ error: message });
-        return { error: message };
-      }
-    },
-
-    signInWithOtpPhone: async (phone, createNewUser = true) => {
-      try {
-        set({ error: null });
-        const trimmed = phone.trim();
-        const { error } = await supabase.auth.signInWithOtp({
-          phone: trimmed,
-          options: { shouldCreateUser: createNewUser },
-        });
-        if (error) {
-          const message = friendlyAuthError(error);
-          set({ error: message });
-          return { error: message };
-        }
-        return {};
-      } catch (e: any) {
-        const message = friendlyAuthError(e);
-        set({ error: message });
-        return { error: message };
-      }
-    },
-
-    verifyOtpPhone: async (phone, code) => {
-      try {
-        set({ error: null });
-        const { data, error } = await supabase.auth.verifyOtp({
-          phone: phone.trim(),
-          token: code.trim(),
-          type: "sms",
-        });
-        if (error) {
-          const message = friendlyAuthError(error);
-          set({ error: message });
-          return { error: message };
-        }
-        if (data.user) {
-          if (data.session) {
-            await applySession(data.session);
-          } else {
-            const { data: refreshed } = await supabase.auth.getSession();
-            await applySession(refreshed.session);
-          }
         }
         return {};
       } catch (e: any) {

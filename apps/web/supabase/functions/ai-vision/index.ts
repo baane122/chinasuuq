@@ -216,9 +216,16 @@ export async function handler(req: Request) {
       },
     ];
     if (screenshot) {
+      // The client may send either a bare base64 blob or an already-prefixed
+      // data URL (react-native-view-shot gives a file, the WebView capture gives
+      // a data URI). Blindly prepending `data:image/jpeg;base64,` produced
+      // `data:image/jpeg;base64,data:image/png;base64,...`, which the upstream
+      // rejected with HTTP 400 -> every AI scan died as provider_error.
+      const stripped = screenshot.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
+      const mime = /^data:(image\/[a-zA-Z0-9.+-]+);base64,/.exec(screenshot)?.[1] ?? "image/jpeg";
       userContent.push({
         type: "image_url",
-        image_url: { url: `data:image/jpeg;base64,${screenshot}` },
+        image_url: { url: `data:${mime};base64,${stripped}` },
       });
     }
 

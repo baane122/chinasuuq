@@ -28,9 +28,6 @@ export interface AuthContract {
   resendVerification: (email: string) => Promise<AuthResult>;
   /** Phone number sign-in path: send the OTP. Fails with a friendly message
    *  until the dashboard has an SMS provider attached (see AUTH-DASHBOARD-SETUP.md). */
-  signInWithOtpPhone: (phone: string, createNewUser?: boolean) => Promise<AuthResult>;
-  /** Verify the OTP that `signInWithOtpPhone` sent. */
-  verifyOtpPhone: (phone: string, code: string) => Promise<AuthResult>;
   clearError: () => void;
 }
 
