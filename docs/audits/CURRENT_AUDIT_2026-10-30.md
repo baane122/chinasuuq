@@ -662,3 +662,72 @@ production in Part 1 §6.1 (bare base64 JPEG in → real listing out, both the s
 fast snapshot-only path). What was broken around it was the page state — a marketplace stuck
 behind an un-translated wall does not surface the product text the extractor reads, so fixing §20
 and §21 is also what makes extraction fire reliably on the walled marketplaces.
+
+## 23. YiwuGo / ChinaGoods: the exchange really was not working
+
+The owner reported it twice: "some marketplace apps like yiwugo and some others the exchange is
+not working". It was a genuine bug with a specific cause, and it had **two gates**, so fixing
+either alone would have changed nothing.
+
+**Gate 1 — the converter.** `convertTextNode()` began:
+
+```js
+if (t.indexOf("¥") === -1 && t.indexOf("￥") === -1) return;
+```
+
+**Gate 2 — the walker prefilter**, which runs first and never even handed worded text on:
+
+```js
+if (v.indexOf("¥") !== -1 || v.indexOf("￥") !== -1) batch.push(n);
+```
+
+So the overlay only ever saw text containing a literal `¥`/`￥`. 1688 prints `¥35`, which is why
+1688 looked fine. YiwuGo and ChinaGoods print `35.00元`, `价格：88` and `RMB 120` — no symbol — so
+those prices passed through untouched and the rate appeared dead on exactly those marketplaces.
+
+Both gates now recognise the worded forms, with patterns kept deliberately narrow because these
+suffixes appear all over non-price text:
+
+- **`元` / `圆` / `块` suffix** — `35.00元` → `$5.30` (the unit is consumed, since `$5.30元` reads
+  as a typo).
+- **price label + number** — `价格：88` → `价格：$13.33` (label kept: it is the marketplace's own
+  wording).
+- **`CNY` / `RMB` prefix** — `RMB 120` → `RMB $18.18`.
+- A **bare number is never converted**, which is the rule that stops `500g` becoming `$71`.
+
+Verified by executing the real injected script against a stub DOM
+(`scripts/verify-usd-worded.mjs`, 11 checks) including the over-match cases that must *not*
+convert: `500g`, `2024`, `规格 20`, `库存 300`, `id 888888`.
+
+```
+converts leading ¥ (1688)            "¥35"          → "$5.30"
+converts suffixed 元 (yiwugo)        "35.00元"      → "$5.30"
+converts labelled price (ChinaGoods)  "价格：88"     → "价格：$13.33"
+converts CNY/RMB code                "RMB 120"      → "RMB $18.18"
+does NOT convert a weight            "500g"         → unchanged
+does NOT convert an identifier       "id 888888"    → unchanged
+```
+
+### Two harness traps worth recording
+
+Both produced *false* results mid-investigation and are now documented in the script header:
+
+1. The injected script is a JS string inside a TS template literal. Slicing the **source** yields
+   `/\\s?/`, which as a runtime regex means "a literal backslash, then s" — nothing matches.
+   An intermediate run "proved" the overlay was broken when the shipped code was fine. The escapes
+   must be undone exactly as the JS engine would.
+2. The script is **idempotent** (it sets `window.__csUsdActive` and returns early on re-injection
+   at the same rate). Sharing one global `window` across test cases makes every case after the
+   first a silent no-op. Each case needs a fresh window.
+
+Mobile suite after this round: **174 checks, 0 failures**.
+
+## 24. On the stale-bundle error the owner saw
+
+The device log showed `Property 'setPrefsReady' doesn't exist` and
+`Property 'nativeCookiesLikelyAvailable' doesn't exist`. Both refer to symbols that no longer exist
+in the source — `setPrefsReady` was removed (the state was unused) and
+`nativeCookiesLikelyAvailable` is imported at line 58. That is a **stale Metro bundle** serving
+pre-edit module code, not a live defect. A fresh `expo start --clear` (or a reinstall) clears it.
+Worth stating rather than dismissing, because "it errors on my phone" and "it is broken" are
+different claims and only one was true.

@@ -406,7 +406,13 @@ Three defects found from a real device session, all with regression tests:
    injects the USD overlay and the translation task; both skip captcha containers via
    `RISK_INSIDE_FN`, so the verification widget's DOM is untouched.
 
-3. **Translation lost a race with the WebView.** `translateLang` is restored from AsyncStorage in a
+3. **The price overlay only recognised a literal `¥`.** YiwuGo and ChinaGoods print
+   `35.00元` / `价格：88` / `RMB 120`, none of which contain `¥`, and there were **two** gates
+   rejecting them (the tree-walk prefilter *and* `convertTextNode`), so widening one alone did
+   nothing. Both now accept the worded forms; a bare number is still never converted, which is
+   what stops `500g` becoming `$71`. Executable proof: `scripts/verify-usd-worded.mjs`.
+
+4. **Translation lost a race with the WebView.** `translateLang` is restored from AsyncStorage in a
    `useEffect` (after first render) while the WebView loads on first render, so a fast page got the
    suite with `translateLang === null` and stayed Chinese. The preference read now re-pushes the
    translation task if the early suite already fired — which is why the bug looked
