@@ -17,7 +17,8 @@
  * keyboard behaviour, which is exactly the kind of per-platform detail that
  * goes stale when a screen keeps its own copy of it.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -54,7 +55,7 @@ export default function SetPasswordScreen() {
   /** False until we know a recovery session is present, so the CTA can be honest. */
   const [hasRecoverySession, setHasRecoverySession] = useState(false);
 
-  const confirmRef = useRef<TextInput>(null);
+  const confirmRef = useRef<ComponentRef<typeof TextInput>>(null);
 
   const t = useCallback(
     (en: string, so: string) => (locale === "so" ? so : en),

@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
+import { type ComponentRef } from "react";
 import {
   View,
   Text,
@@ -48,7 +49,7 @@ export default function ImageCarousel({ images, videoUrl }: ImageCarouselProps) 
   const [failedPages, setFailedPages] = useState<Set<number>>(new Set());
   const [zoomOpen, setZoomOpen] = useState(false);
   const [zoomIndex, setZoomIndex] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   const hasVideo = Boolean(videoUrl);
   // The video occupies page 0 when present, shifting image pages by one so the

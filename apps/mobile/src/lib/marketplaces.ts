@@ -1,7 +1,6 @@
 // Single source of truth for marketplace data.
 // Both `app/(tabs)/markets.tsx` and `app/(tabs)/home.tsx` import from here.
 
-import { ImageSourcePropType } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type MarketplaceId =
@@ -20,7 +19,8 @@ export interface Marketplace {
   desc_so: string;
   stat_en: string;
   stat_so: string;
-  icon: ImageSourcePropType;
+  /** Metro asset id from require(); accepted by both RN Image and expo-image. */
+  icon: number | { uri: string };
   brandColor: string;
   shortMark: string;
   homeUrl: string;

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { Lock, Mail } from "lucide-react-native";
@@ -27,7 +28,7 @@ export default function LoginScreen() {
 
   const { signIn, clearError } = useAuthContract();
   const router = useRouter();
-  const passwordRef = useRef<TextInput>(null);
+  const passwordRef = useRef<ComponentRef<typeof TextInput>>(null);
   const { locale } = useI18n();
 
   const t = useCallback(

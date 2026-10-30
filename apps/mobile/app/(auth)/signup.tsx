@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { Link, useRouter } from "expo-router";
 import { CheckCircle2, Lock, Mail, Phone, User } from "lucide-react-native";
@@ -42,10 +43,10 @@ export default function SignupScreen() {
 
   const { signUp, clearError } = useAuthContract();
   const router = useRouter();
-  const emailRef = useRef<TextInput>(null);
-  const phoneRef = useRef<TextInput>(null);
-  const passwordRef = useRef<TextInput>(null);
-  const confirmRef = useRef<TextInput>(null);
+  const emailRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const phoneRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const passwordRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const confirmRef = useRef<ComponentRef<typeof TextInput>>(null);
   const { locale } = useI18n();
 
   const t = useCallback(

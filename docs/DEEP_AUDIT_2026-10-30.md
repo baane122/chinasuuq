@@ -292,3 +292,61 @@ follow-up DELETE left **zero** active rows — `fx_rates()` then fell back to 6.
 This was my test, not a pre-existing bug. The newest intended row was re-activated and
 `fx_rates()` verified back at `cny_per_usd 6.60 / sos_per_usd 530 / service_fee_pct 0.05`.
 Rule for next time: **never insert or delete test rows in `exchange_rates`.**
+
+---
+
+## 10. Mobile CRUD — every write path exercised as a real customer
+
+A throwaway customer account was created, driven through the exact payloads the app
+sends (`src/db/index.ts` → `src/lib/supabase-adapter.ts`), then removed and the baseline
+restored exactly.
+
+| Screen | Operation | Result |
+|---|---|---|
+| `profile/add-address`, `profile/addresses` | create / update / delete `addresses` | 201 / 200 / 204 |
+| `profile/wishlist`, product detail | `favorites` add / remove | 201 / 204 |
+| `profile/payment-methods` | `customer_payment_methods` create + delete | 201 / 204 |
+| `support/index` | `support_tickets` create + `support_messages` reply + delete | 201 / 201 / 204 |
+| `profile/personal-info` | `profiles` update, `customer_profiles` upsert | 200 / 201 |
+| `notifications/index` | mark-all-read `notifications` update | 204 |
+| `cart`, `cart/checkout` | `carts` create → `cart_items` add / qty change / remove → cart delete | 201 / 201 / 200 / 204 / 204 |
+| `orders/success` | `submit_mobile_order` end-to-end | 200, server-priced |
+
+Screens checked for dead interaction: **43/43**, with **0** no-op `onPress` handlers and
+**0** TODO / "not implemented" stubs (the only "coming soon" text is honest copy on the
+referral payout card, not a broken control).
+
+Two apparent failures during this pass were **my test payloads**, not app bugs — worth
+recording because they look alarming:
+* `addresses` rejected `recipient_name`; the column is `full_name`, and
+  `adaptAddress()` already sends the right one.
+* `customer_payment_methods` / `support_tickets` 400s were wrong column names in the
+  probe; with the app's real payloads both are `201`.
+
+---
+
+## 11. Mobile build — fixed and shipped
+
+The Android pipeline had been dead since 2026-10-02. Root cause and fix:
+
+1. `eas.json` carried a top-level `"postInstall"` key, which EAS rejects outright —
+   **every** `eas-cli` command failed with `eas.json is not valid`. Removed; the hook now
+   lives at `package.json` → `scripts.postinstall`.
+2. `scripts/fix-jcenter.js` was untracked, so EAS never received it. Committed.
+3. `app.json` `projectId` was `72d3fa8c…`, which the signed-in account cannot access
+   (`Entity Not Authorized`). Verified empirically against both candidates and set to
+   `a8484922-0c4f-4f79-b4be-f93fe1dd5747`, which is reachable.
+
+Result — a real cloud build, not a local guess:
+
+```
+ID        7a42dc26-ac07-4444-af35-e207389c8936
+Status    finished
+SDK       57.0.0
+APK       https://expo.dev/artifacts/eas/HxXJvHbZaB_JjOQdQszGDeXzATLwr665akGiPAw-TB4.apk
+```
+
+Note: running the build locally also let `expo` reconcile `package.json`
+(version 1.0.5, expo `~58.0.21`). The full 146-check suite and `tsc` were re-run **after**
+that and still pass, but the published artifact above was compiled against SDK 57.
+If SDK 58 is not wanted, revert `package.json`/`package-lock.json` to the pre-build state.

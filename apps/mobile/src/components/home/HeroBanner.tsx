@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { type ComponentRef } from "react";
 import { View, Text, StyleSheet, ScrollView, Dimensions, Image } from "react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
@@ -35,7 +36,7 @@ const HERO_BANNERS = [
 
 export function HeroBanner() {
   const [activeIndex, setActiveIndex] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const { locale } = useI18n();
 
   useEffect(() => {

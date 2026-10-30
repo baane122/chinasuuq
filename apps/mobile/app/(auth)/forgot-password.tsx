@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { TextInput } from "react-native";
 import { useRouter } from "expo-router";
 import { Mail } from "lucide-react-native";
@@ -34,7 +35,7 @@ export default function ForgotPasswordScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
-  const emailRef = useRef<TextInput>(null);
+  const emailRef = useRef<ComponentRef<typeof TextInput>>(null);
 
   const t = useCallback(
     (en: string, so: string) => (locale === "so" ? so : en),

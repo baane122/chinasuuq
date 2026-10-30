@@ -1,5 +1,6 @@
 import {
   type ComponentProps,
+  type ComponentRef,
   type ReactNode,
   type RefObject,
   useState,
@@ -36,7 +37,7 @@ export interface AuthFieldProps {
   hideLabel?: string;
   /** Custom trailing node (e.g. a "passwords match" check icon). */
   trailing?: ReactNode;
-  inputRef?: RefObject<TextInput | null>;
+  inputRef?: RefObject<ComponentRef<typeof TextInput> | null>;
   returnKeyType?: TextInputProps["returnKeyType"];
   autoComplete?: TextInputProps["autoComplete"];
   textContentType?: TextInputProps["textContentType"];

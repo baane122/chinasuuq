@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import { type ComponentRef } from "react";
 import {
   View,
   Text,
@@ -52,7 +53,7 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const { locale } = useI18n();
   const [index, setIndex] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   const handleNext = () => {
     if (index < SLIDES.length - 1) {

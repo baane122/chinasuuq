@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { type ComponentRef } from "react";
 import {
   View,
   Text,
@@ -86,7 +87,7 @@ const HERO_BANNERS = [
 // ─── Hero Banner Component ─────────────────────────
 function HeroBannerCarousel() {
   const [activeIndex, setActiveIndex] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const { locale } = useI18n();
   const router = useRouter();
 
