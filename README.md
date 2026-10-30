@@ -1,6 +1,6 @@
 # ChinaSuuq
 
-**China-to-Somalia e-commerce marketplace.** · **v0.0.1**
+**China-to-Somalia e-commerce marketplace.** · **v1.0.0**
 
 > **Documentation**: [`docs/README.md`](docs/README.md) is the index. [`doc.md`](doc.md) is the
 > authoritative reference (architecture, schema + RLS, edge functions, security model, deployment).

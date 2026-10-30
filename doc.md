@@ -1,6 +1,6 @@
 # ChinaSuuq — Platform Documentation
 
-> **Version**: 0.0.1 (web + monorepo) · 1.0.6 (mobile, `versionCode` 1) · APK shipped 2026-10-30
+> **Version**: 1.0.0 (monorepo, web, mobile, shared) · `android.versionCode` 1 · APK shipped 2026-10-30
 > **Live**: https://chinasuuq.com · **Admin**: https://chinasuuq.com/admin · **APK**: https://chinasuuq.com/app/chinasuuq.apk
 > **Supabase project**: `athkmrvsaijwgsyvwrbp` (`athkmrvsaijwgsyvwrbp.supabase.co`)
 > This document describes the codebase as it is. For the short version see the root `README.md`.
