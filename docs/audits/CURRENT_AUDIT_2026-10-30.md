@@ -407,3 +407,130 @@ profiles kept their original roles afterwards. **No escalation path found.**
 
 Recommended follow-up (not done — needs a decision): backfill
 `supabase_migrations.schema_migrations` with the 66 filenames so future CLI usage is safe.
+
+---
+
+# Part 2 — 2026-10-30 (second pass): performance, security hardening, release
+
+Scope requested: make the marketplace WebView load and translate faster, make the admin FX rate
+fast and correct, make Mission Control AI faster, fix all security vulnerabilities, tidy the
+folder, bump to 0.0.1, update docs, ship to Vercel + website + Android.
+
+## 13. The translation decision: Google only, no paid AI
+
+The owner's call: **keep only Google translation.** Verified correct — mobile was already
+Google-only (`apps/mobile/src/api/translate.ts` → `translate.googleapis.com/translate_a/single`,
+batched 40 strings per GET, in-memory LRU + `AsyncStorage` mirror, 3-strike circuit breaker).
+What was still wrong was the admin surface: Mission Control showed an "AI Translation" card
+backed by `ai_provider_tasks.translation`, a task **no screen called**, and it was pointed at a
+paid model. Anyone toggling it would have been paying per page for work Google does free.
+
+Closed:
+- Deleted the `translation` row from `ai_provider_tasks` — no code path can resolve a provider for it.
+- Removed the card from `AiSettingsTab.TASK_META`, with a comment recording *why* so it is not
+  re-added later. `ai-translate` stays deployed for direct callers; it is in no shipping path.
+- `translations` (342 rows) is now anon-readable and acts as a **cross-device cache**: a string
+  translated on one device is free on the next. Verified:
+  `[{"source_text":"Add to cart","translated_text":"Ku dar gaariga"}]`.
+
+## 14. Marketplace WebView — where the perceived slowness actually was
+
+The WebView was not slow to *load*; it was slow to *feel* loaded, because our skeleton waited for
+the third party to finish. 1688/taobao keep pulling fonts, tracking pixels and lazy images for
+seconds after the page is visually complete, and `onLoadEnd` fires at the very end of that.
+
+- Skeleton is an absolute-fill overlay → revealed at **25 %** progress instead of `onLoadEnd`.
+- Per-page suite (translate + USD + capture) fires at ≥ 90 % progress **and** at `onLoadEnd`,
+  guarded by `earlySuiteRef` so it runs once per document. `onLoadStart` resets it, so in-page
+  navigation re-arms it.
+- Net effect: translation starts seconds earlier on a healthy network; on a slow one the
+  `onLoadEnd` path is unchanged, so there is no regression.
+
+## 15. Exchange rate — one source of truth, one round-trip
+
+`apps/mobile/src/lib/exchange.ts` used to query `exchange_rates` directly, trying column-name
+vocabulary variants in sequence (two HTTP round-trips plus fallbacks that silently drifted), then
+falling back to a hardcoded number. Meanwhile the server had `public.fx_rates()`, which resolves
+the active row and applies the service fee.
+
+Now the client calls **`fx_rates()` once**. Verified live:
+
+```
+{"cny_per_usd": 6.6000, "sos_per_usd": 530.00, "usd_per_cny": 0.151515,
+ "currency_chain": "CNY -> USD -> SOS", "service_fee_pct": 0.0500}
+```
+
+That is the admin-set active row (`is_active = t`, `effective_from 2026-10-25`). The admin Rates
+page reads the same row and runs the same normalizer, so the two surfaces cannot disagree. The
+hardcoded 6.6 is still last-resort only, never a guess.
+
+**Do not test-write `exchange_rates`** — a trigger deactivates all sibling rows for a pair when one
+active row is written. A test insert kills the live rate; a follow-up delete can leave zero active
+rows.
+
+## 16. Mission Control AI — measured, 3.2× faster
+
+Timings against the live provider, same prompt, three runs:
+
+| Model | Copilot reply | Somali translation batch |
+|---|---|---|
+| `[反重力次]gemini-3.7-flash-high` (was) | 2.36 s | 6.28 s |
+| `gemini-3.1-flash-image` (now) | **1.56 s** | **1.98 s** |
+| `glm-5.3` | 6.84 s | — |
+| `gemini-2.5-flash` / `gpt-4o-mini` | 502 — not served by this provider | — |
+
+`copilot`, `vision`, `extraction` all resolve to `gemini-3.1-flash-image` — the model vision
+already used, so chat and image understanding share one warm provider instead of two cold ones.
+Verified end to end: `ai-proxy` 200 in 4.87 s (includes the function cold path), `ai-chat` 200 in
+3.12 s, `ai-translate` 200 in 1.53 s on a cache hit.
+
+**Correction to my earlier note in this document:** a single `ai-translate` probe returned
+`model_timeout` after 31 s. That was a transient provider stall, not a model incompatibility —
+two immediate retries returned 200 (6.59 s cold, 1.53 s warm). I did not change the model on the
+strength of one bad sample.
+
+## 17. Security — the holes that were still open
+
+RLS was the *only* barrier between the public anon key and the data.
+
+**P1 — anonymous DELETE through a view returned 204.** `order_tracking_public` is a view, and
+PostgREST accepted `DELETE /rest/v1/order_tracking_public?id=eq.<real order id>` from anon with a
+**204**. It only failed to destroy the row because `order_items` held a foreign key (409). Fixed:
+both reporting views are `SELECT`-only for anon/authenticated — verified anon `DELETE` now 401,
+guest `SELECT` still 200.
+
+**P1 — anon held write grants on 53 tables.** Not exploitable while every RLS policy is correct,
+but that is one careless `USING (true)` away from a breach. Revoked `UPDATE`/`DELETE`/`TRUNCATE`/
+`REFERENCES`/`TRIGGER` from anon on all 57 public tables, and `INSERT` on all but `sourcing_requests`
+(the guest quote form, which RLS already scopes and whose `user_id` is nullable).
+
+Regression-tested after the revoke — nothing legitimate broke:
+
+| Flow | Result |
+|---|---|
+| Guest quote form insert (anon) | 201 |
+| Guest tracking view read | 200 |
+| Catalogue: products / categories / marketplaces | 200 / 200 / 200 |
+| `fx_rates()` RPC | 200 |
+| Admin settings patch | 200 |
+| Admin product create / update / delete | 201 / 200 / 204 |
+| Admin marketplace create / delete | 201 / 204 |
+| Admin orders / customers / notifications read | 200 / 200 / 200 |
+| anon read of orders / profiles / marketplace_accounts | 0 rows (no leak) |
+| `settings`, `translations` anon read | 401 / 200 (cache, intended) |
+| Mobile verify suite | 146 / 146 |
+
+Recorded as `apps/web/supabase/migrations/202610300002_grant_hardening_and_ai_tasks.sql`.
+
+## 18. Release state — 0.0.1
+
+- Root + `apps/web` version set to **0.0.1**.
+- Mobile bumped **1.0.5 → 1.0.6**, and `android.versionCode` set to **1** — it was *absent*
+  entirely before, which blocks any non-EAS Gradle build and confuses store submissions.
+  Mobile version stays on its own track (1.x) because a published app cannot be renumbered
+  backwards.
+- Docs reorganised: `docs/guides/` (build, payments, shipping), `docs/audits/` (9 historical
+  audits, current one renamed `CURRENT_AUDIT_2026-10-30.md`), `docs/README.md` as the index.
+  Empty `screenshots/` and the stale root `BUILD-INSTRUCTIONS.md` removed.
+- `doc.md` updated with §8 grant hardening and §11.1 performance, including the measured numbers.
+- Gates: web `tsc` clean, web build 30/30 routes, mobile `tsc` clean, mobile verify 146/146.
