@@ -226,25 +226,42 @@ CRUD coverage after the fixes (C/R/U/D all wired and live-verified):
 | `product-enrich` | `401` | live |
 | `ai-test-connection` | `401` | live |
 
-### 6.1 `ai-vision` — image prefix bug (fixed in source, not yet deployed)
-The function accepted `screenshot_base64` and unconditionally prefixed
-`data:image/jpeg;base64,`. Callers that already sent a data URL produced
-`data:image/jpeg;base64,data:image/png;base64,...`, which upstream rejects:
+### 6.1 `ai-vision` — NOT a production bug (my test error; correction)
+During the audit I reported this as broken. **That was wrong and I'm correcting it.**
+
+I probed with `screenshot_base64: "data:image/png;base64,…"`. The function prepends
+`data:image/jpeg;base64,`, producing a double prefix, and upstream rejected it with
+`400`. I then "fixed" the function defensively.
+
+But the real client never sends a data URL: `app/marketplace/[marketplace].tsx` uses
+`captureRef(..., { format: "jpg", result: "base64" })`, which yields a **bare** base64 JPEG —
+exactly what the hardcoded jpeg prefix expects. Verified against production:
 
 ```
--> 400 {"message":"请求格式或参数不合法 ... 模型是否支持 tools/vision"}
+POST ai-vision {screenshot_base64: <bare jpeg b64>}            -> 200, real listing parsed
+POST ai-vision {snapshot:{title,price,moqText}}  (fast path)    -> 200, real listing parsed
+POST ai-vision {screenshot_base64: "data:image/png;base64,…"}  -> 502  (my original bad probe)
 ```
 
-Reproduced deterministically, then fixed to detect and preserve the real MIME type.
-**This needs a function deploy** — see §8.
+So **AI scanning works in production today** and needs no deploy. Nothing in the repo
+constructs a `data:image/…` value for this field (the only two `data:image` producers are web
+image-URL validators). The defensive change in `ai-vision/index.ts` is a harmless hardening —
+it makes the function accept a prefixed value too — and can be deployed whenever convenient,
+or reverted. It is **not** blocking anything.
+
+Updating the deployed function also requires a valid Supabase management token; the one in
+`~/.supabase/access-token` is revoked (`401 Invalid access token`), so no function deploys
+are possible from this machine right now.
 
 ---
 
 ## 7. Still open / needs a decision
 
-1. **`ai-vision` deploy.** Source is fixed; the Supabase management token in
-   `~/.supabase/access-token` is revoked (`401 Invalid access token`), so the deploy has to
-   come from a machine with a valid token, or via Dashboard → Edge Functions.
+1. **`ai-vision` needs no deploy** — see the correction in §6.1: production works, my
+   original probe was wrong. The hardening in source is optional. Separately, **no edge
+   function can be deployed from this machine** because the Supabase management token is
+   revoked (`401 Invalid access token`); any future function change needs a fresh token
+   from supabase.com/dashboard/account/tokens.
 2. **EAS mobile build chain is broken** (separate from this audit, unchanged):
    `eas.json` has an illegal top-level `postInstall` key that fails every eas-cli command;
    the hook belongs in `package.json` `scripts.postinstall`. `scripts/fix-jcenter.js` is
