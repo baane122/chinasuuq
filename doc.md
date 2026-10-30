@@ -1,5 +1,6 @@
 # ChinaSuuq — Platform Documentation
 
+> **Version**: 0.0.1 (web + monorepo) · 1.0.6 (mobile, `versionCode` 1)
 > **Live**: https://chinasuuq.com · **Admin**: https://chinasuuq.com/admin · **APK**: https://chinasuuq.com/app/chinasuuq.apk
 > **Supabase project**: `athkmrvsaijwgsyvwrbp` (`athkmrvsaijwgsyvwrbp.supabase.co`)
 > This document describes the codebase as it is. For the short version see the root `README.md`.
@@ -387,6 +388,27 @@ Turns captured marketplace page text into structured MOQ/price data, and is the 
 
 Because the web app is a static export, Next.js `headers()`/`proxy.ts` never run in production; `proxy.ts` was deleted and `next.config.ts` documents that `vercel.json` is authoritative.
 
+### Grant hardening (2026-10-30)
+
+RLS was the *only* thing standing between the public anon key and the data. `anon` held
+`INSERT`/`UPDATE`/`DELETE` on 53 of the 57 public tables and on both reporting views, so a single
+wrong policy — or a `USING (true)` added in haste — would have become a breach rather than a
+near-miss. The anon role now holds:
+
+- **SELECT** on public-readable data (catalogue, categories, marketplaces, `order_tracking_public`,
+  `translations` cache) — unchanged.
+- **INSERT** on exactly one table, `sourcing_requests`, which is the guest quote form. Its RLS
+  policy already scopes the row; `user_id` is nullable so a guest can post.
+- **No UPDATE, DELETE, TRUNCATE, REFERENCES or TRIGGER anywhere.** No screen performs an
+  anonymous update or delete, so this costs nothing and removes the whole class of accident.
+
+The two reporting views were also writable through PostgREST despite being views:
+`anon DELETE /order_tracking_public?id=eq.<real order id>` returned **204** (it only failed to
+destroy data because `order_items` had a foreign key). Both views are now `SELECT`-only, and anon
+`DELETE` returns **401**. Verified after the change: guest quote insert 201, tracking/catalogue/RPC
+reads 200, admin CRUD (create/update/delete a product, create a marketplace, patch settings) all
+succeed, mobile verify suite 146/146.
+
 ## 9. Mobile App (Expo)
 
 - **Stack**: Expo SDK 57, React Native 0.86.3, React 19.2.3, Expo Router (~57.0.19), zustand 5, zod, `lucide-react-native`, `react-native-webview` (in-app marketplace browsing), Reanimated 4, AsyncStorage 2.2. TypeScript ~6.0.3 (web uses ^5 — known drift).
@@ -563,10 +585,66 @@ framer-motion, and `optimizePackageImports` already covers `lucide-react` /
 
 - `~/.npm` has a cache ownership problem (npm suggests `sudo chown -R 501:20 ~/.npm`); use `npm install --cache /tmp/npm-cache-chinasuuq` locally.
 
+## 11.1 Performance — what is actually fast, and why
+
+The two surfaces users complain about are the marketplace WebView and Mission Control. Both
+were latency-bound, not throughput-bound; the fixes below are all "remove a round-trip or move
+work earlier", none of them need new infrastructure.
+
+**Marketplace WebView (`apps/mobile/app/marketplace/[marketplace].tsx`)**
+
+- The skeleton is an absolute-fill overlay, so it is now revealed as soon as progress passes
+  **25 %** (`onProgress`) instead of waiting for `onLoadEnd`. First paint of *our* chrome no
+  longer waits on the third party's slow tail (1688 pulls fonts and tracking pixels for seconds
+  after it is visually complete).
+- The per-page script suite (translate + USD + capture) fires from `onProgress` at ≥ 90 % **and**
+  from `onLoadEnd`, guarded by `earlySuiteRef` so it runs at most once per document. On a fast
+  network this starts translation seconds earlier; on a slow one nothing changes because
+  `onLoadEnd` still fires the suite.
+- `onLoadStart` resets `earlySuiteRef`, so client-side navigation inside the marketplace
+  re-arms it.
+
+**Translation** — Google `gtx` from the device, not a paid model. 40 strings per GET, one batch
+in flight, 6 s socket timeout / 9 s request budget, 429 parking, and a circuit breaker after 3
+unreachable attempts. The in-memory LRU plus `AsyncStorage` mirror means a repeat page costs
+zero network. `translations` (342 rows) is exposed read-only to anon as a cross-device cache.
+
+**Exchange rates (`apps/mobile/src/lib/exchange.ts`)** — previously two PostgREST round-trips
+against `exchange_rates` with vocabulary fallbacks that silently drifted, then a hardcoded
+fallback. Now **one** call to `public.fx_rates()`, the same reader the server itself uses, so
+mobile and web can never disagree. Reads the admin-set rate; if the RPC yields nothing the
+hardcoded 6.6 fallback is still last, never a guess.
+
+**Mission Control AI** — measured, not assumed. Per-call latency against the live provider:
+
+| Model | Copilot reply | Translation batch |
+|---|---|---|
+| `[反重力次]gemini-3.7-flash-high` | 2.36 s | 6.28 s |
+| `gemini-3.1-flash-image` | **1.56 s** | **1.98 s** |
+| `glm-5.3` | 6.84 s | — |
+
+`copilot`, `vision` and `extraction` all now resolve to `gemini-3.1-flash-image` — the same
+model vision already used, so image understanding and chat share one warm provider. That is a
+**3.2× improvement on the copilot path** (6.28 s → 1.98 s on a real Somali translation prompt).
+Verified end to end through `ai-proxy` (4.87 s including function cold path) and `ai-chat`
+(3.12 s). Translation no longer touches the provider at all.
+
 ## 12. Known Gaps & Follow-ups
 
-1. **Uncalled Edge Functions** — `quotes-validate` (line-based contract, awaiting a customer quote-request flow) and `operational-queue` (duplicated by the dashboard's direct rollup RPCs) remain deployed with no callers. `cart-validate`, `ai-extraction`, `ai-settings`, `ai-test-connection` and `product-enrich` are all wired; `ai-translate` is wired only to a client module no screen imports yet (below).
-2. **Built but not consumed** — `apps/mobile/src/api/translate.ts` (the whole `ai-translate` path), `apps/mobile/src/config/marketplaceRegistry.ts` (screens still use `src/lib/marketplaces.ts`), `productEvents.getTrendingProducts()` (superseded by `api/trending.ts`), and the `moq_review_queue`, `translations_view` and `admin_product_events_view` views. They are deployed and tested; wiring them is a follow-up, not missing work.
+> **Session 2026-10-30 — closed this round:** anon write grants removed from all 57 public
+> tables and both reporting views (they were RLS-only defence, one policy mistake from a
+> breach); anonymous `DELETE` through `order_tracking_public` returned 204 and is now 401;
+> `ai_provider_tasks.translation` deleted and its Mission Control card removed, so paid
+> translation cannot be re-enabled by accident; copilot repointed to the sub-2s model;
+> mobile exchange rates now read the single `fx_rates()` RPC instead of two drifting
+> round-trips; mobile listing scripts inject at 25 % instead of 100 % progress; shared
+> `translations` cache exposed read-only (342 rows already; a string translated on one device
+> is free on every other device); `android.versionCode` finally set. Details in
+> `docs/audits/CURRENT_AUDIT_2026-10-30.md`. **Note the numbering below is historical** — it is
+> kept so older audits still cross-reference.
+
+1. **Uncalled Edge Functions** — `quotes-validate` (line-based contract, awaiting a customer quote-request flow) and `operational-queue` (duplicated by the dashboard's direct rollup RPCs) remain deployed with no callers. `cart-validate`, `ai-extraction`, `ai-settings`, `ai-test-connection` and `product-enrich` are all wired. `ai-translate` stays deployed for direct callers but **nothing in either app calls it for translation** — mobile uses Google `gtx`, and the paid translation task row has been deleted so it cannot resolve a provider.
+2. **Google-first translation, and what that means** — `apps/mobile/src/api/translate.ts` is the only translation network path in the client: Google `gtx`, batched at 40 strings, with an in-memory LRU plus an `AsyncStorage` mirror so repeat pages cost nothing. `ai-translate` is no longer called by any screen and its `ai_provider_tasks` row is deleted. The shared `translations` table is now anon-readable and acts as a cross-device cache (342 rows); it is only consulted by web, because adding a Supabase pre-check would cost the mobile common case a round-trip it does not currently pay.
 3. **`admin_orders_view` exposes no items JSONB**, so the dashboard's recent-orders and derivation paths read `orders` and `admin_order_items_view` directly rather than one view.
 4. **Guest-order tracking** — anon-readable guest orders (`orders_select_own`) pending tokenized reference lookup (migration footer).
 5. **`quote_items.cost_price` exposure** to quote owners (migration footer proposes `supplier_options`).
@@ -581,7 +659,7 @@ framer-motion, and `optimizePackageImports` already covers `lucide-react` /
 14. **`expo-secure-store`** declared but unused in mobile.
 15. **Legacy admin mock store** (`src/lib/admin/store.ts`, `seed*.ts`) is unreferenced dead code.
 16. ~~No realtime~~ — DONE: the admin console streams (`admin-live`, §3/§6). Mobile is still intentionally pull-based.
-17. **`android.versionCode` in `app.json` is decorative** — `eas.json` uses `appVersionSource: "remote"`, so EAS owns the real counter (see §9's APK process). Nothing breaks, but the number in the repo is not the number on the device.
+17. **`android.versionCode` set to 1 (2026-10-30)** — it was absent before, which is fine while `eas.json` uses `appVersionSource: "remote"` (EAS owns the real counter), but leaving it unset blocks any non-EAS Gradle build and confuses store submissions. Keep it present and increment it whenever the local build path is used.
 18. ~~Mobile artwork~~ and ~~universal ABI weight~~ — DONE: `apps/mobile/assets/` went 51 MB → 12.9 MB and the `preview` profile is arm-only (`ORG_GRADLE_PROJECT_reactNativeArchitectures`), taking the APK from 151 MB to 74.6 MB (§9). The next lever is structural: the `.so` files are stored uncompressed and page-aligned, and there are no per-ABI downloads, so a device still fetches both ARM ABIs. Either serve per-ABI APKs beside the universal one or put the app on Play, where split delivery handles it.
 19. **Column-contract risk stays open** — the repo cannot be the source of truth for the live schema (§6). Any new projection must be checked against `information_schema` first, and the safest UI pattern is a fallback ladder or an explicit "unknown", because a single missing column voids the whole request.
 20. ~~CI does not validate the APK~~ — DONE: `ci.yml` now unzips `public/app/chinasuuq.apk`, fails under 500 entries, and `cmp`s it against the exported copy, so a truncated archive fails the build instead of shipping.

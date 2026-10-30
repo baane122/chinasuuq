@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, Save, RefreshCw, Key, Globe, Cpu, CheckCircle, XCircle, Trash2, MessageSquare, Languages, Eye, PackageSearch, Server } from "lucide-react";
+import { Loader2, Save, RefreshCw, Key, Globe, Cpu, CheckCircle, XCircle, Trash2, MessageSquare, Eye, PackageSearch, Server } from "lucide-react";
 import { supabase, edgeFetch } from "@/lib/supabase";
 import {
   useAdminPermissions,
@@ -48,10 +48,17 @@ interface AiTestResponse {
 
 const TASK_META: Record<string, { label: string; icon: any; blurb: string }> = {
   copilot: { label: "Copilot", icon: MessageSquare, blurb: "Mission Control chat, summaries, drafts" },
-  translation: { label: "Translation", icon: Languages, blurb: "ai-translate: listing & page translation" },
   vision: { label: "Vision", icon: Eye, blurb: "Image understanding (AI Scan fallback)" },
   extraction: { label: "Extraction", icon: PackageSearch, blurb: "Product extraction & enrichment (strict JSON)" },
 };
+// NOTE: there is deliberately no `translation` task here.
+// Translation runs on Google's free gtx endpoint (src/api/translate.ts in the
+// mobile app), not on a paid model: it is one GET per 40 strings, answers in
+// well under a second, and needs no provider config. Keeping an "AI
+// Translation" card here pointed staff at a task that no screen calls and that
+// silently burned money per page. `ai_provider_tasks.translation` rows are
+// therefore unused — the ai-translate function still exists for direct calls
+// but is not in any shipping path.
 
 function ProviderCard({
   title,

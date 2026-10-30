@@ -2,7 +2,7 @@
   "expo": {
     "name": "ChinaSuuq",
     "slug": "chinasuuq-mobile",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "light",
@@ -28,7 +28,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#FF6B1A"
       },
-      "package": "com.chinasuuq.app"
+      "package": "com.chinasuuq.app",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/images/favicon.png"

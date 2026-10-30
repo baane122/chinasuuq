@@ -182,6 +182,29 @@ async function hydrateFromStorage(): Promise<void> {
  * so the first row per from_currency wins.
  */
 async function fetchRatesFromSupabase(): Promise<{ cnyPerUsd: number | null; sosPerUsd: number | null }> {
+  // ONE round trip through the server's own reader. public.fx_rates() already
+  // resolves "which active row is live" for both pairs, flips an upside-down
+  // entry, rejects an implausible one and returns the service fee — all in the
+  // database. The previous implementation queried the `exchange_rates` table
+  // directly and walked TWO column vocabularies in sequence, so a cold start
+  // could cost two HTTP round trips (and one guaranteed failure) before the
+  // first price could be converted. That is the latency the USD badges showed.
+  try {
+    const { data, error } = await supabase.rpc("fx_rates");
+    if (!error && data && typeof data === "object") {
+      const rec = data as Record<string, unknown>;
+      const cny = Number(rec.cny_per_usd);
+      const sos = Number(rec.sos_per_usd);
+      const outCny = saneCnyPerUsd(Number.isFinite(cny) ? cny : null);
+      const outSos = saneSosPerUsd(Number.isFinite(sos) ? sos : null);
+      if (outCny !== null || outSos !== null) {
+        return { cnyPerUsd: outCny, sosPerUsd: outSos };
+      }
+    }
+  } catch {
+    /* RPC missing / offline — fall back to the table read below */
+  }
+
   const vocabs = [
     { from: "from_currency", to: "to_currency", order: "effective_from" },
     { from: "source_currency", to: "target_currency", order: "valid_from" },

@@ -560,6 +560,10 @@ export default function MarketplaceBrowser() {
   // itself never fetches.
   const translateQueueRef = useRef<{ lang: string; texts: string[] }>({ lang: "", texts: [] });
   const translateBusyRef = useRef(false);
+  // True once the per-page suite has been fired for THIS document. onProgress
+  // crosses 0.55 many times per load; the suite must run once per navigation,
+  // and be re-armed by onLoadStart for the next one.
+  const earlySuiteRef = useRef(false);
   // False once the screen unmounts: a batch that lands after navigation must
   // not inject into a WebView that is gone, and the queued texts are stale.
   const translateAliveRef = useRef(true);
@@ -1245,9 +1249,29 @@ export default function MarketplaceBrowser() {
               // page that was already drawn — onLoadEnd fires when EVERY
               // subresource has settled, and 1688 pages carry Chinese CDNs, ads
               // and trackers that trickle in long after the content is readable.
-              // 0.85 means the document is parsed and painted; show it then and
-              // keep onLoadEnd as the backstop for pages that stall lower.
-              if (p >= 0.85) setLoading(false);
+              //
+              // 0.6 is the point where the document has parsed and painted its
+              // first layout: for these marketplaces the headline, first product
+              // row and hero images are already on screen. Showing at 0.85 still
+              // cost ~1-3s of staring at the skeleton on Somali mobile data
+              // (trackers routinely stall between 0.6 and 0.85), and the screens
+              // are heavy enough that this is the single biggest perceived-speed
+              // win available. onLoadEnd stays the backstop for stalled pages.
+              if (p >= 0.6) setLoading(false);
+              // Kick the per-page suite (translate + USD overlay + chrome hide)
+              // off the moment the document is interactive instead of waiting
+              // for onLoadEnd. onLoadEnd waits for EVERY subresource — on 1688
+              // that is routinely 8-20s — so translation used to start only
+              // after the customer had already been staring at Chinese text.
+              // The scripts are idempotent and the runtime scheduler coalesces
+              // them, so firing once early is safe; onLoadEnd still runs as the
+              // backstop for pages that never report 0.55.
+              if (p >= 0.55) {
+                if (!earlySuiteRef.current) {
+                  earlySuiteRef.current = true;
+                  if (webRef.current) runPerPageScripts(webRef.current, 40);
+                }
+              }
             }}
             onShouldStartLoadWithRequest={(req) => {
               const u = req.url || "";
@@ -1282,6 +1306,8 @@ export default function MarketplaceBrowser() {
               setCaptureBusy(false);
               setPunish(null);
               riskActiveRef.current = false;
+              // Re-arm the early-suite guard: this is a NEW document.
+              earlySuiteRef.current = false;
             }}
             onLoadEnd={() => {
               // Fast path: hide loader immediately for perceived performance
