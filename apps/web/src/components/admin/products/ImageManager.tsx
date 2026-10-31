@@ -382,7 +382,7 @@ export default function ImageManager({
 
       <p className="mt-2 flex items-start gap-1.5 text-[11px] text-dark-900/40 dark:text-neutral-500">
         <RefreshCw className="mt-0.5 h-3 w-3 shrink-0" />
-        Marketplace links (1688/Taobao) expire. A "Blocked" icon means the host refused the test request — the image may
+        Marketplace links (1688/Taobao) expire. A &quot;Blocked&quot; icon means the host refused the test request — the image may
         still fail for real customers, so re-capture or upload a copy when in doubt.
       </p>
     </div>

@@ -4,7 +4,8 @@
 
 > **Documentation**: [`docs/README.md`](docs/README.md) is the index. [`doc.md`](doc.md) is the
 > authoritative reference (architecture, schema + RLS, edge functions, security model, deployment).
-> Most recent audit: [`docs/audits/CURRENT_AUDIT_2026-10-30.md`](docs/audits/CURRENT_AUDIT_2026-10-30.md).
+> Most recent audit: [`docs/audits/CURRENT_AUDIT_2026-10-30.md`](docs/audits/CURRENT_AUDIT_2026-10-30.md)
+> and the 2026-10-31 sessions/roles round recorded in [`doc.md`](doc.md) §12.
 
 Browse products from four Chinese marketplaces (1688, Taobao, YiwuGo, ChinaGoods) plus the 1$ Dollar Store, get quotes, and ship by air or sea freight to Somali cities. This repository contains the public web experience, a full admin operations console, and the mobile app, all backed by one Supabase project.
 
@@ -16,9 +17,9 @@ chinasuuq/
 │   ├── web/                Next.js 16 static-export site (public pages + /admin console)
 │   │   ├── supabase/
 │   │   │   ├── functions/  Edge Functions (Deno): 8 functions + _shared/
-│   │   │   └── migrations/ Postgres schema + RLS (29 migrations)
+│   │   │   └── migrations/ Postgres schema + RLS (68 migrations)
 │   │   └── public/app/     chinasuuq.apk — served at https://chinasuuq.com/app/chinasuuq.apk
-│   └── mobile/             Expo SDK 57 app (Expo Router, React Native 0.86)
+│   └── mobile/             Expo SDK 58 app (Expo Router, React Native 0.88)
 ├── packages/shared/        Shared TS types, constants, utils, validation, errors, api-client
 ├── vercel.json             Root deploy config: build, redirects, security headers
 └── .github/workflows/ci.yml
@@ -29,7 +30,7 @@ chinasuuq/
 | Area | Technologies |
 |------|--------------|
 | Web | Next.js 16.2.12 (`output: "export"` — fully static), React 19, Tailwind CSS v4, framer-motion, zustand, zod, `@supabase/supabase-js` |
-| Mobile | Expo SDK 57, React Native 0.86, Expo Router, zustand, AsyncStorage, `@supabase/supabase-js` |
+| Mobile | Expo SDK 58, React Native 0.88, Expo Router, zustand, AsyncStorage, `@supabase/supabase-js` |
 | Shared | `@chinasuuq/shared` — plain TS modules (`types`, `constants`, `utils`, `validation`, `errors`, `api-client`, `hooks`) |
 | Backend | Supabase: Postgres + Auth + Row Level Security + Edge Functions (project ref `athkmrvsaijwgsyvwrbp`) |
 | CI | GitHub Actions (web typecheck/lint/build, mobile config validation, repo hygiene guard) |
@@ -92,7 +93,7 @@ CI fails the web build if `out/app/chinasuuq.apk` is missing, if the landing pag
 
 ### iOS — why there is no iPhone build yet, and how to get one
 
-No iOS artifact can be installed on a phone today, and it is an account problem, not a code problem: `eas device:list` reports **`No Apple teams found for account baaaane24`**, so EAS has no Apple signing identity — an iOS `preview` build fails instantly with "EAS CLI couldn't find any credentials suitable for internal distribution". The iOS builds that do finish are `development` with `ios.simulator: true`, whose artifact is a `.tar.gz` **Mac Simulator** app that a phone cannot install. Expo Go is not a workaround either: the App Store build is pinned to SDK 54 and this app is SDK 57, so it refuses to load.
+No iOS artifact can be installed on a phone today, and it is an account problem, not a code problem: `eas device:list` reports **`No Apple teams found for account baaaane24`**, so EAS has no Apple signing identity — an iOS `preview` build fails instantly with "EAS CLI couldn't find any credentials suitable for internal distribution". The iOS builds that do finish are `development` with `ios.simulator: true`, whose artifact is a `.tar.gz` **Mac Simulator** app that a phone cannot install. Expo Go is not a workaround either: the App Store build is pinned to SDK 54 and this app is SDK 58, so it refuses to load.
 
 Two ways forward (full detail and citations in doc.md §9):
 
@@ -109,7 +110,7 @@ Until then the landing page offers the APK; its Play and App Store buttons deep-
 
 ## Database & migrations
 
-Postgres schema + RLS live in `apps/web/supabase/migrations/` (29 migrations, latest `202609270001_admin_live_and_counts.sql`; the major hardening pass is `202609210001_money_integrity_rls_hardening.sql`).
+Postgres schema + RLS live in `apps/web/supabase/migrations/` (68 migrations, latest `202610310014_user_devices_least_privilege.sql`; the major hardening passes are `202609210001_money_integrity_rls_hardening.sql` and the `2026103100*` series — payment-trigger repair, staff customer CRUD, account-status enforcement and one-device sessions).
 
 **The live database, not this repo, is authoritative.** Several base migrations were never committed here, so check any column list against live `information_schema` before writing a query: PostgREST fails the **entire** request with 42703 (`undefined_column`) if a single selected column is missing.
 
@@ -174,7 +175,7 @@ Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffO
 - **`admin_orders_view` exposes no items JSONB** — the view selects `NULL::jsonb AS items` — so the dashboard's recent-orders and derivation paths read `orders` (plus `admin_order_items_view`) directly.
 - **~33 MB of legacy PNG/JPG artwork** still sits unreferenced in `apps/web/public/images/` (`hero/hero1-3.png`, `how/`, `marketing/`, `categories/*.jpg`, `onboarding/slide3.png`) — kept until product sign-off, not deleted.
 - **`apps/mobile/ios/` is untracked** prebuild output; EAS prebuilds iOS on its own servers, so nothing is missing from the repo.
-- **No installable iOS build** — the Expo account has no Apple developer team, and App Store Expo Go is pinned to SDK 54 while the app is SDK 57; see *iOS* above for the free (local Xcode, 7-day profile) and paid ($99/yr, EAS + TestFlight) routes. Both are blocked on user-side Apple credentials.
+- **No installable iOS build** — the Expo account has no Apple developer team, and App Store Expo Go is pinned to SDK 54 while the app is SDK 58; see *iOS* above for the free (local Xcode, 7-day profile) and paid ($99/yr, EAS + TestFlight) routes. Both are blocked on user-side Apple credentials.
 - **Production `source_products` is empty (0 rows)**, so the catalog-dependent surfaces above have no real data to show yet, and `categories.image_url` is NULL for all 12 categories.
 - **Guest order tracking**: orders with `user_id IS NULL` are anon-readable via the `orders_select_own` policy (pending replacement with tokenized reference lookup + app change — documented in the `202609210001` migration footer).
 - **`quote_items.cost_price`** is visible to quote owners through RLS (business-sensitive; migration footer proposes moving supplier costs to `supplier_options`).

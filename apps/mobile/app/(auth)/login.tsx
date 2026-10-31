@@ -6,6 +6,7 @@ import { Lock, Mail } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, FONTS, SPACING } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
+import { useAuthStore } from "@/store/auth";
 import { useAuthContract } from "@/components/auth/authContract";
 import {
   AuthErrorBanner,
@@ -27,6 +28,12 @@ export default function LoginScreen() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
   const { signIn, clearError } = useAuthContract();
+  // Why the customer is back on this screen ("you signed in on another
+  // phone"), pushed by the store when the SERVER ended the session. Read
+  // through the store rather than the contract because only this screen needs
+  // it and the contract is deliberately minimal.
+  const sessionNotice = useAuthStore((s) => s.sessionNotice);
+  const clearSessionNotice = useAuthStore((s) => s.clearSessionNotice);
   const router = useRouter();
   const passwordRef = useRef<ComponentRef<typeof TextInput>>(null);
   const { locale } = useI18n();
@@ -72,6 +79,7 @@ export default function LoginScreen() {
 
   const handleLogin = useCallback(async () => {
     if (loading) return;
+    if (sessionNotice) clearSessionNotice();
     setErrorMsg(null);
     setEmailError(null);
     setPasswordError(null);
@@ -138,6 +146,9 @@ export default function LoginScreen() {
         subtitle={t("Sign in to continue shopping", "Geli si aad wax u iibsato")}
       />
 
+      {sessionNotice && !errorMsg ? (
+        <AuthErrorBanner message={sessionNotice} />
+      ) : null}
       {errorMsg ? <AuthErrorBanner message={errorMsg} /> : null}
 
       <AuthField
@@ -147,6 +158,7 @@ export default function LoginScreen() {
           setEmail(v);
           if (emailError) setEmailError(null);
           if (errorMsg) setErrorMsg(null);
+          if (sessionNotice) clearSessionNotice();
         }}
         placeholder={t("you@example.com", "tusaale@example.com")}
         icon={<Mail size={18} color={COLORS.textMuted} />}
@@ -173,6 +185,7 @@ export default function LoginScreen() {
           setPassword(v);
           if (passwordError) setPasswordError(null);
           if (errorMsg) setErrorMsg(null);
+          if (sessionNotice) clearSessionNotice();
         }}
         placeholder={t("Enter your password", "Geli code-xufiskaaga")}
         icon={<Lock size={18} color={COLORS.textMuted} />}

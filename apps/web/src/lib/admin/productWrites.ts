@@ -337,8 +337,14 @@ export function buildProductPayload(
     // INSERT: every field the operator filled, plus the NOT NULLs the live
     // table declares (title_original, source_product_id) with honest fallbacks.
     payload.marketplace = v.marketplace.trim() || "1688";
-    payload.source_product_id =
-      v.source_product_id.trim() || deriveSourceId(v.source_url) || `manual-${Date.now()}`;
+    // Both of these are NOT NULL on the live table. A hand-added product has
+    // neither a supplier URL nor an offer id, so each gets an explicit
+    // "manual" marker instead of null — the previous null made every product
+    // created without a source URL fail with 23502.
+    const manualSourceId = v.source_product_id.trim() || deriveSourceId(v.source_url) || `manual-${Date.now()}`;
+    payload.source_product_id = manualSourceId;
+    const manualSourceUrl =
+      text(v.source_url) || `https://manual.chinasuuq.com/product/${encodeURIComponent(manualSourceId)}`;
     payload.title_original =
       v.title_original.trim() || v.title_english.trim() || v.title_somali.trim() || "Untitled";
     payload.title_english = text(v.title_english);
@@ -346,7 +352,7 @@ export function buildProductPayload(
     payload.description_original = text(v.description_original);
     payload.description_english = text(v.description_english);
     payload.description_somali = text(v.description_somali);
-    payload.source_url = text(v.source_url);
+    payload.source_url = manualSourceUrl;
     payload.source_seller_id = text(v.source_seller_id);
     payload.seller_name = text(v.seller_name);
     payload.video_url = text(v.video_url);

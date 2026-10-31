@@ -469,11 +469,14 @@ function SourcingPageContent() {
         .single();
       if (quoteError) throw quoteError;
 
+      // quote_items.subtotal_cny is NOT NULL: the line total is stored, not
+      // derived at read time, so an insert without it is rejected (23502).
       const { error: itemError } = await supabase.from("quote_items").insert({
         quote_id: quoteRow.id,
         product_name: (selected.product_description || "").slice(0, 200),
         quantity: qty,
         unit_price_cny: unitPrice,
+        subtotal_cny: totalCny,
       });
       if (itemError) {
         // Best-effort rollback so a failed item write leaves no orphan quote.

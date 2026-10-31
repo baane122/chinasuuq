@@ -73,10 +73,15 @@ async function insertNotification(
   bodyText: string,
   orderId: string
 ) {
+  // `type` must be a live notification_type label:
+  //   order_update | payment | shipment | support | promotion | system
+  // "payment_update" and "info" (the previous values) are not in the enum, so
+  // Postgres answered 22P02 and EVERY candidate was rejected — meaning a
+  // confirmed payment never produced its customer notification at all.
   const candidates: Record<string, unknown>[] = [
-    { user_id: uid, title, body: bodyText, type: "payment_update", read: false },
-    { profile_id: uid, title, message: bodyText, type: "payment_update", is_read: false, related_type: "order", related_id: orderId },
-    { profile_id: uid, title, body: bodyText, type: "info" },
+    { user_id: uid, title, body: bodyText, type: "payment", read: false },
+    { profile_id: uid, title, message: bodyText, type: "payment", is_read: false, related_type: "order", related_id: orderId },
+    { profile_id: uid, title, body: bodyText, type: "system" },
   ];
   for (const payload of candidates) {
     // `as never` sidesteps the schema-inferred excess-property check: the

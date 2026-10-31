@@ -32,6 +32,21 @@ jobs:
         # secrets are needed for a type-only pass.
         run: npx tsc --noEmit
 
+      - name: Verify no client references a missing column
+        working-directory: apps/web
+        # Four screens were dead in production on 2026-10-31 with this exact
+        # class of bug — admin/quotes wrote `fees` (live column: service_fee),
+        # admin/queue read orders.customer_name (it lives on the view), and
+        # useProductVariants selected source_price/attributes/is_default. All of
+        # them type-checked, linted and built, because the Supabase client is
+        # loosely typed: the failure only appears at runtime as a 42703/PGRST204
+        # toast. This compares every literal column list in apps/web/src against
+        # scripts/schema-snapshot.json (exported from the live project) and fails
+        # on any unknown column.
+        # Negative control (2026-10-31): adding "*, fees" to the quotes select
+        # reports `"fees" is not a column of "quotes"` and exits 1.
+        run: npm run verify:schema
+
       - name: Verify admin list enrichment is URL-safe
         working-directory: apps/web
         # The Shipments console once put ~1000 order ids into a single `.in()`,

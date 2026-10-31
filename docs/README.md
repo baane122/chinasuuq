@@ -11,6 +11,7 @@ short version; **`doc.md` is the authoritative reference** for how the system ac
 | `../README.md` | Two-minute orientation: what the product is, how to run it locally, how to deploy. |
 | `PRODUCTION_READINESS.md` | Current ship/no-ship verdict, verified against the live project. |
 | `BRAND_AND_ROADMAP_BLUEPRINT.md` | Brand identity and the forward-looking product roadmap. |
+| `ROLES_AND_SESSIONS.md` | **Role and session matrix** — what a guest, customer, staff member and admin can each do, and how one-device sign-in is enforced. |
 | `audits/CURRENT_AUDIT_2026-10-30.md` | **Most recent full audit** — every finding, every fix, with live verification. Read this before touching the DB or RLS. |
 
 ## `audits/` — historical, newest first
@@ -19,6 +20,7 @@ Point-in-time audits. They are **not** maintained; each reflects the code and da
 were on its date. Where a later audit contradicts an earlier one, the later one wins, and
 `CURRENT_AUDIT_2026-10-30.md` wins over all of them.
 
+- 2026-10-31 sessions/roles round — recorded in `../doc.md` §12 (migration `202610310007`–`014`, `docs/ROLES_AND_SESSIONS.md`)
 - `CURRENT_AUDIT_2026-10-30.md` — security sweep, grant drift, migration drift, marketplace/AI performance
 - `PRODUCTION_READY_2026-10-04.md`, `AUDIT_QUICK_REF_2026-10-04.md`, `DEEP_AUDIT_TECHNICAL_2026-10-04.md`, `MOBILE_AUDIT_2026-10-04.md`, `DEEP_AUDIT_2026-10-04.md`
 - `DEEP_AUDIT_2026-10-14.md`, `DEEP_AUDIT_2026-10-03.md`, `AUDIT_2026-10-01.md`

@@ -53,16 +53,18 @@ import {
 
 type Audience = "all" | "customer" | "id";
 
-// notification_type enum values the DB accepts (system-facing first). Mobile maps
-// a few of these to icons and defaults the rest.
+// Exactly the labels of the live notification_type enum, verified against
+// production: order_update | payment | shipment | support | promotion | system.
+// The previous list invented four that the database rejects with 22P02
+// ("invalid input value for enum notification_type"), so those picks failed the
+// whole broadcast — including the default, which made every send fail.
 const TYPES: { value: string; label: string }[] = [
-  { value: "system_announcement", label: "System announcement" },
+  { value: "system", label: "System announcement" },
   { value: "promotion", label: "Promotion" },
-  { value: "reminder", label: "Reminder" },
-  { value: "alert", label: "Alert" },
   { value: "order_update", label: "Order update" },
-  { value: "shipping_update", label: "Shipping update" },
-  { value: "payment_update", label: "Payment update" },
+  { value: "shipment", label: "Shipment update" },
+  { value: "payment", label: "Payment update" },
+  { value: "support", label: "Support message" },
 ];
 
 /**
@@ -98,7 +100,7 @@ export default function NotificationsComposerPage() {
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [type, setType] = useState<string>("system_announcement");
+  const [type, setType] = useState<string>("system");
 
   const [audience, setAudience] = useState<Audience>("all");
   const [customerSearch, setCustomerSearch] = useState("");

@@ -188,11 +188,21 @@ export default function ProtectedLayout({
         // Role gate: a valid customer/supplier session must NOT reach the
         // admin shell. RLS still protects the data; this keeps non-staff out
         // of the UI entirely.
-        const { data: profile, error } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", session.user.id)
-          .maybeSingle();
+        //
+        // `auth_context()` is the SERVER's view: it applies the same predicates
+        // the RLS policies do (role + profiles.is_active + staff_profiles
+        // .is_active). Reading `profiles.role` here instead was the bug that let
+        // a deactivated staff member into an admin shell where every query
+        // returned zero rows.
+        const { data: ctx, error } = await supabase.rpc("auth_context");
+        const context = (ctx ?? null) as {
+          authenticated?: boolean;
+          active?: boolean;
+          role?: string | null;
+          staff_role?: string | null;
+          is_staff?: boolean;
+          is_super_admin?: boolean;
+        } | null;
 
         // A transport failure is not a verdict about this person's role. It
         // used to fall into the same branch as "not staff", which signed the
@@ -223,17 +233,34 @@ export default function ProtectedLayout({
           return;
         }
 
-        const role = (profile?.role as string | undefined) ?? "";
-        // Mirrors is_staff_or_admin(): staff, super_admin and the legacy admin.
-        if (!isStaffRole(role)) {
-          if (!profile) {
-            // Authenticated, no error, no row → the profile record is missing
-            // for this user id. Signing out hides that data bug behind a
-            // login wall the staff member keeps re-passing.
+        const role = context?.role ?? "";
+        // `is_staff` from the server already includes the active checks, so it,
+        // not the raw role, decides. `isStaffRole(role)` remains as the
+        // belt-and-braces check that the role is one this build understands.
+        if (!context?.is_staff || !isStaffRole(role)) {
+          if (!context) {
+            // Authenticated, no error, no answer → the profile record is
+            // missing for this user id. Signing out hides that data bug behind
+            // a login wall the staff member keeps re-passing.
             setIsAuthenticated(null);
             setRoleError(
               "No profile row exists for this account, so its role can't be verified. " +
                 "An admin needs to create the profile before this login can open Mission Control."
+            );
+            return;
+          }
+          if (context.authenticated && context.active === false) {
+            // Disabled account. Deliberately NOT signed out here: the auth
+            // listener redirects to /admin/login on SIGNED_OUT, which would
+            // throw away the one sentence that explains what happened. The
+            // server has already revoked this account's sessions, so the
+            // session cannot be refreshed; "Switch account" on the notice
+            // below is the exit.
+            setIsAuthenticated(null);
+            setRoleError(
+              context.role === "staff" || context.role === "super_admin"
+                ? "This staff account is deactivated. Ask a super admin to reactivate it, then sign in again."
+                : "This account is not a staff account."
             );
             return;
           }

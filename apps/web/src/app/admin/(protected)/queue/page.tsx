@@ -75,52 +75,92 @@ export default function OperationalQueuePage() {
       return;
     }
     try {
-      // Orders needing payment confirmation
-      const { data: pendingOrders, error: ordersErr } = await supabase
-        .from("orders")
-        .select("id, reference, status, payment_status, total_usd, created_at, customer_name")
-        .in("status", ["pending", "confirmed"])
-        .in("payment_status", ["pending"])
-        .order("created_at", { ascending: false })
-        .limit(50);
+      // Live columns only (verified against project athkmrvsaijwgsyvwrbp):
+      //  * orders has NO customer_name — it is derived from profiles below.
+      //  * sourcing_requests has NO reference/notes — it carries
+      //    product_description and internal_notes.
+      //  * sourcing_status has NO awaiting_supplier/pending_approval; the live
+      //    enum is (pending, assigned, quoted, approved, purchased, cancelled).
+      //    Both queries used to answer 42703/22P02, so this page rendered a
+      //    permanent "Could not load the operational queue" for every staff user.
+      const [pendingOrders, pendingSourcing] = await Promise.all([
+        supabase
+          .from("orders")
+          .select("id, reference, user_id, status, payment_status, total_usd, created_at")
+          .in("status", ["pending", "confirmed"])
+          .eq("payment_status", "pending")
+          .order("created_at", { ascending: false })
+          .limit(50),
+        supabase
+          .from("sourcing_requests")
+          .select("id, user_id, status, product_description, internal_notes, created_at")
+          .in("status", ["pending", "assigned", "quoted"])
+          .order("created_at", { ascending: false })
+          .limit(50),
+      ]);
 
-      // Sourcing requests awaiting decision
-      const { data: pendingSourcing, error: srcErr } = await supabase
-        .from("sourcing_requests")
-        .select("id, reference, status, created_at, notes")
-        .in("status", ["awaiting_supplier", "pending_approval"])
-        .order("created_at", { ascending: false })
-        .limit(50);
-
+      const ordersErr = pendingOrders.error;
+      const srcErr = pendingSourcing.error;
       const err = ordersErr || srcErr;
       if (err) {
         setError(err.message || "Could not load the operational queue.");
         setItems([]);
       } else {
+        // Customer names are a second, batched read over profiles (the orders
+        // table has no name column). Non-fatal: an unreadable profile leaves the
+        // row labelled "Guest" instead of hiding the queue.
+        const userIds = [
+          ...new Set(
+            [...(pendingOrders.data || []), ...(pendingSourcing.data || [])]
+              .map((r: any) => r.user_id)
+              .filter(Boolean)
+          ),
+        ] as string[];
+        const nameById = new Map<string, string>();
+        if (userIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("id, full_name")
+            .in("id", userIds.slice(0, 200));
+          for (const p of (profs as any[]) || []) {
+            if (p?.id) nameById.set(p.id, p.full_name || "");
+          }
+        }
+        const customerName = (row: any) => nameById.get(row.user_id) || "";
+
         const queueItems: QueueItem[] = [
-          ...(pendingOrders || []).map((o: any) => ({
-            id: o.id,
-            kind: "order_confirmation" as const,
-            priority: "high" as const,
-            status: o.payment_status,
-            problem: `Order ${o.reference} — payment pending`,
-            why: `Customer ${o.customer_name || "Guest"} — $${Number(o.total_usd || 0).toFixed(2)} unpaid`,
-            evidence: [`admin_orders_view:${o.id}`],
-            recommendedAction: "Confirm payment receipt and update order status",
-            orderId: o.id,
-            createdAt: o.created_at,
-          })),
-          ...(pendingSourcing || []).map((s: any) => ({
-            id: s.id,
-            kind: "purchase_blocked" as const,
-            priority: "normal" as const,
-            status: s.status,
-            problem: `Sourcing request ${s.reference} — ${s.status}`,
-            why: s.notes || "Awaiting supplier decision",
-            evidence: [`sourcing_requests:${s.id}`],
-            recommendedAction: "Review and approve or reject the sourcing request",
-            createdAt: s.created_at,
-          })),
+          ...(pendingOrders.data || []).map((o: any) => {
+            const name = customerName(o);
+            return {
+              id: o.id,
+              kind: "order_confirmation" as const,
+              priority: "high" as const,
+              status: o.payment_status,
+              problem: `Order ${o.reference} — payment pending`,
+              why: `${name ? `Customer ${name}` : "Guest"} — $${Number(o.total_usd || 0).toFixed(2)} unpaid`,
+              evidence: [`orders:${o.id}`],
+              recommendedAction: "Confirm payment receipt and update order status",
+              orderId: o.id,
+              createdAt: o.created_at,
+            };
+          }),
+          ...(pendingSourcing.data || []).map((s: any) => {
+            const name = customerName(s);
+            return {
+              id: s.id,
+              kind: "purchase_blocked" as const,
+              priority: (s.status === "pending" ? "normal" : "high") as QueueItem["priority"],
+              status: s.status,
+              problem: `Sourcing request — ${s.status}`,
+              why:
+                s.internal_notes ||
+                s.product_description ||
+                (name ? `Requested by ${name}` : "Awaiting supplier decision"),
+              evidence: [`sourcing_requests:${s.id}`],
+              recommendedAction: "Review and approve or reject the sourcing request",
+              createdAt: s.created_at,
+            };
+          }),
         ];
         setItems(queueItems);
         setGeneratedAt(new Date().toISOString());

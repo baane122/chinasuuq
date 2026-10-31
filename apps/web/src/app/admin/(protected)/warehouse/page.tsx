@@ -134,7 +134,6 @@ export default function WarehousePage() {
 
   useEffect(() => {
     fetchPackages();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredPackages = useMemo(() => {

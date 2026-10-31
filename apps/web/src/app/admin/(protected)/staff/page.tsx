@@ -218,17 +218,19 @@ export default function StaffPage() {
       }
       try {
         setCreating(true);
-        const { error: insertError } = await supabase
-          .from("staff_profiles")
-          .insert({
-            user_id: userId,
-            role: createRole,
-            department: createDept.trim() || null,
-            is_active: true,
-            is_super_admin: createRole === "super_admin",
-          });
-        if (insertError) throw insertError;
-        toast("success", "Staff member linked to their account");
+        // One server-side call writes BOTH rows. Writing only staff_profiles
+        // left profiles.role='customer', so the invitee could open this admin
+        // shell and then be denied by every RLS policy (they all read
+        // profiles.role). upsert_staff_member keeps the two in sync atomically
+        // and re-checks staff/super_admin authority in the database.
+        const { error: linkError } = await supabase.rpc("upsert_staff_member", {
+          p_user_id: userId,
+          p_role: createRole,
+          p_department: createDept.trim() || null,
+          p_is_active: true,
+        });
+        if (linkError) throw linkError;
+        toast("success", "Staff member linked — access is live on their next sign-in");
         setCreateOpen(false);
         resetCreate();
         fetchStaff();
@@ -271,16 +273,21 @@ export default function StaffPage() {
     if (!editStaff) return;
     try {
       setSavingEdit(true);
-      const { error: updateError } = await supabase
-        .from("staff_profiles")
-        .update({
-          role: editRole,
-          department: editDept.trim() || null,
-          is_super_admin: editRole === "super_admin",
-        })
-        .eq("id", editStaff.id);
+      // Same reason as invite: role changes must reach profiles.role or the
+      // member keeps their old database authority while the UI shows the new one.
+      const targetUserId = editStaff.user_id;
+      if (!targetUserId) {
+        toast("error", "This staff row has no linked account, so its role can't be applied.");
+        return;
+      }
+      const { error: updateError } = await supabase.rpc("upsert_staff_member", {
+        p_user_id: targetUserId,
+        p_role: editRole,
+        p_department: editDept.trim() || null,
+        p_is_active: editStaff.is_active ?? true,
+      });
       if (updateError) throw updateError;
-      toast("success", "Staff role updated");
+      toast("success", "Staff role updated in both the console and the database");
       setEditOpen(false);
       fetchStaff();
     } catch (err) {

@@ -23,13 +23,22 @@ interface QuoteRow {
   id: string;
   /** Nullable: a quote raised from the Sourcing page can carry no request row. */
   request_id: string | null;
+  /** NOT NULL: every quote belongs to exactly one customer profile. */
+  user_id: string;
+  /** NOT NULL and UNIQUE: human-facing quote number (QT-YYYYMMDD-XXXX). */
+  reference: string;
   total_cny: number;
   total_usd: number;
   /** CNY per 1 USD that priced this quote: USD = total_cny ÷ exchange_rate. */
   exchange_rate: number;
-  fees: number;
+  /** Live column is `service_fee`; there is no `fees` column (42703). */
+  service_fee: number;
   freight_estimate: number;
-  valid_until: string | null;
+  discount: number;
+  /** Deposit share of the total, 0–100. Defaults to 50 in the database. */
+  deposit_percent: number;
+  /** NOT NULL: a quote with no expiry can never be marked expired. */
+  valid_until: string;
   status: "draft" | "sent" | "approved" | "rejected" | "expired";
   created_at?: string;
 }
@@ -46,15 +55,45 @@ const statusColors: Record<string, string> = {
 };
 
 const EMPTY_FORM = {
+  user_id: "",
   request_id: "",
   total_cny: "",
-  fees: "",
+  service_fee: "",
   freight_estimate: "",
+  discount: "",
+  deposit_percent: "50",
   valid_until: "",
 };
 
+/** Default validity for a new quote: 14 days, matching the Sourcing drawer. */
+const defaultValidUntil = () =>
+  new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/* QT-YYYYMMDD-XXXX — same shape the Sourcing drawer issues. */
+const QUOTE_REF_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function makeQuoteReference(): string {
+  const now = new Date();
+  const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes, (b) => QUOTE_REF_CHARS[b % QUOTE_REF_CHARS.length]).join("");
+  return `QT-${ymd}-${suffix}`;
+}
+
+/** `valid_until` is TIMESTAMPTZ NOT NULL; a date input is stored at end of day UTC. */
+const toIsoEndOfDay = (date: string) =>
+  date ? new Date(`${date}T23:59:59.000Z`).toISOString() : "";
+
+const isUuid = (v: string) => UUID_RE.test(v.trim());
+
 /** Rounded to 4 places so a stored rate is readable and still exact enough. */
 const roundRate = (n: number) => Math.round(n * 10000) / 10000;
+
+/** Deposit share is stored as 0–100; NaN falls back to the column default. */
+const clampPercent = (n: number) =>
+  Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 50;
 
 /* Legacy rows were inserted with exchange_rate 0, which prices nothing; they
  * render as "—" rather than as a rate of zero. */
@@ -118,7 +157,12 @@ export default function QuotesPage() {
    * every string in this filter is read through text(), never .toLowerCase(). */
   const filteredQuotes = quotes.filter((q) => {
     if (search === "") return true;
-    return (q.request_id ?? "").toLowerCase().includes(search.toLowerCase());
+    const needle = search.toLowerCase();
+    return (
+      (q.reference ?? "").toLowerCase().includes(needle) ||
+      (q.request_id ?? "").toLowerCase().includes(needle) ||
+      (q.user_id ?? "").toLowerCase().includes(needle)
+    );
   });
 
   /* The quote screen READS the rate — it does not choose one. Settings →
@@ -143,9 +187,58 @@ export default function QuotesPage() {
     toast("error", fxRatesUnavailableMessage);
   };
 
+  /* A quote row is NOT NULL on user_id, reference and valid_until. The page used
+   * to send none of those (and a free-text "request_id" that is a UUID FK), so
+   * every create died on 23502 / 22P02. Validate the same things Postgres does,
+   * before the round trip, so the operator gets a sentence instead of a code. */
+  const validateQuoteForm = (f: typeof EMPTY_FORM, opts: { requireUser: boolean }) => {
+    if (opts.requireUser && !isUuid(f.user_id)) {
+      return "A valid customer account UUID is required (Customers → copy the account ID).";
+    }
+    if (f.user_id.trim() !== "" && !isUuid(f.user_id)) {
+      return "Customer account ID must be a UUID.";
+    }
+    const requestId = f.request_id.trim();
+    if (requestId !== "" && !isUuid(requestId)) {
+      return "Request ID must be the UUID of a sourcing request — leave it blank for a standalone quote.";
+    }
+    const cny = Number(f.total_cny);
+    if (!Number.isFinite(cny) || cny <= 0) {
+      return "Total CNY must be a number greater than zero.";
+    }
+    const deposit = Number(f.deposit_percent);
+    if (!Number.isFinite(deposit) || deposit < 0 || deposit > 100) {
+      return "Deposit % must be between 0 and 100.";
+    }
+    if (!f.valid_until.trim()) {
+      return "Valid Until is required — a quote with no expiry can never expire.";
+    }
+    if (Number.isNaN(new Date(toIsoEndOfDay(f.valid_until)).getTime())) {
+      return "Valid Until must be a real date (YYYY-MM-DD).";
+    }
+    return null;
+  };
+
+  /** Shared body → row mapping for create and edit. */
+  const quoteRowFromForm = (f: typeof EMPTY_FORM, rate: number) => {
+    const totalCny = Number(f.total_cny) || 0;
+    return {
+      request_id: f.request_id.trim() || null,
+      total_cny: totalCny,
+      total_usd: roundCents(usdFromCny(totalCny, rate)),
+      exchange_rate: rate,
+      service_fee: Number(f.service_fee) || 0,
+      freight_estimate: Number(f.freight_estimate) || 0,
+      discount: Number(f.discount) || 0,
+      deposit_percent: clampPercent(Number(f.deposit_percent)),
+      valid_until: toIsoEndOfDay(f.valid_until),
+    };
+  };
+
   const handleCreate = async () => {
-    if (!form.request_id) {
-      toast("error", "Request ID is required");
+    const invalid = validateQuoteForm(form, { requireUser: true });
+    if (invalid) {
+      toast("error", invalid);
       return;
     }
     if (saveRate === null) {
@@ -154,18 +247,14 @@ export default function QuotesPage() {
     }
     try {
       setCreating(true);
-      const { totalCny, totalUsd } = priceFromForm(form.total_cny);
-      const payload = {
-        request_id: form.request_id,
-        total_cny: totalCny,
-        total_usd: totalUsd,
-        fees: Number(form.fees) || 0,
-        freight_estimate: Number(form.freight_estimate) || 0,
-        valid_until: form.valid_until || null,
-        exchange_rate: saveRate,
-        status: "draft" as const,
-      };
-      const { error: insertError } = await supabase.from("quotes").insert(payload);
+      const { error: insertError } = await supabase
+        .from("quotes")
+        .insert({
+          ...quoteRowFromForm(form, saveRate),
+          user_id: form.user_id.trim(),
+          reference: makeQuoteReference(),
+          status: "draft" as const,
+        });
       if (insertError) throw insertError;
       toast("success", "Quote created successfully");
       setCreateOpen(false);
@@ -191,10 +280,13 @@ export default function QuotesPage() {
     }
     setEditQuote(q);
     setEditForm({
+      user_id: q.user_id ?? "",
       request_id: q.request_id ?? "",
       total_cny: String(q.total_cny ?? ""),
-      fees: String(q.fees ?? ""),
+      service_fee: String(q.service_fee ?? ""),
       freight_estimate: String(q.freight_estimate ?? ""),
+      discount: String(q.discount ?? ""),
+      deposit_percent: String(q.deposit_percent ?? "50"),
       valid_until: q.valid_until ? q.valid_until.slice(0, 10) : "",
     });
     setEditOpen(true);
@@ -206,26 +298,27 @@ export default function QuotesPage() {
       toast("error", "This quote is no longer a draft — its total was already sent to the customer, so it can't be re-priced here.");
       return;
     }
+    const invalid = validateQuoteForm(editForm, { requireUser: false });
+    if (invalid) {
+      toast("error", invalid);
+      return;
+    }
     if (saveRate === null) {
       blockedByRate();
       return;
     }
     try {
       setSavingEdit(true);
-      const { totalCny, totalUsd } = priceFromForm(editForm.total_cny);
-      const payload = {
-        request_id: editForm.request_id,
-        total_cny: totalCny,
-        total_usd: totalUsd,
-        exchange_rate: saveRate,
-        fees: Number(editForm.fees) || 0,
-        freight_estimate: Number(editForm.freight_estimate) || 0,
-        valid_until: editForm.valid_until || null,
-      };
+      const row = quoteRowFromForm(editForm, saveRate);
       const { error: updateError } = await supabase
         .from("quotes")
-        .update(payload)
-        .eq("id", editQuote.id);
+        .update(
+          isUuid(editForm.user_id) && editForm.user_id.trim() !== editQuote.user_id
+            ? { ...row, user_id: editForm.user_id.trim() }
+            : row
+        )
+        .eq("id", editQuote.id)
+        .select("id");
       if (updateError) throw updateError;
       toast("success", "Quote updated successfully");
       setEditOpen(false);
@@ -323,7 +416,13 @@ export default function QuotesPage() {
         title="Quotes"
         subtitle="Price quotes issued to customers"
         actions={
-          <button onClick={() => setCreateOpen(true)} className="admin-btn-primary">
+          <button
+            onClick={() => {
+              setForm({ ...EMPTY_FORM, valid_until: defaultValidUntil() });
+              setCreateOpen(true);
+            }}
+            className="admin-btn-primary"
+          >
             <Plus className="h-4 w-4" />
             New Quote
           </button>
@@ -349,7 +448,7 @@ export default function QuotesPage() {
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder="Search by request ID…"
+          placeholder="Search by quote reference, request or customer…"
           className="w-full sm:max-w-sm"
         />
 
@@ -362,7 +461,13 @@ export default function QuotesPage() {
           emptyTitle="No quotes yet"
           emptySubtitle="Create a quote from a sourcing request to get started."
           emptyAction={
-            <button onClick={() => setCreateOpen(true)} className="admin-btn-primary">
+            <button
+              onClick={() => {
+                setForm({ ...EMPTY_FORM, valid_until: defaultValidUntil() });
+                setCreateOpen(true);
+              }}
+              className="admin-btn-primary"
+            >
               <Plus className="h-4 w-4" />
               New Quote
             </button>
@@ -374,7 +479,8 @@ export default function QuotesPage() {
               <table className="admin-table w-full">
                 <thead>
                   <tr>
-                    <th>Request ID</th>
+                    <th>Reference</th>
+                    <th>Customer</th>
                     <th>Total CNY</th>
                     <th>Total USD</th>
                     <th>Rate</th>
@@ -390,7 +496,17 @@ export default function QuotesPage() {
                     <tr key={quote.id}>
                       <td>
                         <span className="font-mono text-[13px] font-semibold text-brand-600">
-                          {quote.request_id ?? "—"}
+                          {quote.reference ?? "—"}
+                        </span>
+                        {quote.request_id && (
+                          <p className="mt-0.5 font-mono text-[10px] text-dark-900/35">
+                            req {quote.request_id.slice(0, 8)}
+                          </p>
+                        )}
+                      </td>
+                      <td>
+                        <span className="font-mono text-[11px] text-dark-500">
+                          {quote.user_id ? quote.user_id.slice(0, 8) : "—"}
                         </span>
                       </td>
                       <td>
@@ -422,7 +538,7 @@ export default function QuotesPage() {
                         })()}
                       </td>
                       <td>
-                        <span className="text-dark-600">{formatUSD(Number(quote.fees) || 0)}</span>
+                        <span className="text-dark-600">{formatUSD(Number(quote.service_fee) || 0)}</span>
                       </td>
                       <td>
                         <span className="text-dark-600">
@@ -490,7 +606,7 @@ export default function QuotesPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         title="New Quote"
-        subtitle="Create a draft quote for a sourcing request"
+        subtitle="Create a draft quote for a customer"
         footer={
           <div className="flex justify-end gap-3">
             <button type="button" onClick={() => setCreateOpen(false)} className="admin-btn-ghost">
@@ -505,50 +621,89 @@ export default function QuotesPage() {
       >
         <div className="space-y-4">
           <FormInput
-            label="Request ID"
+            label="Customer Account ID"
+            name="user_id"
+            value={form.user_id}
+            onChange={(v) => setForm((f) => ({ ...f, user_id: v }))}
+            placeholder="Paste the customer's account UUID"
+            required
+          />
+          <p className="-mt-2 text-[11px] text-dark-900/45">
+            Copy it from Customers → row → Account ID. Every quote must belong to a customer profile.
+          </p>
+          <FormInput
+            label="Request ID (optional)"
             name="request_id"
             value={form.request_id}
             onChange={(v) => setForm((f) => ({ ...f, request_id: v }))}
-            placeholder="e.g. RQ-00014"
-            required
+            placeholder="Sourcing request UUID — leave blank for a standalone quote"
           />
           <div className="grid grid-cols-2 gap-4">
             <FormInput
               label="Total CNY"
               name="total_cny"
               type="number"
+              step={0.01}
+              min={0}
               value={form.total_cny}
               onChange={(v) => setForm((f) => ({ ...f, total_cny: v }))}
               placeholder="0.00"
+              required
             />
             {usdBox("Total USD", createPreview.totalUsd)}
           </div>
           <p className="-mt-2 text-[11px] text-dark-900/45 tabular-nums">{rateHint}</p>
           <div className="grid grid-cols-2 gap-4">
             <FormInput
-              label="Fees"
-              name="fees"
+              label="Service Fee"
+              name="service_fee"
               type="number"
-              value={form.fees}
-              onChange={(v) => setForm((f) => ({ ...f, fees: v }))}
+              step={0.01}
+              min={0}
+              value={form.service_fee}
+              onChange={(v) => setForm((f) => ({ ...f, service_fee: v }))}
               placeholder="0.00"
             />
             <FormInput
               label="Freight Estimate"
               name="freight_estimate"
               type="number"
+              step={0.01}
+              min={0}
               value={form.freight_estimate}
               onChange={(v) => setForm((f) => ({ ...f, freight_estimate: v }))}
               placeholder="0.00"
             />
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <FormInput
+              label="Discount"
+              name="discount"
+              type="number"
+              step={0.01}
+              min={0}
+              value={form.discount}
+              onChange={(v) => setForm((f) => ({ ...f, discount: v }))}
+              placeholder="0.00"
+            />
+            <FormInput
+              label="Deposit %"
+              name="deposit_percent"
+              type="number"
+              step={1}
+              min={0}
+              value={form.deposit_percent}
+              onChange={(v) => setForm((f) => ({ ...f, deposit_percent: v }))}
+              placeholder="50"
+            />
+          </div>
           <FormInput
             label="Valid Until"
             name="valid_until"
-            type="text"
+            type="date"
             value={form.valid_until}
             onChange={(v) => setForm((f) => ({ ...f, valid_until: v }))}
-            placeholder="YYYY-MM-DD"
+            required
           />
         </div>
       </SidePanel>
@@ -558,7 +713,7 @@ export default function QuotesPage() {
         open={editOpen}
         onClose={() => setEditOpen(false)}
         title="Edit Quote"
-        subtitle={editQuote ? `Request ${editQuote.request_id}` : undefined}
+        subtitle={editQuote ? `Quote ${editQuote.reference}` : undefined}
         footer={
           <div className="flex justify-end gap-3">
             <button type="button" onClick={() => setEditOpen(false)} className="admin-btn-ghost">
@@ -573,17 +728,26 @@ export default function QuotesPage() {
       >
         <div className="space-y-4">
           <FormInput
-            label="Request ID"
+            label="Customer Account ID"
+            name="user_id"
+            value={editForm.user_id}
+            onChange={(v) => setEditForm((f) => ({ ...f, user_id: v }))}
+            placeholder="Customer account UUID"
+          />
+          <FormInput
+            label="Request ID (optional)"
             name="request_id"
             value={editForm.request_id}
             onChange={(v) => setEditForm((f) => ({ ...f, request_id: v }))}
-            required
+            placeholder="Sourcing request UUID"
           />
           <div className="grid grid-cols-2 gap-4">
             <FormInput
               label="Total CNY"
               name="total_cny"
               type="number"
+              step={0.01}
+              min={0}
               value={editForm.total_cny}
               onChange={(v) => setEditForm((f) => ({ ...f, total_cny: v }))}
             />
@@ -592,27 +756,51 @@ export default function QuotesPage() {
           <p className="-mt-2 text-[11px] text-dark-900/45 tabular-nums">{rateHint}</p>
           <div className="grid grid-cols-2 gap-4">
             <FormInput
-              label="Fees"
-              name="fees"
+              label="Service Fee"
+              name="service_fee"
               type="number"
-              value={editForm.fees}
-              onChange={(v) => setEditForm((f) => ({ ...f, fees: v }))}
+              step={0.01}
+              min={0}
+              value={editForm.service_fee}
+              onChange={(v) => setEditForm((f) => ({ ...f, service_fee: v }))}
             />
             <FormInput
               label="Freight Estimate"
               name="freight_estimate"
               type="number"
+              step={0.01}
+              min={0}
               value={editForm.freight_estimate}
               onChange={(v) => setEditForm((f) => ({ ...f, freight_estimate: v }))}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <FormInput
+              label="Discount"
+              name="discount"
+              type="number"
+              step={0.01}
+              min={0}
+              value={editForm.discount}
+              onChange={(v) => setEditForm((f) => ({ ...f, discount: v }))}
+            />
+            <FormInput
+              label="Deposit %"
+              name="deposit_percent"
+              type="number"
+              step={1}
+              min={0}
+              value={editForm.deposit_percent}
+              onChange={(v) => setEditForm((f) => ({ ...f, deposit_percent: v }))}
             />
           </div>
           <FormInput
             label="Valid Until"
             name="valid_until"
-            type="text"
+            type="date"
             value={editForm.valid_until}
             onChange={(v) => setEditForm((f) => ({ ...f, valid_until: v }))}
-            placeholder="YYYY-MM-DD"
+            required
           />
         </div>
       </SidePanel>
@@ -621,7 +809,7 @@ export default function QuotesPage() {
       <ConfirmDialog
         open={!!deleteQuote}
         title="Delete quote"
-        message={`Are you sure you want to delete quote ${deleteQuote?.request_id || ""}? This cannot be undone.`}
+        message={`Are you sure you want to delete quote ${deleteQuote?.reference || deleteQuote?.request_id || ""}? This cannot be undone.`}
         confirmText="Delete"
         onCancel={() => setDeleteQuote(null)}
         onConfirm={handleDelete}

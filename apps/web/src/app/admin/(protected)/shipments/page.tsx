@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { cn, formatDate, formatDateTime } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import {
   Truck, Loader2, Plane, Ship, Package, MapPin, Plus, Pencil, Trash2,
   Calendar, Clock, Check, AlertTriangle, ArrowRight, Navigation, X, Link2
@@ -189,7 +189,6 @@ export default function ShipmentsPage() {
     const customs = shipments.filter((s) => s.status === "customs").length;
 
     // Avg transit time estimate
-    const now = new Date();
     const upcomingETA = shipments
       .filter((s) => s.estimated_arrival && s.status !== "delivered")
       .sort((a, b) => new Date(a.estimated_arrival).getTime() - new Date(b.estimated_arrival).getTime());
@@ -250,10 +249,13 @@ export default function ShipmentsPage() {
         origin: form.origin.trim(),
         destination: form.destination.trim(),
         // The live table stores `total_packages` (a count), not a `packages`
-        // list. Blank input stays null — the count is not guessed.
+        // list, and the column is NOT NULL. A blank box therefore means "not
+        // counted yet" and is stored as 0 — sending null failed every create
+        // with 23502, which is why a shipment with no package count could
+        // never be recorded. The detail row renders 0 as "—" for that reason.
         total_packages: form.total_packages.trim() === ""
-          ? null
-          : Math.max(0, Number(form.total_packages) || 0),
+          ? 0
+          : Math.max(0, Math.floor(Number(form.total_packages) || 0)),
         departure_date: form.departure_date || null,
         estimated_arrival: form.estimated_arrival || null,
         tracking_number: form.tracking_number.trim() || null,
@@ -524,8 +526,11 @@ export default function ShipmentsPage() {
                       <td className="px-6 py-3.5">
                         <div className="flex items-center gap-1.5">
                           <Package className="h-3.5 w-3.5 text-dark-400" />
-                          <span className="text-sm text-dark-600" title={shipment.total_packages === null ? "Package count not recorded" : undefined}>
-                            {shipment.total_packages ?? "—"}
+                          <span
+                            className="text-sm text-dark-600"
+                            title={Number(shipment.total_packages) === 0 ? "Package count not recorded yet" : undefined}
+                          >
+                            {Number(shipment.total_packages) > 0 ? shipment.total_packages : "—"}
                           </span>
                         </div>
                       </td>
@@ -793,7 +798,7 @@ export default function ShipmentsPage() {
             <FormInput label="Origin" name="origin" value={form.origin} onChange={updateField("origin")} placeholder="e.g. Guangzhou, China" required />
             <FormInput label="Destination" name="destination" value={form.destination} onChange={updateField("destination")} placeholder="e.g. Mogadishu, Somalia" required />
           </div>
-          <FormInput label="Total Packages" name="total_packages" value={form.total_packages} onChange={updateField("total_packages")} type="number" placeholder="Leave blank if not recorded yet" />
+          <FormInput label="Total Packages" name="total_packages" value={form.total_packages} onChange={updateField("total_packages")} type="number" min={0} placeholder="Leave blank if not counted yet (stored as 0)" />
           <div className="grid grid-cols-2 gap-4">
             <FormInput label="Departure Date" name="departure_date" value={form.departure_date} onChange={updateField("departure_date")} type="text" placeholder="YYYY-MM-DD" />
             <FormInput label="Estimated Arrival" name="estimated_arrival" value={form.estimated_arrival} onChange={updateField("estimated_arrival")} type="text" placeholder="YYYY-MM-DD" />

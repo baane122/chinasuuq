@@ -127,7 +127,6 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (activeTab === "System Health") runHealthCheck();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   const handlePasswordChange = async () => {
@@ -641,7 +640,7 @@ export default function SettingsPage() {
             </div>
           ) : staffError ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-8 text-center">
-              <p className="text-sm font-medium text-rose-600">Couldn't load staff members.</p>
+              <p className="text-sm font-medium text-rose-600">Couldn&apos;t load staff members.</p>
               <p className="mt-1 text-xs text-rose-500/80">{staffError}</p>
               <button onClick={fetchStaff} className="admin-btn-outline mt-3 h-9">
                 Retry

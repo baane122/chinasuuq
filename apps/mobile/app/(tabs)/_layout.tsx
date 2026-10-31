@@ -8,6 +8,7 @@ import { useCartStore } from "@/store/cart";
 import { useAuthStore } from "@/store/auth";
 import { getUnreadNotificationCount } from "@/db";
 import { useI18n } from "@/lib/i18n";
+import { ScreenErrorBoundary } from "@/components/ui/ScreenErrorBoundary";
 
 export default function TabLayout() {
   const { t } = useI18n();
@@ -45,6 +46,7 @@ export default function TabLayout() {
   // state; staff mode is an opt-in surfaced by StaffEntryBanner on the tabs.
   return (
     <Tabs
+      unstable_screenErrorBoundary={ScreenErrorBoundary}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: COLORS.primary,

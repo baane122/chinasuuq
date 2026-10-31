@@ -1317,7 +1317,13 @@ export async function saveSourcingCapture(c: SourcingCapture): Promise<SourcingC
     if (await isBackendOnline()) {
       const { data: auth } = await supabase.auth.getUser();
       const row = adaptSourcing(c, auth?.user?.id ?? null);
-      const { error } = await supabase.from("sourcing_requests").upsert(row, { onConflict: "id" });
+      // Plain insert, not upsert. adaptSourcing deliberately omits `id`
+      // (Postgres owns it), so `.upsert(..., {onConflict:"id"})` could never
+      // match an existing row — it only forced PostgREST to require UPDATE,
+      // which `anon` does not have, so a guest's capture was silently dropped.
+      // The local capture id is the dedupe key on the device (setSourcingSynced
+      // only flips after a successful write), so one insert per capture is right.
+      const { error } = await supabase.from("sourcing_requests").insert(row);
       if (!error) {
         // mark synced
         await setSourcingSynced(c.id, true);

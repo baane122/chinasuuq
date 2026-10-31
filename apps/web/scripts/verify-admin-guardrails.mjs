@@ -316,15 +316,24 @@ await check("every .or() predicate is built from the grammar-safe pattern", asyn
 });
 
 const productsText = read("src/app/admin/(protected)/products/page.tsx");
+// The chunking moved out of the page into the shared write module, so the page
+// cannot drift from the read-side budget. The invariant is unchanged: both bulk
+// actions go through it, a failed group is reported, and no whole-selection
+// `.in("id", ids)` write survives.
+const productWritesText = read("src/lib/admin/productWrites.ts");
 await check("bulk writes are chunked and report the groups that failed", async () => {
-  assert.match(productsText, /async function runBulkWrite/);
-  assert.match(productsText, /batchSize: IN_CLAUSE_BATCH_SIZE/, "the same bounded chunking the mobile reads use");
-  assert.match(productsText, /failedGroupNumbers/, "a failed group must not be counted as deleted");
-  const calls = [...productsText.matchAll(/await runBulkWrite\(/g)].length;
+  assert.match(productWritesText, /export async function bulkWrite/, "the shared helper is the only chunked path");
+  assert.match(productWritesText, /batchSize: IN_CLAUSE_BATCH_SIZE/, "the same bounded chunking the mobile reads use");
+  assert.match(productWritesText, /failedGroupNumbers/, "a failed group must not be counted as deleted");
+  assert.ok(
+    /import\s*\{[^}]*\bbulkWrite\b[^}]*\}\s*from\s*"@\/lib\/admin\/productWrites"/.test(productsText),
+    "the page imports and uses the shared bulkWrite"
+  );
+  const calls = [...productsText.matchAll(/await bulkWrite\(/g)].length;
   assert.equal(calls, 2, `both bulk actions must go through it, saw ${calls}`);
   assert.ok(
     !/\.in\("id",\s*ids\)/.test(productsText),
-    "no whole-selection .in(\"id\", ids) write may survive next to runBulkWrite"
+    "no whole-selection .in(\"id\", ids) write may survive next to bulkWrite"
   );
 });
 

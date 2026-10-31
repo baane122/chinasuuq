@@ -8,21 +8,7 @@ import WhatsAppFAB from "@/components/landing/WhatsAppFAB";
 import { useI18n } from "@/lib/i18n";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import {
-  ArrowRight,
-  CheckCircle2,
-  Clock3,
-  MapPin,
-  MessageCircle,
-  Package,
-  Plane,
-  Search,
-  Ship,
-  ShieldCheck,
-  Sparkles,
-  Truck,
-  Weight,
-} from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock3, MapPin, MessageCircle, Package, Plane, Search, Ship, ShieldCheck, Sparkles, Weight } from "lucide-react";
 import { waLink } from "@/lib/whatsapp";
 
 const FREIGHT = [

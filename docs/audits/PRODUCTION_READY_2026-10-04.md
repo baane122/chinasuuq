@@ -141,7 +141,7 @@ Total live functions:      51 (was 54, deleted 3 dead)
 
 ### Database
 ```bash
-psql 'postgresql://postgres.athkmrvsaijwgsyvwrbp:L17ILYrrnOtAZ2B7@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres' -c "
+psql 'postgresql://postgres.athkmrvsaijwgsyvwrbp:<REDACTED_DB_PASSWORD>@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres' -c "
 SELECT tablename, policyname, cmd FROM pg_policies WHERE tablename IN ('settings','ai_provider_config','ai_provider_tasks') ORDER BY tablename;
 "
 ```

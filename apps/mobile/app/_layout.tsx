@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Linking } from "react-native";
+import { AppState, Linking } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { consumeAuthUrl } from "@/lib/supabase";
 import { StatusBar } from "expo-status-bar";
@@ -17,15 +17,60 @@ import { useAuthStore } from "@/store/auth";
 import { warmFx } from "@/lib/exchange";
 import { COLORS } from "@/lib/theme";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { ScreenErrorBoundary } from "@/components/ui/ScreenErrorBoundary";
 import { I18nProvider } from "@/lib/i18n";
 
 // Keep splash screen visible while we load fonts + auth
 SplashScreen.preventAutoHideAsync();
 
+/**
+ * One-device rule, client half.
+ *
+ * The server can revoke the OTHER phone's session, but it cannot reach into
+ * this phone's memory: the access token already loaded stays valid until it
+ * expires (typically an hour). Checking on resume turns that silent window into
+ * a real sign-out with an explanation.
+ *
+ * Deliberately NOT a timer: a background timer in a shopping app is battery
+ * the customer did not agree to spend, and the ONLY moment the answer can have
+ * changed is after the app was away long enough for someone to sign in
+ * elsewhere.
+ */
+function useDeviceSessionGuard() {
+  const assertDeviceSession = useAuthStore((s) => s.assertDeviceSession);
+  const userId = useAuthStore((s) => s.user?.id);
+
+  useEffect(() => {
+    if (!userId) return;
+    let lastCheck = Date.now();
+    const subscription = AppState.addEventListener("change", (status) => {
+      if (status !== "active") return;
+      // Debounce: iOS fires `active` for the control-centre swipe and the
+      // permission dialogs too, and each check is a network round trip.
+      if (Date.now() - lastCheck < 60_000) return;
+      lastCheck = Date.now();
+      void assertDeviceSession();
+    });
+    return () => subscription.remove();
+  }, [userId, assertDeviceSession]);
+}
+
 function useAuthRedirect() {
-  const { user, initialized } = useAuthStore();
+  const { user, initialized, sessionNotice } = useAuthStore();
   const segments = useSegments();
   const router = useRouter();
+
+  useDeviceSessionGuard();
+
+  // A server-side sign-out (another phone won, or the account was disabled)
+  // must actually land on the login screen. Without this the customer kept
+  // looking at the previous account's screens as a "guest" with no explanation
+  // of what happened; the notice is what turns it into a comprehensible event.
+  useEffect(() => {
+    if (!initialized || !sessionNotice) return;
+    if (segments[0] === "(auth)") return;
+    router.replace("/(auth)/login");
+  }, [initialized, sessionNotice, segments, router]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -144,7 +189,10 @@ export default function RootLayout() {
         <StatusBar style="dark" />
         <AuthRedirect />
         <I18nProvider>
-          <Stack screenOptions={{ headerShown: false }}>
+          <Stack
+            screenOptions={{ headerShown: false }}
+            unstable_screenErrorBoundary={ScreenErrorBoundary}
+          >
             <Stack.Screen name="onboarding" options={{ presentation: "card" }} />
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="(auth)" options={{ presentation: "card" }} />
@@ -170,6 +218,7 @@ export default function RootLayout() {
             <Stack.Screen name="profile/referral" options={{ presentation: "card" }} />
             <Stack.Screen name="profile/help" options={{ presentation: "card" }} />
             <Stack.Screen name="profile/about" options={{ presentation: "card" }} />
+            <Stack.Screen name="profile/security" options={{ presentation: "card" }} />
             <Stack.Screen name="profile/terms" options={{ presentation: "card" }} />
             <Stack.Screen name="profile/privacy" options={{ presentation: "card" }} />
             <Stack.Screen name="profile/returns" options={{ presentation: "card" }} />

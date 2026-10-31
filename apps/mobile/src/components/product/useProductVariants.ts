@@ -9,18 +9,22 @@ import type { VariantGroup, VariantOption } from "./VariantSelector";
  * every live row — this hook fills the gap on the product screen without
  * touching the shared data layer.
  *
- * Field names follow migration 202408010004. `attributes` carries the dimension
- * split ({"color": "red", "size": "xl"}); `image_url` is the swatch photo.
+ * Column names follow the LIVE table (verified against project
+ * athkmrvsaijwgsyvwrbp): the dimension split is `options` ({"color":"red"}),
+ * the foreign key is `product_id`, and price/stock are `price_cny`/`stock`.
+ * The previous select named `source_price`, `attributes`, `is_default`,
+ * `in_stock` and filtered on `source_product_id` — none of those exist, so
+ * PostgREST answered 42703 and this hook silently fell back to the inline
+ * catalog variants for every product. The read below is the one the DB accepts.
  */
 interface VariantRow {
   id: string;
-  variant_name: string;
+  variant_name: string | null;
   sku: string | null;
-  source_price: number | string | null;
+  price_cny: number | string | null;
   image_url: string | null;
-  attributes: Record<string, unknown> | null;
-  is_default: boolean | null;
-  in_stock: boolean | null;
+  options: Record<string, unknown> | null;
+  stock: number | null;
 }
 
 /**
@@ -52,7 +56,7 @@ function groupRows(rows: VariantRow[]): VariantGroup[] {
 
   let anyAttributed = false;
   for (const row of rows) {
-    const attrs = row.attributes;
+    const attrs = row.options;
     const entries =
       attrs && typeof attrs === "object" && !Array.isArray(attrs)
         ? Object.entries(attrs).filter(
@@ -129,15 +133,17 @@ export function useProductVariants(
       try {
         const { data, error } = await supabase
           .from("source_product_variants")
-          .select("id, variant_name, sku, source_price, image_url, attributes, is_default, in_stock")
-          .eq("source_product_id", productId)
-          .order("is_default", { ascending: false })
-          .order("variant_name", { ascending: true });
+          .select("id, variant_name, sku, price_cny, image_url, options, stock")
+          .eq("product_id", productId)
+          .order("variant_name", { ascending: true })
+          .limit(200);
         if (!active || error || !Array.isArray(data)) return;
         const groups = groupRows(data as VariantRow[]);
         if (groups.length > 0) setDbGroups(groups);
       } catch {
-        /* optional enrichment — silently keep inline groups */
+        /* optional enrichment — silently keep inline groups. A rejected select
+         * would land here too, which is why the column list is pinned to the
+         * live schema above. */
       }
     })();
 

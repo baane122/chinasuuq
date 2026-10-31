@@ -673,8 +673,8 @@ function TrendingScreen() {
       <div className="grid gap-3 rounded-2xl border border-dark-900/[0.06] bg-white p-4 text-[12px] leading-relaxed text-dark-900/60 shadow-sm sm:grid-cols-3 dark:border-white/[0.08] dark:bg-dark-900 dark:text-neutral-400">
         <p>
           <span className="font-bold text-dark-900 dark:text-neutral-200">Staff picks</span> come first, in
-          the rank order you set here. They are a human choice and are labelled "Selected for you", never
-          "trending".
+          the rank order you set here. They are a human choice and are labelled &quot;Selected for you&quot;, never
+          &quot;trending&quot;.
         </p>
         <p>
           <span className="font-bold text-dark-900 dark:text-neutral-200">Behaviour</span> fills the rest from

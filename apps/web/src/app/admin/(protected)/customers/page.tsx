@@ -26,9 +26,10 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Users, X, MapPin, Save, MessageSquare, Package, DollarSign,
   CalendarDays, Download, Filter, User as UserIcon, RotateCcw, Plus, Trash2, Pencil,
+  LogOut,
 } from "lucide-react";
-import { listCustomers, createCustomer, updateCustomer, deleteCustomer } from "@/lib/admin/supabase-data";
 import { supabase } from "@/lib/supabase";
+import { listCustomers, createCustomer, updateCustomer, deleteCustomer } from "@/lib/admin/supabase-data";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/components/admin/Toast";
 import {
@@ -271,6 +272,9 @@ function CustomersPageContent() {
   const [deleting, setDeleting] = useState(false);
 
   interface CustomerForm {
+    /** Account (profiles.id) to attach customer data to. Required on create:
+     *  accounts are minted by signup, not by this form. */
+    accountId: string;
     full_name: string;
     email: string;
     phone: string;
@@ -280,6 +284,7 @@ function CustomersPageContent() {
     tier: string;
   }
   const emptyForm: CustomerForm = {
+    accountId: "",
     full_name: "",
     email: "",
     phone: "",
@@ -299,6 +304,7 @@ function CustomersPageContent() {
   const openEdit = (c: any) => {
     setEditingCustomer(c);
     setForm({
+      accountId: c.id || "",
       full_name: c.full_name || "",
       email: c.email || "",
       phone: c.phone || "",
@@ -311,15 +317,21 @@ function CustomersPageContent() {
   };
 
   const handleSave = async () => {
-    if (!form.full_name.trim() && !form.email.trim()) {
-      toastError("Name or email is required");
+    if (!form.full_name.trim() && !form.accountId.trim() && !editingCustomer) {
+      toastError("Account ID and name are required");
+      return;
+    }
+    if (!editingCustomer && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(form.accountId.trim())) {
+      toastError("That account ID isn't a valid UUID.");
       return;
     }
     setSaving(true);
     try {
+      // Only columns that exist live. `email` is not on profiles (it lives in
+      // auth.users) and city/customer_type/business_name/tier are on
+      // customer_profiles — createCustomer/updateCustomer split them.
       const payload = {
         full_name: form.full_name.trim() || undefined,
-        email: form.email.trim() || undefined,
         phone: form.phone.trim() || undefined,
         city: form.city.trim() || undefined,
         customer_type: form.customer_type,
@@ -330,7 +342,7 @@ function CustomersPageContent() {
       if (editingCustomer) {
         res = await updateCustomer(editingCustomer.id, payload);
       } else {
-        res = await createCustomer(payload);
+        res = await createCustomer(payload, form.accountId.trim());
       }
       if (!res.ok) throw new Error(res.error || "Save failed");
       success(editingCustomer ? "Customer updated" : "Customer created");
@@ -342,6 +354,38 @@ function CustomersPageContent() {
       toastError(e instanceof Error ? e.message : "Failed to save customer");
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * Sign this account out of every device.
+   *
+   * The one-device rule means a customer's phone is normally already the only
+   * session, so this is the "my phone was stolen" / "they left the company"
+   * lever support needs. It is NOT the Delete button: it ends sessions and
+   * leaves the account and its history intact.
+   */
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const handleRevokeSessions = async (customer: { id: string; full_name?: string; email?: string }) => {
+    if (revokingId) return;
+    setRevokingId(customer.id);
+    try {
+      const { data, error } = await supabase.rpc("admin_revoke_user_sessions", {
+        p_user_id: customer.id,
+      });
+      if (error) throw error;
+      const revoked = Number((data as { revoked?: number } | null)?.revoked ?? 0);
+      success(
+        revoked > 0
+          ? `Signed out of ${revoked} session${revoked === 1 ? "" : "s"}.`
+          : "That account had no active sessions."
+      );
+    } catch (e) {
+      toastError(
+        e instanceof Error ? e.message : "Could not sign that account out."
+      );
+    } finally {
+      setRevokingId(null);
     }
   };
 
@@ -673,6 +717,15 @@ function CustomersPageContent() {
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
+                        onClick={() => handleRevokeSessions(c)}
+                        disabled={revokingId === c.id}
+                        className="rounded-lg p-1.5 text-dark-400 transition-colors hover:bg-brand-500/10 hover:text-brand-600 disabled:opacity-40"
+                        title="Sign out of all devices"
+                        aria-label={`Sign ${c.full_name || c.email} out of all devices`}
+                      >
+                        <LogOut className="h-4 w-4" />
+                      </button>
+                      <button
                         onClick={() => setDeleteTargetId(c.id)}
                         className="rounded-lg p-1.5 text-dark-400 transition-colors hover:bg-error/10 hover:text-error"
                         title="Delete customer"
@@ -702,7 +755,7 @@ function CustomersPageContent() {
                   Staff notes
                 </p>
                 <p className="text-[11px] text-dark-900/40">
-                  Saved on this device only — staff notes are kept in this browser's
+                  Saved on this device only — staff notes are kept in this browser&apos;s
                   localStorage (there is no notes table in the database yet), so they do not
                   sync between devices or staff accounts.
                 </p>
@@ -776,6 +829,20 @@ function CustomersPageContent() {
         }
       >
         <div className="space-y-4">
+          {!editingCustomer && (
+            <Field label="Account ID" required>
+              <input
+                value={form.accountId}
+                onChange={(e) => setForm({ ...form, accountId: e.target.value })}
+                placeholder="Paste the customer's account UUID"
+                className="admin-input font-mono text-xs"
+              />
+              <p className="mt-1 text-[11px] text-dark-900/45">
+                Accounts are created when the person signs up. Paste the account
+                ID from Supabase → Authentication → Users to attach customer data.
+              </p>
+            </Field>
+          )}
           <Field label="Full Name" required>
             <input
               value={form.full_name}
@@ -786,13 +853,14 @@ function CustomersPageContent() {
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Email" required>
+            <Field label="Email">
               <input
                 type="email"
                 value={form.email}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 placeholder="ahmed@example.com"
                 className="admin-input"
+                readOnly={!editingCustomer}
               />
             </Field>
             <Field label="Phone">

@@ -328,7 +328,7 @@ export async function listOrders({
         `order_number.ilike.${like},reference.ilike.${like},recipient_name.ilike.${like},phone.ilike.${like}`
       );
     }
-    let { data, error, count } = await q;
+    const { data, error, count } = await q;
     let orders = (data as any[]) || [];
     let total = count ?? orders.length;
 
@@ -452,20 +452,35 @@ export async function listCustomers({ search }: { search?: string } = {}) {
     // customers list, its filters/KPIs, CSV export and row-click actually read.
     // A view's output columns are atomic — if the view exists these all exist —
     // so this is drift-safe, unlike a base-table projection.
-    let q = supabase
-      .from("admin_customers_view")
-      .select(
-        "id, full_name, email, phone, city, customer_type, business_name, tier, total_orders, total_spent, created_at"
-      )
-      .order("created_at", { ascending: false })
-      .limit(500);
-    if (search) {
-      const like = orLike(search);
-      q = q.or(
-        `full_name.ilike.${like},email.ilike.${like},phone.ilike.${like},city.ilike.${like}`
+    const build = (columns: string, searchable: string) => {
+      let q = supabase
+        .from("admin_customers_view")
+        .select(columns)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (search) {
+        const like = orLike(search);
+        q = q.or(searchable.replace("{like}", like));
+      }
+      return q;
+    };
+
+    // The view's `email` is a fixed NULL projection in some schema generations
+    // (20260813_admin_view_layer_corrected.sql:102) and a real column in others.
+    // A rejected projection is drift, not an empty roster, so retry once without
+    // the columns that vary instead of showing "no customers".
+    let { data, error } = await build(
+      "id, full_name, email, phone, city, customer_type, business_name, tier, total_orders, total_spent, created_at",
+      "full_name.ilike.{like},email.ilike.{like},phone.ilike.{like},city.ilike.{like}"
+    );
+    if (error && isMissingColumnError(error)) {
+      const retry = await build(
+        "id, full_name, phone, city, customer_type, business_name, tier, total_orders, total_spent, created_at",
+        "full_name.ilike.{like},phone.ilike.{like},city.ilike.{like}"
       );
+      data = retry.data;
+      error = retry.error;
     }
-    const { data, error } = await q;
     return {
       ok: !error,
       customers: data || [],
@@ -1010,9 +1025,24 @@ export async function setSetting(key: string, value: any) {
 
 // ─── Customers CRUD ──────────────────────────────────────────────
 
+/**
+ * Customer data lives in TWO live tables, and the admin form used to write all
+ * of it to `profiles` — which has no email/city/customer_type/business_name/tier
+ * columns at all (verified against project athkmrvsaijwgsyvwrbp with
+ * `GET /rest/v1/profiles?select=<col>`; each answered 42703). Every create and
+ * every edit therefore answered PGRST204, so "Save customer" did nothing.
+ *
+ *   profiles          id, full_name, phone, role, is_active, language, avatar_url
+ *   customer_profiles user_id, city, customer_type, business_name, tier
+ *
+ * A `profiles` row is created by the handle_new_user trigger at signup; no
+ * client can mint an auth user (that needs the service role). So "create a
+ * customer" here means ATTACHING commercial detail to an account that already
+ * exists — the same rule the Staff page follows — and the UI must ask for that
+ * account id instead of pretending it can create one from a name and an email.
+ */
 export interface CustomerPayload {
   full_name?: string;
-  email?: string;
   phone?: string;
   city?: string;
   customer_type?: "business" | "individual";
@@ -1027,46 +1057,125 @@ export interface CustomerResult {
   id?: string;
 }
 
-/** Create a new customer profile row in the `profiles` table. */
-export async function createCustomer(payload: CustomerPayload): Promise<CustomerResult> {
+/** Split a form payload into the two live tables, dropping untouched fields so
+ *  a partial edit cannot blank a column the operator never edited. */
+function splitCustomerPayload(payload: CustomerPayload) {
+  const profile: Record<string, string> = {};
+  if (payload.full_name !== undefined) profile.full_name = payload.full_name;
+  if (payload.phone !== undefined) profile.phone = payload.phone;
+  if (payload.role !== undefined) profile.role = payload.role;
+  const details: Record<string, string> = {};
+  if (payload.city !== undefined) details.city = payload.city;
+  if (payload.customer_type !== undefined) details.customer_type = payload.customer_type;
+  if (payload.business_name !== undefined) details.business_name = payload.business_name;
+  if (payload.tier !== undefined) details.tier = payload.tier;
+  return { profile, details };
+}
+
+/** Upsert the commercial half of a customer. The read-then-write shape is used
+ * because `customer_profiles.user_id` is not uniquely constrained in every
+ * schema generation, so `.upsert()` cannot pick a conflict target safely. */
+async function writeCustomerDetails(
+  userId: string,
+  details: Record<string, string>
+): Promise<{ ok: boolean; error?: string }> {
+  if (Object.keys(details).length === 0) return { ok: true };
+  const existing = await supabase
+    .from("customer_profiles")
+    .select("id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (existing.error && !isMissingColumnError(existing.error)) {
+    return { ok: false, error: existing.error.message };
+  }
+  const res = existing.data?.id
+    ? await supabase.from("customer_profiles").update(details).eq("user_id", userId)
+    : await supabase.from("customer_profiles").insert({ user_id: userId, ...details });
+  return { ok: !res.error, error: res.error?.message };
+}
+
+/**
+ * Attach customer data to an existing account. `userId` is the account's auth
+ * uuid (profiles.id) and is required: there is no client-side user creation.
+ */
+export async function createCustomer(
+  payload: CustomerPayload,
+  userId?: string
+): Promise<CustomerResult> {
+  const id = (userId ?? "").trim();
+  if (!id) {
+    return {
+      ok: false,
+      error:
+        "No account chosen. Accounts are created when the person signs up — paste their account ID to attach customer details.",
+    };
+  }
+  const { profile, details } = splitCustomerPayload(payload);
   try {
     const { data, error } = await supabase
       .from("profiles")
-      .insert({
-        ...payload,
-        role: payload.role ?? "customer",
-        created_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
+      .update({ ...profile, role: payload.role ?? "customer" })
+      .eq("id", id)
+      .select("id");
     if (error) return { ok: false, error: error.message };
-    return { ok: true, id: data?.id };
+    // An update matching 0 rows means the id names no account; reporting
+    // "created" there would be a lie the operator could not detect.
+    if (!data || data.length === 0) {
+      return {
+        ok: false,
+        error: `No account exists with id ${id}. Ask the customer to sign up first, then paste their account ID.`,
+      };
+    }
+    const written = await writeCustomerDetails(id, details);
+    if (!written.ok) return { ok: false, error: written.error, id };
+    return { ok: true, id };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
 }
 
-/** Update selected fields on an existing customer profile. */
+/** Update the profile columns and the customer_profiles half, reporting which
+ *  half failed. */
 export async function updateCustomer(id: string, patch: CustomerPayload): Promise<CustomerResult> {
+  if (!id) return { ok: false, error: "Missing customer id." };
+  const { profile, details } = splitCustomerPayload(patch);
   try {
-    const { error } = await supabase.from("profiles").update(patch).eq("id", id);
-    return { ok: !error, error: error?.message };
+    if (Object.keys(profile).length > 0) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update(profile)
+        .eq("id", id)
+        .select("id");
+      if (error) return { ok: false, error: error.message };
+      if (!data || data.length === 0) {
+        return { ok: false, error: "Blocked by permissions — the account was not changed." };
+      }
+    }
+    const written = await writeCustomerDetails(id, details);
+    if (!written.ok) return { ok: false, error: written.error, id };
+    return { ok: true, id };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
 }
 
-/** Soft-delete a customer profile by setting deleted_at. */
+/** Soft-delete a customer account by setting is_active (profiles has no
+ *  deleted_at column). */
 export async function deleteCustomer(id: string): Promise<CustomerResult> {
   try {
     // Soft-delete via `is_active`. `profiles` has NO deleted_at column, so the
     // previous update always failed with PGRST204 and the admin "Delete
     // customer" button silently did nothing.
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .update({ is_active: false })
-      .eq("id", id);
-    return { ok: !error, error: error?.message };
+      .eq("id", id)
+      .select("id");
+    if (error) return { ok: false, error: error.message };
+    if (!data || data.length === 0) {
+      return { ok: false, error: "Blocked by permissions — nothing was deactivated." };
+    }
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };
   }

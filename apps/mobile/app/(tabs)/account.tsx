@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Truck,
   Bell,
+  ShieldCheck,
 } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
@@ -217,6 +218,13 @@ export default function AccountScreen() {
       label: locale === "en" ? "Notification Settings" : "Dejinta Ogeysiisyada",
       subtitle: locale === "en" ? "Manage push notifications" : "Maamul ogeysiisyada",
       route: "/notifications/settings",
+    },
+    {
+      id: "security",
+      icon: <ShieldCheck size={20} color={COLORS.primary} />,
+      label: locale === "en" ? "Security & Devices" : "Ammaan & Qalab",
+      subtitle: locale === "en" ? "Signed-in phones & sessions" : "Taleefannada galay & fadhiyada",
+      route: "/profile/security",
     },
     {
       id: "help",

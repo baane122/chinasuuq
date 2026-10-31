@@ -10,8 +10,6 @@ import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import {
   Plus,
-  Eye,
-  EyeOff,
   Pencil,
   Trash2,
   RefreshCw,
@@ -24,7 +22,7 @@ import {
   LayoutGrid,
   KeyRound,
   Cookie,
-  } from "lucide-react";
+} from "lucide-react";
 import {
   PageHeader,
   PageGrid,
@@ -112,7 +110,6 @@ const emptyForm = {
   marketplace_type: "1688",
   account_label: "",
   username: "",
-  password_encrypted: "",
   phone: "",
   email: "",
   notes: "",
@@ -125,7 +122,6 @@ export default function AdminMarketplacesPage() {
   const toast = useToast();
   const [accounts, setAccounts] = useState<MarketplaceAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [showPasswordIds, setShowPasswordIds] = useState<Set<string>>(new Set());
   const [panelOpen, setPanelOpen] = useState(false);
   const [editing, setEditing] = useState<MarketplaceAccount | null>(null);
   const [saving, setSaving] = useState(false);
@@ -140,7 +136,6 @@ export default function AdminMarketplacesPage() {
 
   // Form state
   const [form, setForm] = useState(emptyForm);
-  const [showFormPassword, setShowFormPassword] = useState(false);
 
   const fetchAccounts = useCallback(async () => {
     try {
@@ -170,7 +165,6 @@ export default function AdminMarketplacesPage() {
       marketplace_type: acc.marketplace_type,
       account_label: acc.account_label,
       username: acc.username,
-      password_encrypted: acc.password_encrypted,
       phone: acc.phone,
       email: acc.email,
       notes: acc.notes,
@@ -195,8 +189,20 @@ export default function AdminMarketplacesPage() {
         data: { session },
       } = await supabase.auth.getSession();
       const hasCookies = Boolean(form.cookies.trim());
+      // Never write password_encrypted from this form: sessions are carried by
+      // cookies (synced from the staff mobile app), so the legacy password
+      // column is read-only here. Omitting it also means a cookies-only save
+      // can never trigger a re-encryption round trip.
       const payload = {
-        ...form,
+        marketplace_type: form.marketplace_type,
+        account_label: form.account_label,
+        username: form.username,
+        phone: form.phone,
+        email: form.email,
+        notes: form.notes,
+        cookies: form.cookies,
+        is_shared: form.is_shared,
+        is_active: form.is_active,
         cookies_updated_at: new Date().toISOString(),
         ...(hasCookies
           ? { cookies_updated_by: session?.user?.id ?? null, health: "active" }
@@ -231,14 +237,6 @@ export default function AdminMarketplacesPage() {
     } finally {
       setDeleting(false);
     }
-  };
-
-  const togglePassword = (id: string) => {
-    setShowPasswordIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
   };
 
   const toggleShared = async (acc: MarketplaceAccount) => {
@@ -346,7 +344,6 @@ export default function AdminMarketplacesPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           {accounts.map((acc, i) => {
             const meta = marketplaceMeta(acc.marketplace_type);
-            const showPw = showPasswordIds.has(acc.id);
             const pairs = cookiePairs(acc.cookies);
             const health = sessionHealth(acc);
             const lastSynced = timeAgo(acc.cookies_updated_at);
@@ -431,14 +428,12 @@ export default function AdminMarketplacesPage() {
                     <div className="flex items-center justify-between rounded-lg bg-dark-50 px-3 py-2">
                       <span className="text-xs text-dark-900/45">Password</span>
                       <span className="flex items-center gap-2 text-sm font-medium text-dark-800">
-                        {showPw ? acc.password_encrypted : "••••••••"}
-                        <button
-                          onClick={() => togglePassword(acc.id)}
-                          className="text-dark-900/40 transition-colors hover:text-dark-700"
-                          title={showPw ? "Hide password" : "Show password"}
+                        <span
+                          className="text-[11px] font-normal text-dark-900/40"
+                          title="Stored encrypted. Customers authenticate through the synced cookie session, not with this password."
                         >
-                          {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
+                          stored encrypted
+                        </span>
                       </span>
                     </div>
                   )}
@@ -561,37 +556,16 @@ export default function AdminMarketplacesPage() {
             />
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Username">
-              <input
-                value={form.username}
-                onChange={(e) => setForm({ ...form, username: e.target.value })}
-                className="admin-input"
-              />
-            </Field>
-            <Field
-              label="Password"
-              hint="Customers no longer receive credentials; sessions are bridged via cookies — sync a live session from the mobile app (staff) or paste cookies here."
-            >
-              <div className="relative">
-                <input
-                  type={showFormPassword ? "text" : "password"}
-                  value={form.password_encrypted}
-                  onChange={(e) => setForm({ ...form, password_encrypted: e.target.value })}
-                  className="admin-input pr-10"
-                  autoComplete="new-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowFormPassword((v) => !v)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-dark-900/40 transition-colors hover:text-dark-700"
-                  title={showFormPassword ? "Hide password" : "Show password"}
-                >
-                  {showFormPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </Field>
-          </div>
+          <Field
+            label="Username"
+            hint="Display only. Customers never see this — the marketplace session is carried by cookies below."
+          >
+            <input
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              className="admin-input"
+            />
+          </Field>
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Email">

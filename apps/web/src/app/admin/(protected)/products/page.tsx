@@ -319,7 +319,6 @@ function ProductsConsole() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panelOpen]);
 
   /* ── Page read (server-side; NEVER client-side filtered) ── */
@@ -349,7 +348,6 @@ function ProductsConsole() {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, stock, app, category, values.q, sort, page, size, liveVersion, reloadToken]);
 
   /* ── KPI read (whole catalogue) ── */
@@ -462,7 +460,6 @@ function ProductsConsole() {
         setPanelNonce((n) => n + 1);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [patchRow, toast, refresh, loadCategories, panelOpen]
   );
 
@@ -894,7 +891,7 @@ function ProductsConsole() {
             </select>
             {categoriesError && (
               <p className="text-[11px] text-warning">
-                Categories could not be loaded ({categoriesError}). The category filter is unavailable until this read succeeds — that is a failed read, not "no categories".
+                Categories could not be loaded ({categoriesError}). The category filter is unavailable until this read succeeds — that is a failed read, not &quot;no categories&quot;.
               </p>
             )}
           </label>

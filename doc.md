@@ -59,10 +59,10 @@ chinasuuq/
 │   │   │   └── types/              Shared web types
 │   │   ├── supabase/
 │   │   │   ├── functions/          8 Edge Functions + _shared/
-│   │   │   ├── migrations/         29 SQL migrations
+│   │   │   ├── migrations/         68 SQL migrations
 │   │   │   └── audit/              schema probe + local_verify regression harness
 │   │   └── public/app/chinasuuq.apk
-│   └── mobile/                     Expo SDK 57, React Native 0.86.3, Expo Router
+│   └── mobile/                     Expo SDK 58, React Native 0.88.1, Expo Router
 │       ├── app/                    (auth)/, (tabs)/, product/, marketplace/, cart/, orders/,
 │       │                           profile/, settings/, notifications/, support/, search/
 │       ├── src/
@@ -181,7 +181,7 @@ Shared admin components live in `src/components/admin/` (`DataTable`, `StatusBad
 
 ## 6. Database — Schema, Money Integrity, RLS
 
-### Migrations (`apps/web/supabase/migrations/`, 29 files)
+### Migrations (`apps/web/supabase/migrations/`, 68 files)
 
 The live project is authoritative, not this folder: several base migrations were never
 committed here, so a column can exist locally and be absent in production (or the reverse).
@@ -223,6 +223,34 @@ through the Management API (§11), recording each version in
 | `202609260001_mobile_order_submit.sql` | `submit_mobile_order(...)` — the mobile write path (details in §9) + `_cs_*` item/enum helpers |
 | `202609270001_admin_live_and_counts.sql` | Publishes `source_products` and `payments` for Realtime; `admin_category_product_counts()` (active categories + per-category head-count in one request) |
 | `202610010001_ai_provider_tasks.sql` | `ai_provider_tasks` — per-task AI provider overrides (`copilot`/`translation`/`vision`/`extraction`), service-role-only containment, fallback to the global `ai_provider_config` row |
+| `202610040001_products_usd_from_live_rate.sql` | USD estimate for catalog rows from the live FX rate |
+| `202610040002_marketplace_accounts_staff_only_rls.sql` | `marketplace_accounts` read/write restricted to staff |
+| `202610040003_rls_lockdown.sql` | Baseline RLS lockdown pass |
+| `202610040004_permissions_readable_by_staff.sql` | `permissions` readable by signed-in staff (grants UI) |
+| `202610040005_settings_rls_lockdown.sql` | `settings` staff-only |
+| `202610040006_ai_provider_rls.sql` | AI provider tables locked to service role |
+| `202610040007_payment_order_sync.sql` | Payment → order status sync (superseded by `202610310001`) |
+| `202610040008_password_encryption.sql` | Marketplace password encryption (superseded by `202610310002`) |
+| `202610040009_orders_items_column.sql` | `orders` item columns |
+| `202610161300_product_media_bucket.sql` | Product media storage bucket + policies |
+| `202610161301_category_wiring.sql` | Category wiring |
+| `202610161400_catalog_staff_writes.sql` | Catalog writes restricted to staff |
+| `202610300001_audit_rls_grant_drift_fix.sql` | Removed anon write grants, view privileges |
+| `202610300002_grant_hardening_and_ai_tasks.sql` | Grant hardening + AI task rows |
+| `202610310001_payment_sync_trigger_fix.sql` | **P0** payment→order trigger read a non-existent `NEW.amount_usd`, so *every* payment write failed with `42703`. Rewritten multi-currency → USD via `fx_rates()`, sums confirmed payments, refund stickiness, fires on DELETE, `app.payment_sync` bypass for the nested order update; also fixed `orders_money_guard` / `guard_order_customer_update` reading the retired `request.jwt.claim.role`, and made `orders_order_items_sync` `SECURITY DEFINER` |
+| `202610310002_marketplace_password_encryption_fix.sql` | `pgp_sym_encrypt` was off `search_path` with no key, so every password save failed; key moved to Vault and calls schema-qualified |
+| `202610310003_customer_account_rpc_hardening.sql` | `create_customer_account` always hit `23505`; both it and `verify_customer` were an anon-executable password oracle → service_role only |
+| `202610310004_sourcing_guest_pii_leak.sql` | Anon could read **all** guest sourcing requests incl. name/WhatsApp in `product_description`; guest SELECT arm removed |
+| `202610310005_staff_role_sync_rpc.sql` | `upsert_staff_member()` writes `staff_profiles` **and** `profiles.role` atomically (invites used to leave `profiles.role='customer'`, so the new staff member saw an empty admin shell) |
+| `202610310006_defensive_column_defaults.sql` | DB defaults for `quotes.reference`, `quotes.valid_until`, `quote_items.subtotal_cny`, `shipments.total_packages`, `source_products.source_url` |
+| `202610310007_device_sessions.sql` | **One phone per account.** `user_devices` + `claim_device_session` / `assert_device_session` / `revoke_my_other_devices`. Deleting the other mobile sessions revokes their refresh tokens; web sessions are untouched |
+| `202610310008_staff_customer_crud.sql` | Staff could not edit or delete a customer (`profiles` had only an owner UPDATE policy → `UPDATE 0` with no error) nor create a `customer_profiles` row. Adds staff UPDATE on `profiles`, staff CRUD on `customer_profiles`, and a trigger keeping `is_active`/super_admin deactivation privilege-gated |
+| `202610310009_account_status_enforcement.sql` | **Deactivation did nothing.** `is_staff_or_admin()` ignored `is_active`, so a deactivated staff member kept full admin RLS. Predicates now require active `profiles` **and** active `staff_profiles`; deactivation deletes the account's auth sessions |
+| `202610310010_active_account_write_guard.sql` | `is_active_account()` + an `orders` INSERT policy that refuses a deactivated customer |
+| `202610310011_mobile_order_active_account.sql` | `submit_mobile_order` is `SECURITY DEFINER` and so skipped RLS entirely: a deactivated customer could still order. Existing body renamed to `_submit_mobile_order_impl`, wrapped by a status-checked public function |
+| `202610310012_staff_revoke_user_sessions.sql` | `admin_revoke_user_sessions(uuid)` — support signs a lost/returned phone out of every device; super_admin targets require a super_admin caller |
+| `202610310013_auth_context_rpc.sql` | `auth_context()` returns the server's own answer (`role`, `staff_role`, `active`, `is_staff`, `is_super_admin`) using the same predicate as RLS; both clients gate on it instead of re-deriving from `profiles.role`. Claim/assert also treat an inactive staff record as a disabled account |
+| `202610310014_user_devices_least_privilege.sql` | Supabase default privileges had granted INSERT/UPDATE/DELETE to `authenticated` on `user_devices`; reduced to SELECT only (all writes are SECURITY DEFINER RPCs) |
 
 Apply through the Supabase Management API (§11) and record the version in
 `supabase_migrations.schema_migrations`; `supabase db push` is **not** used here, because the
@@ -370,6 +398,29 @@ Turns captured marketplace page text into structured MOQ/price data, and is the 
 - **MOQ authority** — a supplier's stated minimum is business data, not user data: any signed-in role may read `source_products.moq*`, but writes go through `record_moq_candidate()`, which is granted to `service_role` only and refuses to let a machine reading override a `manual` decision or raise a confidence above what the evidence supports.
 - **CORS** — `_shared/cors.ts` allows all origins for function calls; functions themselves authenticate callers.
 
+### Sessions, roles and status (2026-10-31)
+
+The full matrix — what a guest, a customer, staff and a super admin may each do, and which
+layer enforces it — lives in **`docs/ROLES_AND_SESSIONS.md`**. The rules that are easy to break:
+
+- **One phone per account.** Signing in claims the device (`claim_device_session`) and revokes the
+  account's OTHER *mobile* sessions. Web sessions have no `user_devices` row and are never touched.
+  The superseded phone keeps a valid access token until it expires (default 1 h) but cannot
+  refresh (`refresh_token_not_found`); the app checks `assert_device_session()` on resume and
+  signs itself out with a message. Customers revoke from **Account → Security & Devices**, support
+  from **Customers → Sign out of all devices** (`admin_revoke_user_sessions`).
+- **`signOut()` defaults to GLOBAL scope** in supabase-js — it revokes every session including the
+  web app. Both client logouts must pass `{ scope: "local" }`;
+  `apps/mobile/scripts/verify-auth-session.mjs` fails the build otherwise.
+- **Status is part of authorization.** `is_staff_or_admin()` / `is_super_admin()` require an active
+  `profiles` row and, where one exists, an active `staff_profiles` row. Flipping either to inactive
+  also deletes the account's auth sessions. A `SECURITY DEFINER` RPC that writes user rows must
+  check `is_active` itself, because it does not evaluate RLS (this is why
+  `submit_mobile_order` now wraps `_submit_mobile_order_impl`).
+- **One authority per question.** "Is this session staff?" is answered by `auth_context()`, not by
+  re-reading `profiles.role` in the client — the two disagreed for deactivated accounts, which is
+  what made Mission Control open onto empty tables.
+
 ### Security headers (root `vercel.json` — the single source of truth)
 
 | Header | Value |
@@ -444,10 +495,19 @@ succeed, mobile verify suite 146/146.
 
 ## 9. Mobile App (Expo)
 
-- **Stack**: Expo SDK 57, React Native 0.86.3, React 19.2.3, Expo Router (~57.0.19), zustand 5, zod, `lucide-react-native`, `react-native-webview` (in-app marketplace browsing), Reanimated 4, AsyncStorage 2.2. TypeScript ~6.0.3 (web uses ^5 — known drift).
+- **Stack**: Expo SDK 58 (~58.0.21), React Native 0.88.1, React 19.3.0, Expo Router (~58.0.28), zustand 5, zod, `lucide-react-native`, `react-native-webview` 14.0.1 (in-app marketplace browsing), Reanimated 4.7.1 + worklets 0.13.0, AsyncStorage 2.2. TypeScript ~6.0.3 (web uses ^5 — known drift).
 - **Config**: `app.json` (version, `android.versionCode`, package `com.chinasuuq.app`, EAS project `a8484922-0c4f-4f79-b4be-f93fe1dd5747`, owner `baaaane24`) merged by `app.config.js`, which reads `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` with baked defaults into `extra`.
 - **Routes** (`app/`): `(auth)/` login/signup, `(tabs)/` home, markets, orders, account (cart badge); `product/[id]`, `marketplace/[marketplace]` (WebView + shared-account RPC), `cart/`, `orders/`, `profile/` (addresses, payment methods, wishlist, legal pages …), `settings/`, `notifications/`, `support/`, `search/`, `onboarding`, `+not-found`.
 - **Local-first repository** (`src/db/index.ts`): every screen read/write goes through it — tries Supabase first (orders, products, sourcing captures, profile, addresses, payments, favorites, support tickets, notifications), transparently falls back to AsyncStorage when the backend is unreachable (`isBackendOnline()` health check with 60 s cache), and writes through to Supabase when it returns.
+- **Sessions & boundaries (2026-10-31)**: the auth store claims the device after any sign-in
+  (password, signup, emailed link), re-asserts it on resume (debounced to 1/min), and signs out with
+  a message on the login screen when the server says this phone was superseded or the account was
+  disabled. The install id lives in `src/lib/deviceId.ts` (AsyncStorage — a SecureStore keychain
+  entry can outlive an uninstall, which would resurrect a revoked device), and `src/lib/sessionClaim.ts`
+  reads the stable `session_id` claim so token refreshes do not repeat the claim. `app/profile/security.tsx`
+  lists signed-in devices and offers "sign out all other devices". The whole `Stack` and `Tabs` declare
+  `unstable_screenErrorBoundary={ScreenErrorBoundary}`, so a throwing screen no longer unwinds to the
+  app-level boundary and replaces the tab bar.
 - **Real orders** (`submit_mobile_order`): `createOrder()` calls the `submit_mobile_order(p_reference, p_shipping_method, p_delivery_address, p_destination_city, p_notes, p_service_fee_pct, p_items jsonb)` RPC (migration `202609260001`) and `syncPendingOrders()` replays whatever was queued while offline. The RPC is `SECURITY DEFINER` with `search_path` pinned, refuses an unauthenticated caller (`42501`), validates the items array (`22023`), **recomputes subtotal, 5 % service fee and total in Postgres** — client totals are ignored — coerces the shipping method and marketplace through `pg_enum` lookups instead of blind casts, retries a colliding `reference` once, and returns `{ id, reference, total_usd, subtotal_usd, service_fee_usd, item_count }`. It writes `orders` plus one `order_items` row per line with full provenance, including `moq_at_purchase`, so the MOQ that was in force at purchase time survives a later catalog edit. A failed write returns `{ ok:false, error }`; it never reports a fake success.
 - **MOQ as a provenance-tracked field** (`src/lib/moqIngest.ts` is the single reader): `resolveMoq(product, capturedText?)` decides what "minimum order" means, tagged with its source and confidence. `extractMoqLocal()` runs 11 ordered rules over captured page text (explicit 起批量/起订/MOQ phrasing at 0.95 down to a `¥N 起批` heuristic at 0.15, with an ambiguity cap); only a reading at or above `ENFORCE_CONFIDENCE = 0.8` may block a purchase, a confident reading never *lowers* the supplier's stated minimum, and `moq_source = 'manual'` short-circuits everything. `extractOrderStructure()` additionally reads price tiers, pack size and mixed-batch minimums. Staff/customer decisions are saved by `saveMoqDecision()` (which deliberately does **not** call the service-role RPC — a customer's UPDATE simply matches no rows, so the decision stays on-device and rides along in the order snapshot), and the optional `product-enrich` AI pass can only raise confidence, never override a manual value.
 - **Cart gate** (`app/cart/index.tsx` + `src/lib/cartValidation.ts`): per line, `moqOrderRules()` → `validateCartItem()` → `{ status, problems, fixTo, minimum }`, where `fixTo` is the exact quantity that clears the rule (so the UI can offer one-tap repair instead of an error). `payableNow()` prices only the lines it actually knows and returns the unknown components as pending — it never invents a landed cost. At checkout, `cartValidateRemote.ts` calls the `cart-validate` function with the resolved minimums and blocks on `below_moq`, `insufficient_stock`, `out_of_stock`, `not_available`, `invalid_quantity`; when the function is unreachable or fails open, the local resolution takes over (`moq.enforce && quantity < displayMoq`).
@@ -501,7 +561,7 @@ There is no iOS artifact to test because the account has **no Apple developer id
 - The only iOS builds that have ever finished are `development` with `ios.simulator: true` (e.g. `a6a89de8-da02-4e3a-9522-fcf6569523e6`, FINISHED, app version 1.0.2). Its `artifacts.buildUrl` is a **`.tar.gz`**, which is a Mac **Simulator** `.app` bundle: [per Expo's own docs](https://docs.expo.dev/develop/development-builds/create-a-build.md) simulator builds "can only be installed on simulators and not on real devices". That is the whole reason an EAS iOS build exists yet nothing can be put on a phone.
 - Local builds are blocked on this machine too: the Xcode license has not been accepted (`sudo xcodebuild -license`, needs a password) and `security find-identity -v -p codesigning` reports **0 valid identities**.
 
-**Expo Go is not an option for this app.** The App Store Expo Go is frozen at **SDK 54**, and "SDK 55 and later are not available there" ([version-mismatch doc](https://docs.expo.dev/troubleshooting/expo-go-version-mismatch.md)); this project is SDK 57, so Expo Go refuses with "Project is incompatible with this version of Expo Go" rather than degrading. The library set is emphatically not the problem — Expo Go's own SDK 57 branch pins `react-native-webview` **13.16.1**, `react-native-reanimated` **4.5.1** and `react-native-worklets` **0.10.1**, i.e. the exact versions in `apps/mobile/package.json`, and webview is named in [the dev-build FAQ](https://docs.expo.dev/develop/development-builds/faq.md) as the example of a native library that *is* bundled in Expo Go. Reanimated 4's worklets need no exception, and `babel.config.js` already lists `react-native-worklets/plugin` last as required; omitting `newArchEnabled` is also correct, since "SDK 55 and later run entirely on the New Architecture… always enabled and cannot be disabled" ([new architecture guide](https://docs.expo.dev/guides/new-architecture.md)). The SDK pin alone is the blocker: the documented way to get Expo Go onto an iPhone is `npx eas-cli go`, distributed through your own TestFlight, which "[requires] an active subscription to the Apple Developer Program" ([set-up-your-environment](https://docs.expo.dev/get-started/set-up-your-environment.md), [expo.fyi](https://expo.fyi/deploy-expo-go-testflight)) — the same $99/yr as route 2 below.
+**Expo Go is not an option for this app.** The App Store Expo Go is frozen at **SDK 54**, and "SDK 55 and later are not available there" ([version-mismatch doc](https://docs.expo.dev/troubleshooting/expo-go-version-mismatch.md)); this project is SDK **58**, so Expo Go refuses with "Project is incompatible with this version of Expo Go" rather than degrading. The library set is not the problem — webview is named in [the dev-build FAQ](https://docs.expo.dev/develop/development-builds/faq.md) as the example of a native library that *is* bundled in Expo Go. Reanimated 4's worklets need no exception, and `babel.config.js` already lists `react-native-worklets/plugin` last as required; omitting `newArchEnabled` is also correct, since "SDK 55 and later run entirely on the New Architecture… always enabled and cannot be disabled" ([new architecture guide](https://docs.expo.dev/guides/new-architecture.md)). The SDK pin alone is the blocker: the documented way to get Expo Go onto an iPhone is `npx eas-cli go`, distributed through your own TestFlight, which "[requires] an active subscription to the Apple Developer Program" ([set-up-your-environment](https://docs.expo.dev/get-started/set-up-your-environment.md), [expo.fyi](https://expo.fyi/deploy-expo-go-testflight)) — the same $99/yr as route 2 below.
 
 **Route 1 — $0, free Apple ID, local build (recommended to start).** Expo states local compilation is the only way to put a development build on an iPhone without a paid account ([development builds intro](https://docs.expo.dev/develop/development-builds/introduction.md)). Run from `apps/mobile` on a Mac with Xcode:
 
@@ -521,7 +581,7 @@ Device prerequisites for this route (from [set-up-your-environment](https://docs
 
 **Route 2 — $99/yr Apple Developer Program, then EAS.** Once a team is linked, `eas build -p ios --profile preview` produces an installable `.ipa` for registered UDIDs (`eas device:create` registers them; ad hoc caps at 100 devices and new UDIDs can take 24–72 h). `--profile production` (`distribution: "store"`, already set) + `eas submit -p ios` goes to **TestFlight** ([internal distribution](https://docs.expo.dev/build/internal-distribution.md), [TestFlight](https://docs.expo.dev/submit/testflight.md)): **internal** testers are up to 100 App Store Connect team members, available as soon as the build finishes processing, no Beta App Review; **external** testers can reach 10,000 and do need Beta App Review. Builds expire 90 days after upload, and no UDID registration is required for TestFlight at all.
 
-What has to exist first: an app record in App Store Connect (`eas submit` creates it, or pin `ascAppId`), the iOS signing credentials via `eas credentials --platform ios` (or bring-your-own), an App Store Connect API key — `ascApiKeyPath` / `ascApiKeyId` / `ascApiIssuerId`, or `appleId` plus `EXPO_APPLE_APP_SPECIFIC_PASSWORD` — and the `ios` half of `eas.json`'s `submit` block, which does not exist yet (`apps/mobile/.eas/workflows/production.yml` already defines `submit_ios`, so the workflow and the profile config disagree — §12 #23). `npx testflight` is the one-shot equivalent.
+What has to exist first: an app record in App Store Connect (`eas submit` creates it, or pin `ascAppId`), the iOS signing credentials via `eas credentials --platform ios` (or bring-your-own), an App Store Connect API key — `ascApiKeyPath` / `ascApiKeyId` / `ascApiIssuerId`, or `appleId` plus `EXPO_APPLE_APP_SPECIFIC_PASSWORD` — and the `ios` half of `eas.json`'s `submit` block, which does not exist yet (`apps/mobile/.eas/workflows/production.yml` already defines `submit_ios`, so the workflow and the profile config disagree — §12 #24). `npx testflight` is the one-shot equivalent.
 
 **Not yet needed either way**: `app.json` has no `ios.config`, no entitlements and no associated domains, and the only plugin is `expo-router`. That is fine for a WebView shopping app; it would need revisiting for push notifications, Sign in with Apple, or universal links.
 
@@ -572,11 +632,24 @@ Tailwind v4 runs through `@tailwindcss/postcss`, with optional pinned platform p
 
 ### CI (`.github/workflows/ci.yml`, Node 22, push/PR → `main`)
 
-1. **web-build**: `tsc --noEmit` → `eslint` (non-blocking) → `next build` → verify static output (`out/index.html`, `out/app/chinasuuq.apk`) → **unzip the APK** and require ≥500 central-directory entries plus `cmp` against the exported copy → verify the landing page still references `app/chinasuuq.apk`.
+1. **web-build**: `tsc --noEmit` → `npm run verify` → `eslint` (non-blocking) → `next build` → verify static output (`out/index.html`, `out/app/chinasuuq.apk`) → **unzip the APK** and require ≥500 central-directory entries plus `cmp` against the exported copy → verify the landing page still references `app/chinasuuq.apk`.
 2. **mobile-config** ("Mobile — Expo typecheck + Metro bundle"): `app.json` + `eas.json` JSON validation and EAS workflow YAML validation, then `npm ci` in `apps/mobile` (a self-contained npm project, not a root workspace), `tsc --noEmit` as a **hard gate**, and `npx expo export --platform ios` asserting `_expo/static/js/ios` exists with ≥5 files. The export is the only check that proves every `require()`'d asset path and native-module shim resolves — exactly what `tsc` cannot see. Measured on the runner: 1 m 28 s for the whole job.
 3. **guard**: repo hygiene — fails when agent/tool state dirs (`.agent-teams/`, `.hermes/`, `.zcode/`, `supabase/.temp/`, `.DS_Store`) are tracked.
 
-There are **no unit or integration tests anywhere in the repository** and no test runner installed in either app, so these compile/bundle gates are the entire automated safety net for mobile.
+**`npm run verify` (web)** runs five offline suites before the build: `verify:schema` compares every
+literal PostgREST column list in `src/` against `scripts/schema-snapshot.json` (exported from the
+live project — 71 tables), and `verify:joins`, `verify:ai`, `verify:track`, `verify:admin` pin the
+batching, AI-client, error-classifier and admin-guardrail behaviour. A wrong column used to
+type-check, lint and build, then fail at runtime as a `42703` toast on an empty screen; the schema
+snapshot is what closes that hole and must be refreshed after any intentional migration.
+
+**`npm run verify` (mobile)** runs 13 suites (~200 checks) including `verify:auth-session`, which
+asserts the sign-out scope, the device-claim/resume wiring, the presence of the screen error
+boundaries, and the `sessionClaim` parser against real token shapes.
+
+There is still **no unit/integration test runner** in either app, so these static + bundle gates are
+the entire automated safety net. They are behavioural (they read the shipping source and, where the
+module is pure, execute it), but they are not a substitute for tests against a running database.
 
 ### Querying production
 
@@ -664,6 +737,15 @@ Verified end to end through `ai-proxy` (4.87 s including function cold path) and
 
 ## 12. Known Gaps & Follow-ups
 
+> **Session 2026-10-31 — closed this round:** a production payment trigger read `NEW.amount_usd`
+> (no such column) so **every** payment write failed 42703; deactivating a staff member did nothing
+> because `is_staff_or_admin()` ignored `is_active`; `submit_mobile_order` is `SECURITY DEFINER` and
+> bypassed RLS, so a deactivated customer could still place orders; staff could not edit, delete or
+> create customer rows at all (`UPDATE 0`, silent); mobile `signOut()` was global scope, so a phone
+> logout killed the web session; and nothing enforced one phone per account. All fixed and verified
+> live — 8 migrations (`…007`–`…014`), `verify:schema` (71-table snapshot) and `verify:auth-session`
+> added to CI. Role/session matrix in `docs/ROLES_AND_SESSIONS.md`.
+
 > **Session 2026-10-30 — closed this round:** anon write grants removed from all 57 public
 > tables and both reporting views (they were RLS-only defence, one policy mistake from a
 > breach); anonymous `DELETE` through `order_tracking_public` returned 204 and is now 401;
@@ -710,10 +792,13 @@ To confirm a fix actually reached the bundle, probe `assets/index.android.bundle
 CJK strings as **UTF-16LE**, not UTF-8 (Metro writes them UTF-16, so a UTF-8 search always reports
 zero and looks like a stale build).
 
-21. **`.easignore` does not exclude `node_modules` the way its comment claims** — the EAS upload archive stayed at 226 MB after the app's own files shrank to ~14 MB, so dependencies are still being packed. Worth finding the real mechanism (EAS has a separate node-modules ignore file) before trusting the comment in `apps/mobile/.easignore`.
-22. **No iPhone build until someone pays or plugs in** — iOS has no installable artifact because the Expo account has no Apple team (`device:list` → "No Apple teams found"), not because of repo config; and App Store Expo Go is pinned to SDK 54 while this app is SDK 57. Both routes and their exact commands are in §9 "iOS". Blocked on user actions either way: accept the Xcode license, add an Apple ID to Xcode (free route), or buy the $99/yr Apple Developer Program (EAS/TestFlight route).
-23. **`eas.json`'s `submit` block has no `ios` half** — `apps/mobile/.eas/workflows/production.yml` defines `submit_ios`, so the workflow and the profile config disagree; submitting to TestFlight will need `appleTeamId` and an App Store Connect API key first.
-24. **Mobile has no tests at all** — `apps/mobile/package.json` has no `test` script and no jest/vitest anywhere in the repo. CI's typecheck + Metro export are the entire automated net for the app that takes real orders (§9).
+22. **`.easignore` does not exclude `node_modules` the way its comment claims** — the EAS upload archive stayed at 226 MB after the app's own files shrank to ~14 MB, so dependencies are still being packed. Worth finding the real mechanism (EAS has a separate node-modules ignore file) before trusting the comment in `apps/mobile/.easignore`.
+23. **No iPhone build until someone pays or plugs in** — iOS has no installable artifact because the Expo account has no Apple team (`device:list` → "No Apple teams found"), not because of repo config; and App Store Expo Go is pinned to SDK 54 while this app is SDK 58. Both routes and their exact commands are in §9 "iOS". Blocked on user actions either way: accept the Xcode license, add an Apple ID to Xcode (free route), or buy the $99/yr Apple Developer Program (EAS/TestFlight route).
+24. **`eas.json`'s `submit` block has no `ios` half** — `apps/mobile/.eas/workflows/production.yml` defines `submit_ios`, so the workflow and the profile config disagree; submitting to TestFlight will need `appleTeamId` and an App Store Connect API key first.
+25. **Mobile still has no test runner** — `apps/mobile/package.json` has no `test` script and no jest/vitest anywhere in the repo. What it does have is 13 offline `verify:*` suites (~200 checks) run by `npm run verify` and by CI: they execute the real modules against stub DOM/Supabase/AsyncStorage boundaries, which is far better than typecheck-only but is still not a test against a running database.
+26. **Expo SDK 58 patch drift (2026-10-31)** — `npx expo install --check` reports `expo ~58.0.22`, `expo-dev-client ~58.0.18`, `expo-router ~58.0.29`, `expo-updates ~58.0.20` against the pinned `~58.0.21 / 58.0.17 / ~58.0.28 / ~58.0.19`. Patch-level only and every gate is green on the pinned set, so it was deliberately left alone this round to keep the shipped build identical; bump them together with the next `eas build`.
+27. **Database password is in git history** — the Postgres connection string (including the password) was committed in older docs and audit files. The current files are redacted, but history is not. **Rotate the database password in the Supabase dashboard** and treat the old one as compromised; rewriting history is optional, rotation is not.
+28. **`payment-reconcile` is fixed in source but must still be deployed** — the function body now reads the real PostgREST claim set, but the deployed version only changes when someone runs `supabase functions deploy payment-reconcile`. Until then the old bytes are live.
 
 ## 13. Appendix — Key Constants
 
@@ -752,6 +837,6 @@ touches money, provenance or a view.
 *Maintained by hand against the codebase. Last full pass: 2026-09-27 — route and admin-module
 inventory, the `admin_*` rollup RPCs and their staff gate, Realtime publication membership and
 the admin live store, the mobile order/trending/MOQ paths, the eight Edge Function contracts,
-all 29 migrations, the AI credential containment change, and the asset/perf budget were each
+all 68 migrations, the AI credential containment change, and the asset/perf budget were each
 re-read from source and checked against the live project. When behavior changes, update this
 file and the root `README.md` together.*

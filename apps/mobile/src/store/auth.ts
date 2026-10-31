@@ -10,6 +10,8 @@ import { useStaffStore } from "./staff";
 import { setCartScope } from "./cart";
 import { purgeUserScopedCaches } from "@/db/index";
 import { isStaffRole } from "@/lib/roles";
+import { getDeviceId, deviceLabel, devicePlatform } from "@/lib/deviceId";
+import { sessionClaim } from "@/lib/sessionClaim";
 
 const STAFF_SESSION_KEY = "chinasuuq-staff-session-enabled";
 
@@ -20,6 +22,13 @@ interface User {
   phone?: string;
   city?: string;
   role?: string; // 'staff' or 'super_admin' for staff mode
+  /**
+   * False when the account has been deactivated (profiles.is_active or an
+   * inactive staff record). The server signs these sessions out, so this is
+   * only ever true for the brief window before that lands; it exists so the
+   * app can explain the state instead of showing an empty customer shell.
+   */
+  accountActive?: boolean;
 }
 
 /**
@@ -50,6 +59,17 @@ interface AuthStore {
   error: string | null;
   /** True when the current session belongs to a staff account (staff or super_admin). */
   isStaff: boolean;
+  /**
+   * Set when the server ended this session for a reason the customer must be
+   * told about — today that is the one-device rule (they signed in elsewhere)
+   * or a disabled account. Auth screens show it; `clearSessionNotice` dismisses.
+   */
+  sessionNotice: string | null;
+  clearSessionNotice: () => void;
+  /** Re-check that this phone is still the account's active device. */
+  assertDeviceSession: () => Promise<void>;
+  /** "Sign out my other phones" — returns how many sessions were revoked. */
+  revokeOtherDevices: () => Promise<{ ok: boolean; revoked?: number; error?: string }>;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   signUp: (
     email: string,
@@ -126,6 +146,14 @@ function friendlyAuthError(error: any): string {
       return "That link or code has expired. Please request a new one.";
     case "single_use_token_not_found":
       return "That link has already been used.";
+    // The session row behind this token was revoked — for this app that means
+    // the account signed in on another phone (one-device rule), or staff
+    // disabled the account. Both are "you are signed out", not "wrong password".
+    case "refresh_token_not_found":
+    case "refresh_token_already_used":
+    case "session_not_found":
+    case "session_expired":
+      return "Your session ended. Please sign in again.";
     default:
       break;
   }
@@ -149,7 +177,7 @@ function friendlyAuthError(error: any): string {
  */
 async function fetchProfile(userId: string) {
   try {
-    const [profile, customer] = await Promise.all([
+    const [profile, customer, context] = await Promise.all([
       supabase
         .from("profiles")
         .select("id, full_name, phone, language, role")
@@ -160,6 +188,12 @@ async function fetchProfile(userId: string) {
         .select("city")
         .eq("user_id", userId)
         .maybeSingle(),
+      // The SERVER's verdict on this session. `profiles.role` alone says a
+      // deactivated staff member is still staff (their role column is
+      // unchanged); `auth_context()` applies the same predicate the RLS
+      // policies use, so staff tools cannot open for an account that has no
+      // admin data access.
+      supabase.rpc("auth_context"),
     ]);
     const { data, error } = profile;
     if (error) {
@@ -171,7 +205,28 @@ async function fetchProfile(userId: string) {
     // discard the name/role that did load (role decides staff mode).
     const { data: cp, error: cpError } = customer;
     if (cpError) console.warn("[auth] fetchProfile: city read failed", cpError.message);
-    return { ...data, city: cp?.city ?? null };
+
+    // A failed auth_context() must not silently DOWNGRADE a real staff member
+    // to customer (their tools would vanish with no explanation). Fall back to
+    // the role column, which is the pre-existing behaviour.
+    let role = (data as { role?: string | null }).role ?? null;
+    let accountActive = true;
+    if (context.error) {
+      console.warn("[auth] auth_context failed:", context.error.message);
+    } else {
+      const ctx = context.data as
+        | { is_staff?: boolean; role?: string | null; active?: boolean }
+        | null;
+      if (ctx) {
+        accountActive = ctx.active !== false;
+        // Staff authorisation comes from the server; a customer's role label
+        // stays whatever the profile says so nothing else changes for them.
+        if (ctx.is_staff) role = ctx.role ?? role;
+        else if (role && isStaffRole(role)) role = "customer";
+      }
+    }
+
+    return { ...data, role, accountActive, city: cp?.city ?? null };
   } catch (e: any) {
     console.warn("[auth] fetchProfile threw:", e?.message);
     return null;
@@ -191,6 +246,15 @@ async function fetchProfile(userId: string) {
 let authSubscription: { unsubscribe: () => void } | null = null;
 let lastAppliedSessionId: string | null = null;
 
+/**
+ * Session id this runtime has already claimed as the active device.
+ *
+ * `session_id` survives refresh_token rotation, so TOKEN_REFRESHED re-applies the
+ * same value every ~50 minutes. Without this guard each refresh would repeat a
+ * write RPC that can only ever return the same answer.
+ */
+let claimedSessionId: string | null = null;
+
 export const useAuthStore = create<AuthStore>((set, get) => {
   /**
    * Publish a session into every piece of state that depends on it.
@@ -202,7 +266,7 @@ export const useAuthStore = create<AuthStore>((set, get) => {
    */
   async function applySession(
     session: Session | null,
-    options: { skipProfileFetchIfSameUser?: boolean } = {}
+    options: { skipProfileFetchIfSameUser?: boolean; claimDevice?: boolean } = {}
   ) {
     if (!session?.user) {
       lastAppliedSessionId = null;
@@ -221,11 +285,101 @@ export const useAuthStore = create<AuthStore>((set, get) => {
     // published, so no screen can render "signed in" while still showing
     // whoever used this phone last.
     await setCartScope(mappedUser.id);
+    if (mappedUser.accountActive === false) {
+      // Server already revoked this account's sessions; dropping local state
+      // now means the customer sees the login screen instead of an empty app.
+      await forceSignOut(
+        "This account has been disabled. Please contact support."
+      );
+      return;
+    }
     set({ user: mappedUser, session, isStaff, loading: false, initialized: true, error: null });
     if (mappedUser.role) {
       useStaffStore.getState().initFromProfile(mappedUser.role);
     }
-    await get().setStaffSessionEnabled(isStaff);
+    // Only WRITE the staff flag when it changes. TOKEN_REFRESHED re-applies the
+    // same session every ~50 minutes; writing AsyncStorage each time was a
+    // needless disk round-trip on the critical path of a background refresh.
+    if ((await get().wasStaffSession()) !== isStaff) {
+      await get().setStaffSessionEnabled(isStaff);
+    }
+    // Single-device rule: claim this phone AFTER the session is live. Running
+    // it before `set` would make the claim's failure look like a sign-in
+    // failure to the screen, when the account is in fact signed in.
+    const claim = sessionClaim(session.access_token);
+    if (options.claimDevice !== false && claim && claimedSessionId !== claim) {
+      const claimed = await claimThisDevice();
+      if (claimed) claimedSessionId = claim;
+    }
+  }
+
+  /**
+   * Tell the server this phone is the account's active device. Any other phone
+   * registered to the account loses its session here (see
+   * 202610310007_device_sessions.sql).
+   *
+   * Never throws: a failed claim must not break a sign-in that already
+   * succeeded. `assertDeviceSession` retries it on the next app resume.
+   */
+  async function claimThisDevice(): Promise<boolean> {
+    try {
+      const deviceId = await getDeviceId();
+      const { data, error } = await supabase.rpc("claim_device_session", {
+        p_device_id: deviceId,
+        p_device_name: deviceLabel(),
+        p_platform: devicePlatform(),
+      });
+      if (error) {
+        console.warn("[auth] claim_device_session failed:", error.message);
+        return false;
+      }
+      const res = data as { ok?: boolean; reason?: string } | null;
+      if (res && res.ok === false) {
+        console.warn("[auth] claim_device_session refused:", res.reason);
+        if (res.reason === "account_disabled") {
+          await forceSignOut(
+            "This account has been disabled. Please contact support."
+          );
+        }
+        return false;
+      }
+      return true;
+    } catch (e: any) {
+      console.warn("[auth] claim_device_session threw:", e?.message ?? e);
+      return false;
+    }
+  }
+
+  /**
+   * Local sign-out used when the SERVER has already ended the session (device
+   * superseded, account disabled). It must not call `supabase.auth.signOut()`
+   * first: that would round-trip to a session that no longer exists and can
+   * hang on a bad connection while the customer stares at the old screen.
+   *
+   * `notice` is the sentence the login screen shows. It is state, not an
+   * Alert, because an Alert fired from a background resume would steal focus
+   * from whatever the customer was doing.
+   */
+  async function forceSignOut(notice: string) {
+    lastAppliedSessionId = null;
+    claimedSessionId = null;
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch (e) {
+      console.warn("[auth] local sign-out failed:", e);
+    }
+    await setCartScope(null).catch(() => {});
+    purgeUserScopedCaches();
+    useStaffStore.getState().exitStaffMode();
+    await AsyncStorage.removeItem(STAFF_SESSION_KEY).catch(() => {});
+    set({
+      user: null,
+      session: null,
+      isStaff: false,
+      loading: false,
+      initialized: true,
+      sessionNotice: notice,
+    });
   }
 
   return {
@@ -235,6 +389,7 @@ export const useAuthStore = create<AuthStore>((set, get) => {
     initialized: false,
     error: null,
     isStaff: false,
+    sessionNotice: null,
 
     signIn: async (email, password) => {
       try {
@@ -401,12 +556,14 @@ export const useAuthStore = create<AuthStore>((set, get) => {
     signOut: async () => {
       try {
         await AsyncStorage.removeItem(STAFF_SESSION_KEY);
-        await supabase.auth.signOut();
+        // Device-scoped only: this is the customer's own "log out" button, and
+        // it must never touch their session on another phone (or on the web).
+        await supabase.auth.signOut({ scope: "local" });
         await setCartScope(null);
         purgeUserScopedCaches();
         useStaffStore.getState().exitStaffMode();
         lastAppliedSessionId = null;
-        set({ user: null, session: null, error: null, isStaff: false });
+        set({ user: null, session: null, error: null, isStaff: false, sessionNotice: null });
       } catch {
         // Even if sign out fails server-side, clear local state so the user
         // isn't stuck looking at stale data.
@@ -414,16 +571,24 @@ export const useAuthStore = create<AuthStore>((set, get) => {
         purgeUserScopedCaches();
         useStaffStore.getState().exitStaffMode();
         lastAppliedSessionId = null;
-        set({ user: null, session: null, error: null, isStaff: false });
+        set({ user: null, session: null, error: null, isStaff: false, sessionNotice: null });
       }
     },
 
     loadSession: async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          // A corrupt/unreadable stored session is the one case where starting
+          // as a guest is the RIGHT answer: the token cannot be used anyway,
+          // and keeping `loading` true would leave the splash up forever.
+          console.warn("[auth] getSession failed on cold start:", error.message);
+        }
         await applySession(session ?? null);
-        set({ initialized: true, loading: false });
-      } catch {
+      } catch (e: any) {
+        // Never strand the splash screen. The app starts as a guest, which
+        // every screen already handles, and the reason is logged for support.
+        console.warn("[auth] loadSession threw:", e?.message ?? e);
         set({ loading: false, initialized: true });
       }
     },
@@ -431,11 +596,10 @@ export const useAuthStore = create<AuthStore>((set, get) => {
     startAuthListener: () => {
       if (authSubscription) return;
       const { data } = supabase.auth.onAuthStateChange((event, session) => {
-        console.log(
-          "[auth] event:",
-          event,
-          session?.user?.id ? "session present" : "no session"
-        );
+        // No per-event console.log: auth events fire on every refresh (and this
+        // log printed on every one of them in release builds). Failures are
+        // logged where they actually happen.
+        if (event === "TOKEN_REFRESHED" && !session) return; // handled below
         // SIGNED_OUT must clear immediately: leaving the last user's profile in
         // the store is how the next person on this phone sees a stranger's cart.
         if (event === "SIGNED_OUT") {
@@ -482,6 +646,65 @@ export const useAuthStore = create<AuthStore>((set, get) => {
 
     clearError: () => set({ error: null }),
 
+    clearSessionNotice: () => set({ sessionNotice: null }),
+
+    /**
+     * Ask the server whether this phone is still the account's active device.
+     *
+     * Called on app resume (see app/_layout.tsx). The revoking request happens
+     * server-side and cannot reach into another phone's memory, so the loser's
+     * access token stays valid until it expires — this is what turns that
+     * silent window into an honest "you were signed out" screen.
+     */
+    assertDeviceSession: async () => {
+      if (!get().session || !get().user?.id) return;
+      try {
+        const deviceId = await getDeviceId();
+        const { data, error } = await supabase.rpc("assert_device_session", {
+          p_device_id: deviceId,
+        });
+        if (error) {
+          // Network/server failure is NOT a revocation. Stay signed in: a
+          // customer on 2G must not be logged out because a check timed out.
+          console.warn("[auth] assert_device_session failed:", error.message);
+          return;
+        }
+        const res = data as
+          | { ok?: boolean; reason?: string; claimed?: boolean }
+          | null;
+        if (!res || res.ok !== false) {
+          if (res && res.claimed === false) {
+            // No device row for this install (pre-upgrade login): adopt it now
+            // rather than leaving the account unguarded.
+            await claimThisDevice();
+          }
+          return;
+        }
+        const notice =
+          res.reason === "account_disabled"
+            ? "This account has been disabled. Please contact support."
+            : res.reason === "session_revoked"
+              ? "You were signed out because this account signed in on another phone."
+              // Any other false answer still means "this session must stop":
+              // fail closed, and do not invent a reason we cannot explain.
+              : "Your session ended. Please sign in again.";
+        await forceSignOut(notice);
+      } catch (e: any) {
+        console.warn("[auth] assertDeviceSession threw:", e?.message ?? e);
+      }
+    },
+
+    revokeOtherDevices: async () => {
+      try {
+        const { data, error } = await supabase.rpc("revoke_my_other_devices");
+        if (error) return { ok: false, error: error.message };
+        const res = data as { revoked?: number } | null;
+        return { ok: true, revoked: Number(res?.revoked ?? 0) };
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? "Network error" };
+      }
+    },
+
     setStaffSessionEnabled: async (enabled) => {
       try {
         await AsyncStorage.setItem(STAFF_SESSION_KEY, enabled ? "1" : "0");
@@ -501,6 +724,9 @@ export const useAuthStore = create<AuthStore>((set, get) => {
 
 function mapUser(sessionUser: Session["user"], profile?: any): User {
   return {
+    // Carried on the user object so screens can explain a disabled account
+    // without another round trip.
+    accountActive: profile?.accountActive !== false,
     id: sessionUser.id,
     email: sessionUser.email,
     full_name: profile?.full_name || sessionUser.user_metadata?.full_name,
