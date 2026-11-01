@@ -619,7 +619,14 @@ Tailwind v4 runs through `@tailwindcss/postcss`, with optional pinned platform p
 
 ### Web — Vercel (project root = repo root)
 
-- Root `vercel.json`: install `npm install`, build `cd apps/web && npm run build`, output `apps/web/out`, redirects + all security headers.
+- Root `vercel.json`: install `npm ci`, build `cd apps/web && npm run build`, output `apps/web/out`, redirects + all security headers.
+- **`www` → apex is enforced at the DOMAIN level, not by `vercel.json`.** The rule in `vercel.json`
+  (`has: host www.chinasuuq.com`) matched only paths without a trailing slash, so `/track` redirected
+  while `/track/` — which is every page, because the export uses `trailingSlash: true` — served 200.
+  Two hosts were live with identical bytes and a canonical pointing at the apex. Fixed 2026-11-01 by
+  setting the project domain's `redirect` to `chinasuuq.com` with status 301
+  (`PATCH /v9/projects/chinasuuq/domains/www.chinasuuq.com`); verified with a per-path probe. The
+  `vercel.json` entry is kept as a fallback but is not what does the work.
 - Auto-deploys on push to `main`. The build is a full static export (`next build --webpack` with `output: "export"`, type errors NOT ignored). CI additionally asserts `out/index.html` exists and that the shipped APK is a complete archive (§9 step 5).
 - There is no server runtime: no API routes, no ISR, no middleware. Dynamic behavior = client-side Supabase + Edge Functions.
 
