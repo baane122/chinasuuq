@@ -1,6 +1,7 @@
 # ChinaSuuq — Platform Documentation
 
-> **Version**: 1.0.0 (monorepo, web, mobile, shared) · `android.versionCode` 1 · APK shipped 2026-10-30
+> **Version**: 1.0.0 (monorepo, web, mobile, shared) · EAS Android `versionCode` **4** · iOS `buildNumber` 2
+> **APK shipped**: 2026-11-01 — EAS build `1313818d`, commit `2f73ca8`, 66,726,621 bytes, 1288 entries
 > **Live**: https://chinasuuq.com · **Admin**: https://chinasuuq.com/admin · **APK**: https://chinasuuq.com/app/chinasuuq.apk
 > **Supabase project**: `athkmrvsaijwgsyvwrbp` (`athkmrvsaijwgsyvwrbp.supabase.co`)
 > This document describes the codebase as it is. For the short version see the root `README.md`.
@@ -743,6 +744,23 @@ Verified end to end through `ai-proxy` (4.87 s including function cold path) and
 (3.12 s). Translation no longer touches the provider at all.
 
 ## 12. Known Gaps & Follow-ups
+
+> **Session 2026-11-01 — shipped and verified live:** the APK at `public/app/chinasuuq.apk` was
+> rebuilt from commit `2f73ca8` and re-verified to contain `claim_device_session`,
+> `assert_device_session`, `revoke_my_other_devices` and the "signed in on another phone" notice in
+> `assets/index.android.bundle`; the web export was redeployed and `https://chinasuuq.com` serves the
+> new bundle with the new APK (checked byte-length and a range request). The following were proved
+> against the **live** project with real tokens, then the probe accounts were deleted (DB back to
+> 5 users · 5 profiles · 0 device rows):
+> · device A claims → device B claims → A's refresh-token exchange answers
+> `refresh_token_not_found` and A's `assert_device_session` answers `session_revoked`, while B stays
+> `ok:true` — one phone at a time, server-enforced.
+> · setting `profiles.is_active=false` deletes the account's sessions (refresh fails immediately),
+> `assert_device_session` answers `account_disabled`, and `submit_mobile_order` refuses with `42501`.
+> · a staff JWT can update a customer's name, re-activate a deactivated customer, create/delete a
+> `customer_profiles` row — and is refused (`P0001`) when it tries to write `profiles.role`.
+> Also fixed: the `www` → apex 301 (see §11) and the CI role-vocabulary gate, which was red on three
+> consecutive pushes because it matched the *spelling* of `SET search_path` rather than the pin.
 
 > **Session 2026-10-31 — closed this round:** a production payment trigger read `NEW.amount_usd`
 > (no such column) so **every** payment write failed 42703; deactivating a staff member did nothing

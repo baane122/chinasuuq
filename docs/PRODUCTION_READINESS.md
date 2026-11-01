@@ -1,7 +1,16 @@
 # ChinaSuuq — Production Readiness & Business Workability Assessment
 
-**Date:** 2026-10-02 (updated) · **Scope:** Web (chinasuuq.com), Admin Mission Control, Mobile (Expo), Supabase backend
-**Verdict:** 🟢 PRODUCTION READY — all gates verified live on 2026-10-02 (details in §2).
+**Date:** 2026-11-01 · **Scope:** Web (chinasuuq.com), Admin Mission Control, Mobile (Expo), Supabase backend
+**Verdict:** 🟢 PRODUCTION READY — gates re-verified live on 2026-11-01 (details in §2).
+
+> **2026-11-01 update.** Since the 2026-10-02 pass the platform shipped the session/roles hardening
+> round: one active phone per account (`user_devices` + `claim_device_session` /
+> `assert_device_session`), account-status enforcement that also covers `SECURITY DEFINER` RPCs,
+> staff customer CRUD, and a payment trigger that had been failing every write with `42703`. CI now
+> also runs `verify:schema` (71-table column contract) and `verify:auth-session`. All four gates
+> (`tsc`, `npm run verify`, static export, Metro bundle) pass on `main`; CI is green as of `a4f89e6`.
+> The 2026-10-02 sections below are kept as the point-in-time record. Current known gaps live in
+> `../doc.md` §12.
 
 ## 1. Verified platform truth (live probes, this session)
 
