@@ -281,7 +281,7 @@ export default function TrackPage() {
                   exit={{ opacity: 0 }}
                   className="mx-auto mt-6 max-w-md rounded-2xl border border-error/20 bg-error/5 p-4"
                 >
-                  <p className="text-sm font-semibold text-error">Order not found</p>
+                  <p className="text-sm font-semibold text-error">Missing order</p>
                   <p className="mt-1 text-xs text-dark-900/55">
                     No order matches that reference. Double-check it or contact support on WhatsApp.
                   </p>
