@@ -19,13 +19,24 @@
  */
 export const STAFF_PROFILE_ROLES = ["staff", "super_admin", "admin"] as const;
 
+/**
+ * The owner role, kept as a list for the same reason the staff roles are: it is
+ * compared against `public.is_super_admin()` by
+ * `scripts/verify-role-vocabulary.mjs`, which cannot compare a bare `===`
+ * literal against the SQL helper. Mobile has carried this list since the
+ * 2026-10-14 audit; web did not, so the two apps documented the same rule in two
+ * shapes and only one was machine-checked.
+ */
+export const SUPER_ADMIN_PROFILE_ROLES = ["super_admin"] as const;
+
 export function isStaffRole(role: string | null | undefined): boolean {
   if (!role) return false;
   return (STAFF_PROFILE_ROLES as readonly string[]).includes(role);
 }
 
 export function isSuperAdminRole(role: string | null | undefined): boolean {
-  return role === "super_admin";
+  if (!role) return false;
+  return (SUPER_ADMIN_PROFILE_ROLES as readonly string[]).includes(role);
 }
 
 /**

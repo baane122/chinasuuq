@@ -1,0 +1,238 @@
+{
+  "_comment": "Snapshot of the LIVE PostgREST surface (Supabase project athkmrvsaijwgsyvwrbp). Regenerate with scripts/refresh-contract-snapshot.sh after any migration. verify:contract fails when a client calls a function or relation that is not listed here, or passes an argument name that is not an input parameter.",
+  "project": "athkmrvsaijwgsyvwrbp",
+  "generated_at": "2026-11-01",
+  "rpcs": {
+    "_cs_item_int": [
+      "j",
+      "keys"
+    ],
+    "_cs_item_num": [
+      "j",
+      "keys"
+    ],
+    "_cs_item_text": [
+      "j",
+      "keys"
+    ],
+    "_cs_marketplace_enum": [
+      "p"
+    ],
+    "_cs_safe_uuid": [
+      "p"
+    ],
+    "_cs_shipping_enum": [
+      "p"
+    ],
+    "_jsonb_number": [
+      "j",
+      "keys"
+    ],
+    "_jsonb_text": [
+      "j",
+      "keys"
+    ],
+    "_order_revenue_status": [
+      "o"
+    ],
+    "_order_total_usd": [
+      "o"
+    ],
+    "_require_admin_metrics_access": [],
+    "_source_products_sync_display_fields": [],
+    "_submit_mobile_order_impl": [
+      "p_reference",
+      "p_shipping_method",
+      "p_delivery_address",
+      "p_destination_city",
+      "p_notes",
+      "p_service_fee_pct",
+      "p_items"
+    ],
+    "admin_category_product_counts": [],
+    "admin_kpis": [],
+    "admin_order_status_counts": [
+      "p_days"
+    ],
+    "admin_revenue_by_marketplace": [
+      "p_days"
+    ],
+    "admin_revenue_daily": [
+      "p_days"
+    ],
+    "admin_revoke_user_sessions": [
+      "p_user_id"
+    ],
+    "assert_device_session": [
+      "p_device_id"
+    ],
+    "auth_context": [],
+    "can_manage_marketplace_accounts": [],
+    "claim_device_session": [
+      "p_device_id",
+      "p_device_name",
+      "p_platform"
+    ],
+    "create_customer_account": [
+      "p_email",
+      "p_password",
+      "p_full_name",
+      "p_phone",
+      "p_language"
+    ],
+    "cs_marketplace_is_usd_native": [
+      "p"
+    ],
+    "encrypt_marketplace_password": [],
+    "exchange_rates_normalize_live_row": [],
+    "fn_trending_products": [
+      "p_days",
+      "p_limit"
+    ],
+    "fx_cny_per_usd": [],
+    "fx_rates": [],
+    "fx_service_fee_pct": [],
+    "generate_order_ref": [],
+    "get_exchange_rate": [],
+    "get_marketplace_session": [
+      "p_marketplace"
+    ],
+    "get_shared_marketplace_account": [
+      "p_marketplace"
+    ],
+    "guard_order_customer_update": [],
+    "guard_profile_privileged_columns": [],
+    "guard_profile_staff_writes": [],
+    "guard_profiles_role_change": [],
+    "handle_new_user": [],
+    "is_active_account": [],
+    "is_staff_or_admin": [],
+    "is_super_admin": [],
+    "notify_on_order_status_change": [],
+    "orders_money_guard": [],
+    "orders_order_items_sync": [],
+    "profile_role_write_allowed": [
+      "p_role"
+    ],
+    "profiles_guard_role": [],
+    "quote_items_fill_subtotal": [],
+    "quote_reference_default": [],
+    "record_moq_candidate": [
+      "p_product_id",
+      "p_moq",
+      "p_confidence",
+      "p_raw_text",
+      "p_source"
+    ],
+    "record_product_event": [
+      "p_product_id",
+      "p_event_type",
+      "p_marketplace_key"
+    ],
+    "revoke_my_other_devices": [],
+    "revoke_sessions_on_deactivate": [],
+    "revoke_sessions_on_staff_deactivate": [],
+    "rls_auto_enable": [],
+    "settings_secret_guard": [],
+    "shipments_coerce_packages": [],
+    "source_products_fill_source_url": [],
+    "source_products_stamp_usd": [],
+    "submit_mobile_order": [
+      "p_reference",
+      "p_shipping_method",
+      "p_delivery_address",
+      "p_destination_city",
+      "p_notes",
+      "p_service_fee_pct",
+      "p_items"
+    ],
+    "sync_order_items": [
+      "p_order_id"
+    ],
+    "sync_order_payment_status": [],
+    "update_updated_at": [],
+    "upsert_staff_member": [
+      "p_user_id",
+      "p_role",
+      "p_department",
+      "p_is_active"
+    ],
+    "verify_customer": [
+      "p_email",
+      "p_password"
+    ]
+  },
+  "relations": [
+    "addresses",
+    "admin_customers_view",
+    "admin_order_items_view",
+    "admin_orders_view",
+    "admin_payments_view",
+    "admin_product_events_view",
+    "admin_quotes_view",
+    "admin_shipments_view",
+    "admin_sourcing_view",
+    "admin_staff_view",
+    "admin_tasks",
+    "admin_warehouse_view",
+    "ai_provider_config",
+    "ai_provider_tasks",
+    "audit_logs",
+    "cart_items",
+    "carts",
+    "categories",
+    "consolidations",
+    "customer_payment_methods",
+    "customer_profiles",
+    "customers",
+    "deliveries",
+    "documents",
+    "exchange_rates",
+    "favorites",
+    "inspection_items",
+    "inspections",
+    "integration_events",
+    "marketplace_accounts",
+    "marketplace_connectors",
+    "marketplaces",
+    "moq_review_queue",
+    "notifications",
+    "order_items",
+    "order_tracking_public",
+    "orders",
+    "payment_attempts",
+    "payment_webhooks",
+    "payments",
+    "permissions",
+    "pricing_rules",
+    "product_events",
+    "product_price_snapshots",
+    "product_translations",
+    "profiles",
+    "quote_items",
+    "quotes",
+    "recently_viewed",
+    "refunds",
+    "settings",
+    "shipment_packages",
+    "shipments",
+    "source_product_variants",
+    "source_products",
+    "sourcing_attachments",
+    "sourcing_requests",
+    "staff_profiles",
+    "supplier_options",
+    "supplier_payments",
+    "supplier_purchases",
+    "suppliers",
+    "support_messages",
+    "support_tickets",
+    "tracking_events",
+    "translation_glossary",
+    "translations",
+    "translations_view",
+    "user_devices",
+    "warehouse_packages",
+    "whatsapp_checkouts"
+  ]
+}

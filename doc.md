@@ -539,6 +539,8 @@ because that path does not consult the remote counter — but they are not the s
 1. `npx eas-cli build --platform android --profile preview` (add `--no-wait` to get the build id back immediately, then poll with `eas-cli build:list --platform android --limit 1 --json`). `preview` is `distribution: internal` with `android.buildType: "apk"`, so the artifact is a directly installable APK, not an AAB.
 2. Credentials come from the Expo server (keystore `Build Credentials aIUFZopWVH`), not from a local keystore — the build works from any machine logged in as `baaaane24`.
 3. Download the APK: eas-cli 24.x returns the artifact under `artifacts.buildUrl` (and the duplicate `artifacts.applicationArchiveUrl`), not `artifacts.buildUrls.apk`; `npx eas-cli build:list --platform android --limit 1 --json` gives it once the status is `FINISHED`. `--output` only works for local builds, so fetch the URL with a plain HTTP GET.
+4. Copy it over `public/app/chinasuuq.apk`, then **stamp the provenance** — `npm run apk:stamp -- --build <easBuildId>` from `apps/web`. This writes `apps/mobile/apk-manifest.json` and refuses to record a build that is not `FINISHED`, an archive with no central directory, or fewer than 500 entries. For a non-mobile change that genuinely cannot affect the bundle, `npm run apk:stamp -- --reason "docs only"` re-stamps in place.
+5. `npm run verify:apk` must pass before the commit: it holds the binary to that manifest on sha256, bundle-source digest and `expo.version`. Skipping the stamp is the failure this guard exists to catch — it is what let a five-week-old APK ship.
 4. Replace `apps/web/public/app/chinasuuq.apk` with the downloaded file and check the size changed.
 5. **Validate the artifact before committing.** An APK is a zip: it must end with an end-of-central-directory record. `python3 -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); print(len(z.namelist()))" apps/web/public/app/chinasuuq.apk` prints the entry count, or `unzip -l` lists it. A truncated download passes `file(1)` (`PK\x03\x04` header), has a plausible size, and is still un-installable — Android refuses it with "package appears to be invalid".
 6. Commit and push; Vercel serves it at `https://chinasuuq.com/app/chinasuuq.apk` (with `Content-Disposition: attachment`, set in root `vercel.json`). CI verifies the file ships in the static export and that the landing page still links it, and the push is also the production web deploy.
@@ -645,24 +647,78 @@ Tailwind v4 runs through `@tailwindcss/postcss`, with optional pinned platform p
 
 ### CI (`.github/workflows/ci.yml`, Node 22, push/PR → `main`)
 
-1. **web-build**: `tsc --noEmit` → `npm run verify` → `eslint` (non-blocking) → `next build` → verify static output (`out/index.html`, `out/app/chinasuuq.apk`) → **unzip the APK** and require ≥500 central-directory entries plus `cmp` against the exported copy → verify the landing page still references `app/chinasuuq.apk`.
-2. **mobile-config** ("Mobile — Expo typecheck + Metro bundle"): `app.json` + `eas.json` JSON validation and EAS workflow YAML validation, then `npm ci` in `apps/mobile` (a self-contained npm project, not a root workspace), `tsc --noEmit` as a **hard gate**, and `npx expo export --platform ios` asserting `_expo/static/js/ios` exists with ≥5 files. The export is the only check that proves every `require()`'d asset path and native-module shim resolves — exactly what `tsc` cannot see. Measured on the runner: 1 m 28 s for the whole job.
-3. **guard**: repo hygiene — fails when agent/tool state dirs (`.agent-teams/`, `.hermes/`, `.zcode/`, `supabase/.temp/`, `.DS_Store`) are tracked.
+1. **web-build**: `tsc --noEmit` → `npm run verify` (schema + RPC contract + APK provenance + four behavioural suites) → `eslint` (non-blocking) → `npm run test:unit` (Vitest) → `next build` → verify static output (`out/index.html`, `out/app/chinasuuq.apk`) → **unzip the APK** and require ≥500 central-directory entries plus `cmp` against the exported copy → verify the landing page still references `app/chinasuuq.apk`.
+2. **e2e** ("Web — Playwright against the static export", `needs: web-build`): builds the export, installs Chromium, and runs `playwright test` against `out/` served by `scripts/serve-export.mjs`. Playwright `webServer` starts that server itself. Tests `/track` (known/unknown/unreachable/5xx, Enter key, WhatsApp fallback) and the `/admin` gate (no session, pending session, deep link, form validation, password masking). **Every Supabase call is intercepted** in `e2e/helpers.ts`, so the job needs no secrets and no production data. Traces and screenshots upload on failure.
+3. **mobile-config** ("Mobile — Expo typecheck + Metro bundle"): `app.json` + `eas.json` JSON validation and EAS workflow YAML validation, then `npm ci` in `apps/mobile` (a self-contained npm project, not a root workspace), `tsc --noEmit` as a **hard gate**, **`npm run verify`** (all 13 suites in one command — CI used to enumerate them and had silently fallen behind, missing `verify:auth-session`, `verify:authurl`, `verify:native-cookies`, `verify:risk-suite` and `verify:usd-worded`), and `npx expo export --platform ios` asserting `_expo/static/js/ios` exists with ≥5 files. The export is the only check that proves every `require()`'d asset path and native-module shim resolves — exactly what `tsc` cannot see. Measured on the runner: 1 m 28 s for the whole job.
+4. **guard**: repo hygiene — fails when agent/tool state dirs (`.agent-teams/`, `.hermes/`, `.zcode/`, `supabase/.temp/`, `.DS_Store`) are tracked, plus the staff-role vocabulary contract (`scripts/verify-role-vocabulary.mjs`).
 
-**`npm run verify` (web)** runs five offline suites before the build: `verify:schema` compares every
-literal PostgREST column list in `src/` against `scripts/schema-snapshot.json` (exported from the
-live project — 71 tables), and `verify:joins`, `verify:ai`, `verify:track`, `verify:admin` pin the
-batching, AI-client, error-classifier and admin-guardrail behaviour. A wrong column used to
-type-check, lint and build, then fail at runtime as a `42703` toast on an empty screen; the schema
-snapshot is what closes that hole and must be refreshed after any intentional migration.
+### Three contract gates that exist because the client is untyped
+
+`tsc` cannot see anything that crosses the PostgREST wire as a string, so three offline gates read the
+shipping source and compare it with a snapshot exported from the **live** project:
+
+| Gate | File | Catches | Refresh after a migration |
+|---|---|---|---|
+| `verify:schema` | `scripts/schema-snapshot.json` (71 tables) | a column that does not exist → `42703` / `PGRST204` | re-export the column lists |
+| `verify:contract` | `scripts/contract-snapshot.json` (66 RPCs, 71 relations) | a renamed/missing `.rpc()` or `.from()` name, or a wrong top-level argument key → `PGRST202` | `npm run refresh:contract` |
+| `verify:apk` | `apps/mobile/apk-manifest.json` | a checked-in APK that is not the build the source describes | `npm run apk:stamp -- --build <easId>` |
+
+`verify:contract` is the one added on 2026-11-01 after the column class of bug was found one level
+up: `.rpc("submit_mobile_order", { p_… })` passes a string, so a renamed parameter type-checks,
+lints, builds, and then fails on a screen that swallows `{ error }`. It reads every literal RPC name,
+every top-level key of its argument object, and every `.from()` relation across **web, mobile and
+`packages/shared`**, and prints how many calls it could not verify because they pass a non-literal
+object. `refresh-contract-snapshot.sh` regenerates it from `pg_proc` using **input parameters only**
+(`proargmodes = 'i'`) — including OUT columns is what made a first draft believe
+`fn_trending_products` took `product_id, name, price_usd …`.
+
+`verify:apk` is the stale-build guard. `apps/web/public/app/chinasuuq.apk` is a checked-in binary
+that nothing rebuilds, and on 2026-10-30 it was still v1.0.2 from 2 October while the app had moved
+to 1.0.6 — five weeks of fixes never reached a customer, with every gate green. It checks the
+binary's sha256, a digest of **only the files Metro bundles** (`apps/mobile/{app,src,assets}` plus
+the configs, so docs edits do not demand a rebuild), `expo.version`, and re-reads the zip central
+directory itself. `npm run apk:stamp -- --build <easId>` records the provenance and refuses a
+`FINISHED`-less build, a truncated archive, or fewer than 500 entries; it records the commit the
+**build** was made from, not HEAD.
+
+**`npm run verify` (web)** runs the three contract gates above plus `verify:joins`, `verify:ai`,
+`verify:track` and `verify:admin`, which pin the batching, AI-client, error-classifier and
+admin-guardrail behaviour.
 
 **`npm run verify` (mobile)** runs 13 suites (~200 checks) including `verify:auth-session`, which
 asserts the sign-out scope, the device-claim/resume wiring, the presence of the screen error
 boundaries, and the `sessionClaim` parser against real token shapes.
 
-There is still **no unit/integration test runner** in either app, so these static + bundle gates are
-the entire automated safety net. They are behavioural (they read the shipping source and, where the
-module is pure, execute it), but they are not a substitute for tests against a running database.
+**Test layers.** Three, and they answer different questions — a passing build proves none of them.
+
+| Layer | Command | Answers |
+|---|---|---|
+| Contract gates | `npm run verify` | does a column / RPC / argument / shipped binary still match the live database? |
+| Unit tests | `npm run test:unit` (Vitest, 47 assertions) | does the pure logic behave, including the fail-closed cases? |
+| End-to-end | `npm run test:e2e` (Playwright, 16 tests) | does the **built export** actually work in a browser? |
+
+The unit layer is deliberately thin (three modules) and is not a rewrite of the `verify:*` suites:
+those compare shipping source against a live-schema snapshot, which is not an assertion a normal
+test can express, and rewriting them would trade a working gate for a prettier one. What Vitest adds
+is somewhere ordinary to put the next test — `tests/*.test.ts`, `describe`/`it`, no bespoke 300-line
+`.mjs`. It already found one real divergence while being written: `apps/web/src/lib/roles.ts` had no
+`SUPER_ADMIN_PROFILE_ROLES` list, so the web and mobile copies of the same rule were documented in
+two shapes and only mobile's was machine-checked.
+
+**End-to-end.** `apps/web/e2e/` is a real Playwright suite (16 tests) against the **static export**,
+not `next dev` — a dev server has its own routing and error overlay and would hide exactly the
+trailing-slash and 404 behaviour that ships. It covers `/track` (a known reference, an unknown one,
+a dead network, a 5xx gateway, Enter-to-search, the WhatsApp fallback, the APK link) and the
+`/admin` gate (no session, a pending session read, a deep link into `/admin/customers`, form
+validation, password masking). Every Supabase call is intercepted, so it is deterministic and
+needs no credentials. `npm run test:e2e` locally, `npm run test:e2e:live` against production.
+
+What is still missing: **there is no test against a running database**. Every layer above either
+reads the shipping source, stubs the wire, or runs the client, so a policy that denies the wrong row
+— the real failure mode of RLS — is only caught by the live probes recorded in §12, not by CI. The
+next step worth taking is a small seeded-DB integration suite (a throwaway Supabase branch with
+`supabase/audit/local_verify/` lifted into it) rather than more static gates. That is the one layer
+where a real "customer cannot see another customer's order" assertion could live.
 
 ### Querying production
 

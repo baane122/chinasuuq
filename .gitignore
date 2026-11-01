@@ -112,3 +112,7 @@ apps/mobile/web-build/
 .turbo/
 **/.turbo/
 .codex-orchestration/
+
+# ── Playwright ────────────────────────────────────────────
+apps/web/test-results/
+apps/web/playwright-report/

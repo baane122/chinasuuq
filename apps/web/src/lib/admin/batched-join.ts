@@ -100,7 +100,7 @@ export async function runInBatches<T, R>({
   results.forEach((res, idx) => {
     if (!res || res.error) {
       failedBatches++;
-      onBatchError?.(idx + 1, batches.length, String(res?.error?.message ?? "no response"));
+      onBatchError?.(idx + 1, batches.length, String(res?.error?.message ?? "no response from this batch"));
       return;
     }
     rows.push(...((res.data || []) as R[]));
