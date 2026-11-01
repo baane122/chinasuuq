@@ -76,9 +76,32 @@ const SQL_SUPER = rolesFrom(superFn.body, "is_super_admin");
 
 // The lockdown helper must be SECURITY DEFINER with a pinned search_path, or a
 // caller can shadow `auth`/`pg_temp` mid-call and the whole gate is decorative.
+//
+// The schemas may be written bare (`public`) or quoted (`'public'`), and the
+// assignment may use `=` or `TO` — all four spellings are the same pin, and
+// Postgres stores the quoted form. Matching the exact spelling once turned a
+// correct hardening migration into a red gate (2026-10-31), so the check reads
+// the schema list instead of the punctuation. Order still matters: `pg_temp`
+// must come last, because it is resolved first in a search_path and putting it
+// earlier would let a temporary table shadow anything after it.
+function pinnedSchemas(body, name, file) {
+  const m = /SET\s+search_path\s*(?:TO|=)\s*([^\n;]+)/i.exec(body);
+  assert.ok(m, `public.${name}() has no search_path setting at all (${file})`);
+  const schemas = m[1]
+    .split(",")
+    .map((t) => t.trim().replace(/^["']|["']$/g, "").toLowerCase())
+    .filter(Boolean);
+  assert.deepEqual(
+    schemas,
+    ["public", "pg_temp"],
+    `public.${name}() pins search_path to [${schemas.join(", ")}], expected [public, pg_temp] (${file})`
+  );
+  return schemas;
+}
+
 for (const [name, fn] of [["is_staff_or_admin", staffFn], ["is_super_admin", superFn]]) {
   assert.match(fn.body, /SECURITY DEFINER/i, `public.${name}() lost SECURITY DEFINER (${fn.file})`);
-  assert.match(fn.body, /SET search_path\s*=\s*public,\s*pg_temp/i, `public.${name}() no longer pins search_path (${fn.file})`);
+  pinnedSchemas(fn.body, name, fn.file);
 }
 
 // ── 2. the app + function copies ───────────────────────────────────────────────
