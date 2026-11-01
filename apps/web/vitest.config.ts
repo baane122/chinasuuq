@@ -21,7 +21,12 @@ export default defineConfig({
     exclude: ["node_modules", ".next", "out", "e2e"],
     environment: "node",
     globals: false,
-    reporters: process.env.CI ? ["github", "default"] : ["default"],
+    // Vitest's built-in reporters are default / verbose / dot / junit / tap /
+    // json / hanging-process. `github` is a PLAYWRIGHT reporter name and does
+    // not exist here — asking for it fails the run with "Cannot find package
+    // 'github'", which is how the first CI attempt died. `verbose` gives one
+    // line per test, which reads the same way in the Actions log.
+    reporters: process.env.CI ? ["verbose"] : ["default"],
     // Nothing here touches the network; a test that hangs is a bug in the test.
     testTimeout: 10_000,
   },
