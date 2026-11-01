@@ -1,6 +1,6 @@
 # ChinaSuuq — Platform Documentation
 
-> **Version**: 1.0.0 (monorepo, web, mobile, shared) · EAS Android `versionCode` **4** · iOS `buildNumber` 2
+> **Version**: 1.0.0 (monorepo, web, mobile, shared) · EAS Android `versionCode` **4** · iOS `buildNumber` also EAS-remote (`app.json` carries neither, by `appVersionSource: "remote"`)
 > **APK shipped**: 2026-11-01 — EAS build `1313818d`, commit `2f73ca8`, 66,726,621 bytes, 1288 entries
 > **Live**: https://chinasuuq.com · **Admin**: https://chinasuuq.com/admin · **APK**: https://chinasuuq.com/app/chinasuuq.apk
 > **Supabase project**: `athkmrvsaijwgsyvwrbp` (`athkmrvsaijwgsyvwrbp.supabase.co`)
@@ -528,8 +528,13 @@ succeed, mobile verify suite 146/146.
 on its own — `expo.android.versionCode` in `app.json` is ignored for the build (EAS prints
 "android.versionCode field in app config is ignored when version source is set to remote") and
 only survives as a value inside the `expo-constants` manifest. Bump `expo.version` for the
-human-visible version and let the remote counter handle install-over upgrades; keep the local
-`versionCode`/`buildNumber` in step anyway so a reader is not misled.
+human-visible version and let the remote counter handle install-over upgrades.
+
+`app.json` currently declares `android.versionCode: 1` and **no** `ios.buildNumber`; the values that
+actually ship are EAS's remote counter (Android `4` on build `1313818d`, 2026-11-01) and whatever EAS
+holds for iOS. Setting the local numbers is still worth doing before any non-EAS Gradle/Xcode build,
+because that path does not consult the remote counter — but they are not the source of truth while
+`appVersionSource: "remote"` is set, so do not read them as the shipped version.
 
 1. `npx eas-cli build --platform android --profile preview` (add `--no-wait` to get the build id back immediately, then poll with `eas-cli build:list --platform android --limit 1 --json`). `preview` is `distribution: internal` with `android.buildType: "apk"`, so the artifact is a directly installable APK, not an AAB.
 2. Credentials come from the Expo server (keystore `Build Credentials aIUFZopWVH`), not from a local keystore — the build works from any machine logged in as `baaaane24`.
