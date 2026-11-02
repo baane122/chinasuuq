@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useState, useMemo, useCallback } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { Suspense, useState, useMemo, useCallback } from "react";
 import { waLink } from "@/lib/whatsapp";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatUSD, formatCNY } from "@/lib/utils";
@@ -224,11 +225,9 @@ function SourcingPageContent() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchRequests();
-    // liveVersion comes from the realtime channel in the admin layout, so a
-    // request captured on the phone appears without a manual reload.
-  }, [fetchRequests, liveVersion]);
+  // liveVersion comes from the realtime channel in the admin layout, so a
+  // request captured on the phone appears without a manual reload.
+  useLoaderEffect(() => fetchRequests(), [fetchRequests, liveVersion]);
 
   /* ── Filter ─────────────────────────────────────────────────── */
 
@@ -450,7 +449,8 @@ function SourcingPageContent() {
       // stored below — display and write can never come from different rates.
       const totalUsd = roundCents(usdFromCny(totalCny, quoteRate));
       // Draft quotes are valid for 14 days.
-      const validUntil = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      // Capture the wall clock at the user action boundary, not during render.
+      const validUntil = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(); // eslint-disable-line react-hooks/purity
 
       const { data: quoteRow, error: quoteError } = await supabase
         .from("quotes")

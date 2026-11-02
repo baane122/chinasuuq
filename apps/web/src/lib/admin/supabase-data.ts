@@ -8,6 +8,19 @@
 import { supabase } from "../supabase";
 import { partialJoinNotice, runInBatches } from "./batched-join";
 
+// ─── Row typing ──────────────────────────────────────────────────
+/**
+ * The Supabase client in this app is created without generated database types
+ * (`createClient(url, key)`), so `data` from every call is `any`. Rather than
+ * casting the value at each of the ~30 call sites — which hides a genuine
+ * shape mistake as effectively as `as any[]` did — each query declares the row
+ * shape it expects and goes through this one helper. The single assertion is
+ * here, and the caller gets a real type it must satisfy when it reads a field.
+ */
+function asRows<T>(data: unknown): T[] {
+  return Array.isArray(data) ? (data as T[]) : [];
+}
+
 // ─── Status mappers (mirror the mobile adapter) ───────────────────
 const MOBILE_TO_DB: Record<string, string> = {
   pending: "pending",
@@ -85,7 +98,12 @@ export async function getAdminKpis(): Promise<{
   const { data, error } = await supabase.rpc("admin_kpis");
   if (error) return { ok: false, metrics: {}, error: adminErrorMessage(error, error.message) };
   const metrics: KpiMap = {};
-  for (const row of (data as any[]) || []) {
+  for (const row of asRows<{
+    metric: string;
+    value: number | null;
+    prev_value: number | null;
+    delta_pct: number | null;
+  }>(data)) {
     metrics[row.metric] = {
       value: Number(row.value ?? 0),
       prevValue: row.prev_value === null ? null : Number(row.prev_value),
@@ -107,11 +125,13 @@ export async function getAdminRevenueDaily(days = 7) {
   return {
     ok: !error,
     error: error?.message,
-    series: ((data as any[]) || []).map((r) => ({
-      date: String(r.day),
-      revenue: Number(r.revenue ?? 0),
-      orders: Number(r.orders ?? 0),
-    })),
+    series: asRows<{ day: string; revenue: number | null; orders: number | null }>(data).map(
+      (r) => ({
+        date: String(r.day),
+        revenue: Number(r.revenue ?? 0),
+        orders: Number(r.orders ?? 0),
+      })
+    ),
   };
 }
 
@@ -123,7 +143,7 @@ export async function getAdminOrderStatusCounts(days = 90) {
   return {
     ok: !error,
     error: error?.message,
-    counts: ((data as any[]) || []).map((r) => ({
+    counts: asRows<{ status: string; orders: number | null }>(data).map((r) => ({
       status: String(r.status),
       count: Number(r.orders ?? 0),
     })),
@@ -143,12 +163,50 @@ export async function getAdminRevenueByMarketplace(days = 90) {
   return {
     ok: !error,
     error: error?.message,
-    rows: ((data as any[]) || []).map((r) => ({
-      marketplace: String(r.marketplace),
-      revenue: Number(r.revenue ?? 0),
-      orders: Number(r.orders ?? 0),
-    })),
+    rows: asRows<{ marketplace: string; revenue: number | null; orders: number | null }>(data).map(
+      (r) => ({
+        marketplace: String(r.marketplace),
+        revenue: Number(r.revenue ?? 0),
+        orders: Number(r.orders ?? 0),
+      })
+    ),
   };
+}
+
+/**
+ * One row of `admin_order_items_view` as the admin reads it.
+ *
+ * Every field is optional-but-explicit: the view gained columns over several
+ * migrations (marketplace_key / marketplace_logo / moq_at_purchase all arrived
+ * later), and a row from an older deployment simply will not carry them. Making
+ * them optional documents that, instead of letting `any` hide it.
+ */
+export interface AdminOrderItem {
+  id: string;
+  order_id: string;
+  order_ref: string | null;
+  product_name: string | null;
+  image_url: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  cost_price: number | null;
+  currency: string | null;
+  total_price: number | null;
+  unit_price_cny: number | null;
+  exchange_rate: number | null;
+  moq_at_purchase: number | null;
+  variant_name: string | null;
+  source_url: string | null;
+  origin: string | null;
+  marketplace_key: string | null;
+  marketplace_name: string | null;
+  marketplace_logo: string | null;
+  is_sourced: boolean | null;
+  is_purchased: boolean | null;
+  is_received: boolean | null;
+  is_inspected: boolean | null;
+  customer_name: string | null;
+  created_at: string;
 }
 
 /**
@@ -165,7 +223,7 @@ export async function getOrderItems(orderId: string) {
       )
       .eq("order_id", orderId)
       .order("created_at", { ascending: true });
-    return { ok: !error, items: (data as any[]) || [], error: error?.message };
+    return { ok: !error, items: asRows<AdminOrderItem>(data), error: error?.message };
   } catch (e) {
     return { ok: false, items: [], error: String(e) };
   }
@@ -180,7 +238,7 @@ export async function getOrderItems(orderId: string) {
  */
 type BatchedJoinResult<T> = { rows: T[]; failedBatches: number; batches: number };
 
-async function selectInBatches<T = any>({
+async function selectInBatches<T>({
   table,
   columns,
   column,
@@ -210,6 +268,13 @@ async function selectInBatches<T = any>({
   });
 }
 
+/** The only three columns the shipment console links with. */
+export interface OrderRefRow {
+  id: string;
+  order_number: string | null;
+  reference: string | null;
+}
+
 /**
  * Order id → display reference for the Shipments console.
  *
@@ -224,9 +289,11 @@ async function selectInBatches<T = any>({
  */
 export async function getOrderRefsByIds(ids: string[]) {
   const unique = [...new Set(ids.filter(Boolean) as string[])];
-  if (!unique.length) return { rows: [] as any[], failedBatches: 0, batches: 0 };
+  if (!unique.length) {
+    return { rows: [] as OrderRefRow[], failedBatches: 0, batches: 0 };
+  }
 
-  const view = await selectInBatches<any>({
+  const view = await selectInBatches<OrderRefRow>({
     table: "admin_orders_view",
     columns: "id, order_number, reference",
     column: "id",
@@ -239,7 +306,7 @@ export async function getOrderRefsByIds(ids: string[]) {
   // resolve, against the base table, before declaring the join partial.
   const found = new Set(view.rows.map((r) => r?.id));
   const missing = unique.filter((id) => !found.has(id));
-  const base = await selectInBatches<any>({
+  const base = await selectInBatches<OrderRefRow>({
     table: "orders",
     columns: "id, reference",
     column: "id",
@@ -278,6 +345,79 @@ export function sanitizeOrFilter(term: string): string {
 /** One search box → the `%term%` ILIKE pattern shared by every field in an `.or()`. */
 function orLike(search: string): string {
   return `%${sanitizeOrFilter(search)}%`;
+}
+
+/**
+ * One order as the Orders console and the dashboard read it.
+ *
+ * The view (`admin_orders_view`) supplies the decorated shape; the base-table
+ * fallback is mapped into the SAME fields (`order_number ← reference`,
+ * `total ← total_usd`, …) so page code never has to branch on which source
+ * answered. Every field is optional because the two sources genuinely differ —
+ * the base table has no `customer_name`, and the enrichment step fills it.
+ */
+export interface AdminOrderRow {
+  id: string;
+  order_number?: string | null;
+  reference?: string | null;
+  profile_id?: string | null;
+  /** auth uid — base-table fallback only; the view exposes profile_id. */
+  user_id?: string | null;
+  customer_name?: string | null;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+  status: string;
+  payment_status: string | null;
+  payment_method?: string | null;
+  shipping_method?: string | null;
+  subtotal?: number | null;
+  shipping_cost?: number | null;
+  service_fee?: number | null;
+  total?: number | null;
+  balance_due?: number | null;
+  currency?: string | null;
+  recipient_name?: string | null;
+  phone?: string | null;
+  city?: string | null;
+  address?: string | null;
+  delivery_address?: string | null;
+  notes?: string | null;
+  target_marketplace?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  confirmed_at?: string | null;
+  shipped_at?: string | null;
+  delivered_at?: string | null;
+  cancelled_at?: string | null;
+  /** Filled by the line-provenance merge: which marketplaces this order used. */
+  apps?: string[];
+}
+
+/** Base-table row, before it is mapped onto AdminOrderRow. */
+interface OrdersBaseRow {
+  id: string;
+  reference: string | null;
+  user_id: string | null;
+  status: string;
+  payment_status: string | null;
+  shipping_method: string | null;
+  subtotal_usd: number | null;
+  service_fee_usd: number | null;
+  total_usd: number | null;
+  balance_due_usd: number | null;
+  currency: string | null;
+  delivery_address: string | null;
+  destination_city: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** The three profile columns the customer-name join reads. */
+interface ProfileNameRow {
+  id: string;
+  full_name: string | null;
+  phone: string | null;
 }
 
 // ─── Orders CRUD ──────────────────────────────────────────────────
@@ -329,7 +469,7 @@ export async function listOrders({
       );
     }
     const { data, error, count } = await q;
-    let orders = (data as any[]) || [];
+    let orders = asRows<AdminOrderRow>(data);
     let total = count ?? orders.length;
 
     // An empty result from the view is a legitimate empty page — only a real
@@ -362,10 +502,11 @@ export async function listOrders({
           notices: [],
         };
       }
-      total = res.count ?? (res.data as any[] | undefined)?.length ?? 0;
+      const baseRows = asRows<OrdersBaseRow>(res.data);
+      total = res.count ?? baseRows.length;
       // Map base rows into the shape the view promised so page code that reads
       // either shape keeps working (pages also guard per-field).
-      orders = ((res.data as any[]) || []).map((o) => ({
+      orders = baseRows.map((o) => ({
         ...o,
         order_number: o.reference,
         profile_id: o.user_id,
@@ -377,9 +518,11 @@ export async function listOrders({
         address: o.delivery_address,
       }));
       // Fill customer contact for the page's user_ids (profiles.id = auth uid).
-      const uids = [...new Set(orders.map((o) => o.user_id).filter(Boolean))];
+      const uids = [
+        ...new Set(orders.map((o) => o.user_id).filter((v): v is string => !!v)),
+      ];
       if (uids.length) {
-        const { rows: profs, failedBatches, batches } = await selectInBatches({
+        const { rows: profs, failedBatches, batches } = await selectInBatches<ProfileNameRow>({
           table: "profiles",
           columns: "id, full_name, phone",
           column: "id",
@@ -388,8 +531,9 @@ export async function listOrders({
         });
         const notice = partialJoinNotice("Customer names", failedBatches, batches);
         if (notice) notices.push(notice);
-        const byId = new Map(((profs as any[]) || []).map((p) => [p.id, p]));
+        const byId = new Map(profs.map((p) => [p.id, p]));
         for (const o of orders) {
+          if (!o.user_id) continue;
           const p = byId.get(o.user_id);
           o.customer_name = p?.full_name ?? null;
           o.customer_phone = p?.phone ?? null;
@@ -405,7 +549,10 @@ export async function listOrders({
     // unavailable items view just leaves apps empty.
     const ids = orders.map((o) => o.id).filter(Boolean);
     if (ids.length) {
-      const { rows: lines, failedBatches, batches } = await selectInBatches({
+      const { rows: lines, failedBatches, batches } = await selectInBatches<{
+        order_id: string;
+        marketplace_key: string | null;
+      }>({
         table: "admin_order_items_view",
         columns: "order_id, marketplace_key",
         column: "order_id",
@@ -415,8 +562,8 @@ export async function listOrders({
       const notice = partialJoinNotice("Source marketplaces", failedBatches, batches);
       if (notice) notices.push(notice);
       const byOrder = new Map<string, Set<string>>();
-      for (const line of (lines as any[]) || []) {
-        if (!line?.order_id) continue;
+      for (const line of lines) {
+        if (!line?.order_id || !line.marketplace_key) continue;
         const set = byOrder.get(line.order_id) || new Set<string>();
         set.add(line.marketplace_key);
         byOrder.set(line.order_id, set);
@@ -432,7 +579,7 @@ export async function listOrders({
   }
 }
 
-export async function updateOrder(id: string, patch: Record<string, any>) {
+export async function updateOrder(id: string, patch: Record<string, unknown>) {
   try {
     const { error } = await supabase
       .from("orders")
@@ -445,6 +592,28 @@ export async function updateOrder(id: string, patch: Record<string, any>) {
 }
 
 // ─── Customers ────────────────────────────────────────────────────
+/**
+ * One row of `admin_customers_view`.
+ *
+ * `email` and `business_name` are optional: some schema generations project
+ * `email` as a fixed NULL and the retry path drops it entirely, so a row really
+ * can arrive without it. `total_orders` / `total_spent` are the DB-owned
+ * rollups the list displays — never recomputed client-side.
+ */
+export interface AdminCustomerRow {
+  id: string;
+  full_name: string | null;
+  email?: string | null;
+  phone: string | null;
+  city: string | null;
+  customer_type: string | null;
+  business_name?: string | null;
+  tier: string | null;
+  total_orders: number | null;
+  total_spent: number | null;
+  created_at: string;
+}
+
 export async function listCustomers({ search }: { search?: string } = {}) {
   try {
     // A verified subset of admin_customers_view's fixed column list
@@ -483,7 +652,7 @@ export async function listCustomers({ search }: { search?: string } = {}) {
     }
     return {
       ok: !error,
-      customers: data || [],
+      customers: asRows<AdminCustomerRow>(data),
       error: error ? adminErrorMessage(error, "Failed to load customers") : undefined,
     };
   } catch (e) {
@@ -629,7 +798,7 @@ export async function listSourcing({ status }: { status?: string } = {}) {
   }
 }
 
-export async function updateSourcing(id: string, patch: Record<string, any>) {
+export async function updateSourcing(id: string, patch: Record<string, unknown>) {
   try {
     const { error } = await supabase
       .from("sourcing_requests")
@@ -639,6 +808,25 @@ export async function updateSourcing(id: string, patch: Record<string, any>) {
   } catch (e) {
     return { ok: false, error: String(e) };
   }
+}
+
+/**
+ * Payment payload accepted by recordPayment().
+ *
+ * Field names are the live `payments` columns. `method` and `status` are
+ * narrowed to `string` rather than the DB enum: the enum lives in Postgres and
+ * a caller sending a value the server does not know should get the database's
+ * own error, not a compile error that silently drifts from the schema.
+ */
+export interface PaymentInput {
+  order_id: string;
+  amount: number | string;
+  currency?: string;
+  method?: string;
+  status?: string;
+  reference?: string | null;
+  provider_ref?: string | null;
+  evidence_url?: string | null;
 }
 
 // ─── Payments ─────────────────────────────────────────────────────
@@ -657,9 +845,9 @@ export async function listPayments({ status }: { status?: string } = {}) {
   }
 }
 
-export async function recordPayment(p: any) {
+export async function recordPayment(p: PaymentInput) {
   try {
-    const row: any = {
+    const row = {
       order_id: p.order_id,
       amount: Number(p.amount) || 0,
       currency: p.currency || "USD",
@@ -682,12 +870,12 @@ export async function recordPayment(p: any) {
 // /admin/rates lists the history straight from the table. A second reader used
 // to live in this file with no callers, which is how two screens could disagree
 // about what `rate` means.
-export async function saveExchangeRate(r: any) {
+export async function saveExchangeRate(r: ExchangeRateInput) {
   try {
     // Production's vocabulary is from_currency / to_currency / effective_from /
     // effective_until, and it has no `source` column — the free-text note goes
     // in `reason`. The old names made every FX save fail on an unknown column.
-    const row: any = {
+    const row = {
       from_currency: r.from_currency || "CNY",
       to_currency: r.to_currency || "USD",
       rate: Number(r.rate) || 0,
@@ -710,6 +898,18 @@ export async function saveExchangeRate(r: any) {
   }
 }
 
+/** Exchange-rate row as Settings → Currency writes it (live column names). */
+export interface ExchangeRateInput {
+  id?: string;
+  from_currency?: string;
+  to_currency?: string;
+  rate: number | string;
+  reason?: string | null;
+  is_active?: boolean;
+  effective_from?: string;
+  effective_until?: string | null;
+}
+
 // ─── Quotes ──────────────────────────────────────────────────────
 export async function listQuotes() {
   try {
@@ -724,7 +924,34 @@ export async function listQuotes() {
   }
 }
 
-export async function createQuote(q: any) {
+/**
+ * New-quote payload. `total` / `shipping_cost` / `discount_amount` /
+ * `sourcing_request_id` / `profile_id` / `notes` are legacy aliases the form
+ * still sends; they are accepted and mapped onto the live column names below.
+ */
+export interface QuoteInput {
+  request_id?: string | null;
+  sourcing_request_id?: string | null;
+  user_id?: string | null;
+  profile_id?: string | null;
+  reference?: string;
+  total_cny?: number | string;
+  total_usd?: number | string;
+  total?: number | string;
+  exchange_rate?: number | string;
+  service_fee?: number | string;
+  freight_estimate?: number | string;
+  shipping_cost?: number | string;
+  discount?: number | string;
+  discount_amount?: number | string;
+  deposit_percent?: number | string;
+  valid_until?: string;
+  status?: string;
+  customer_notes?: string | null;
+  notes?: string | null;
+}
+
+export async function createQuote(q: QuoteInput) {
   try {
     // Exactly the live `quotes` columns. The old payload wrote
     // sourcing_request_id / profile_id / subtotal / shipping_cost / total /
@@ -734,7 +961,7 @@ export async function createQuote(q: any) {
     // freight_estimate / discount / deposit_percent, all NOT NULL.
     const rate = Number(q.exchange_rate) || 6.6;
     const totalUsd = Number(q.total_usd) || Number(q.total) || 0;
-    const row: any = {
+    const row = {
       request_id: q.request_id || q.sourcing_request_id || null,
       user_id: q.user_id || q.profile_id,
       reference: q.reference || `QT-${Date.now().toString(36).toUpperCase()}`,
@@ -770,14 +997,29 @@ export async function listShipments() {
   }
 }
 
-export async function createShipment(s: any) {
+/** New-shipment payload (live `shipments` columns only). */
+export interface ShipmentInput {
+  reference: string;
+  method?: string;
+  status?: string;
+  origin?: string;
+  destination?: string;
+  total_packages?: number | string;
+  tracking_number?: string | null;
+  carrier?: string | null;
+  departure_date?: string | null;
+  estimated_arrival?: string | null;
+  notes?: string | null;
+}
+
+export async function createShipment(s: ShipmentInput) {
   try {
     // Exactly the live `shipments` columns — no order_id/origin_country/
     // weight_grams; freight quantity lives in total_packages.
     // `status` defaults to "preparing": the shipment_status enum is
     // (preparing, loaded, in_transit, arrived, customs, delivered) and has NO
     // "pending", so the old default sent every create down as 22P02.
-    const row: any = {
+    const row = {
       reference: s.reference,
       method: s.method || "sea",
       status: s.status || "preparing",
@@ -824,7 +1066,7 @@ export async function listWarehousePackages() {
   }
 }
 
-export async function updateWarehousePackage(id: string, patch: Record<string, any>) {
+export async function updateWarehousePackage(id: string, patch: Record<string, unknown>) {
   try {
     const { error } = await supabase
       .from("warehouse_packages")
@@ -876,12 +1118,42 @@ const MARKETPLACE_SESSION_COLS =
 const MARKETPLACE_SESSION_PLUS_COLS = MARKETPLACE_SESSION_COLS + ", cookies_updated_by";
 
 /**
+ * One marketplace account row, as the tiered projections return it.
+ *
+ * The cookie/health fields are optional on purpose: they are read only by the
+ * widest tier, and a deployment whose schema predates them returns a row without
+ * them. The page guards each read, so absence is a supported state rather than
+ * an error.
+ */
+export interface MarketplaceAccountRow {
+  id: string;
+  marketplace_type: string | null;
+  account_label: string | null;
+  username: string | null;
+  password_encrypted: string | null;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+  is_shared: boolean | null;
+  is_active: boolean | null;
+  created_at: string;
+  cookies?: string | null;
+  cookies_updated_at?: string | null;
+  cookies_updated_by?: string | null;
+  cookies_updated_by_name?: string | null;
+  last_verified_at?: string | null;
+  health?: string | null;
+}
+
+/**
  * Decorative join: resolve cookies_updated_by (an auth uid) to a display name
  * via profiles. Non-fatal by design — RLS or a deleted staff profile just
  * leaves the name null and the UI falls back to showing the raw id.
  */
-async function attachCookieUpdaterNames(accounts: any[]): Promise<void> {
-  const uids = [...new Set(accounts.map((a) => a?.cookies_updated_by).filter(Boolean))];
+async function attachCookieUpdaterNames(accounts: MarketplaceAccountRow[]): Promise<void> {
+  const uids = [
+    ...new Set(accounts.map((a) => a?.cookies_updated_by).filter((v): v is string => !!v)),
+  ];
   if (!uids.length) return;
   const { rows: profs, failedBatches, batches } = await selectInBatches({
     table: "profiles",
@@ -892,7 +1164,9 @@ async function attachCookieUpdaterNames(accounts: any[]): Promise<void> {
   });
   const notice = partialJoinNotice("Cookie updater names", failedBatches, batches);
   if (notice) console.warn(`[admin join] ${notice}`);
-  const byId = new Map(((profs as any[]) || []).map((p) => [p.id, p?.full_name]));
+  const byId = new Map(
+    asRows<{ id: string; full_name: string | null }>(profs).map((p) => [p.id, p.full_name])
+  );
   for (const a of accounts) {
     if (a?.cookies_updated_by) {
       a.cookies_updated_by_name = byId.get(a.cookies_updated_by) ?? null;
@@ -915,7 +1189,7 @@ export async function listMarketplaceAccounts() {
     // that, so the client result is widened here; the page guards each field
     // at read time.
     const tiers = [MARKETPLACE_SESSION_PLUS_COLS, MARKETPLACE_SESSION_COLS, MARKETPLACE_BASE_COLS];
-    let data: any[] | null = null;
+    let data: MarketplaceAccountRow[] | null = null;
     let lastError: { code?: string; message?: string } | null = null;
     let hasSessionColumns = false;
     for (const cols of tiers) {
@@ -923,7 +1197,7 @@ export async function listMarketplaceAccounts() {
         .from("marketplace_accounts")
         .select(cols)
         .order("created_at", { ascending: false })) as {
-        data: any[] | null;
+        data: MarketplaceAccountRow[] | null;
         error: { code?: string; message?: string } | null;
       };
       if (!res.error) {
@@ -962,7 +1236,7 @@ export async function listMarketplaceAccounts() {
  * schemas.
  */
 export async function saveMarketplaceAccount(
-  payload: Record<string, any>,
+  payload: Record<string, unknown>,
   id?: string
 ) {
   const optionalCols = [
@@ -972,7 +1246,7 @@ export async function saveMarketplaceAccount(
     "last_verified_at",
     "health",
   ];
-  const write = (body: Record<string, any>) =>
+  const write = (body: Record<string, unknown>) =>
     id
       ? supabase.from("marketplace_accounts").update(body).eq("id", id)
       : supabase.from("marketplace_accounts").insert(body);
@@ -990,7 +1264,7 @@ export async function saveMarketplaceAccount(
 }
 
 // ─── Settings ────────────────────────────────────────────────────
-export async function getSetting(key: string, fallback: any = null) {
+export async function getSetting(key: string, fallback: unknown = null) {
   try {
     const { data, error } = await supabase
       .from("settings")
@@ -1012,7 +1286,7 @@ export async function getSetting(key: string, fallback: any = null) {
   }
 }
 
-export async function setSetting(key: string, value: any) {
+export async function setSetting(key: string, value: unknown) {
   try {
     const { error } = await supabase
       .from("settings")

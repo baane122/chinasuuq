@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Customers list.
  *
@@ -22,14 +23,20 @@
  * `bg-warning-500`).
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import {
   Users, X, MapPin, Save, MessageSquare, Package, DollarSign,
   CalendarDays, Download, Filter, User as UserIcon, RotateCcw, Plus, Trash2, Pencil,
   LogOut,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { listCustomers, createCustomer, updateCustomer, deleteCustomer } from "@/lib/admin/supabase-data";
+import {
+  listCustomers,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+  type AdminCustomerRow,
+} from "@/lib/admin/supabase-data";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/components/admin/Toast";
 import {
@@ -99,7 +106,7 @@ function CustomersPageContent() {
   // Only order writes change this roster (customer rows aggregate orders).
   const liveVersion = useLiveVersion(["orders"]);
 
-  const [customers, setCustomers] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<AdminCustomerRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -145,11 +152,12 @@ function CustomersPageContent() {
     setIsLoading(false);
   }, []);
 
-  useEffect(() => {
-    load(committedSearch);
-  }, [committedSearch, load, liveVersion]);
+  useLoaderEffect(() => load(committedSearch), [committedSearch, load, liveVersion]);
 
-  useEffect(() => {
+  /* Notes are a browser-only convenience (there is no notes table), so they are
+   * hydrated once on mount. Reading localStorage during render would break
+   * hydration: the static export prerenders this page with an empty map. */
+  useLoaderEffect(() => {
     try {
       const stored = localStorage.getItem(NOTES_KEY);
       if (stored) setNotes(JSON.parse(stored));
@@ -266,7 +274,7 @@ function CustomersPageContent() {
   /* ── Customer CRUD (SidePanel) ─────────────────────────────── */
 
   const [panelOpen, setPanelOpen] = useState(false);
-  const [editingCustomer, setEditingCustomer] = useState<any>(null);
+  const [editingCustomer, setEditingCustomer] = useState<AdminCustomerRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -301,7 +309,7 @@ function CustomersPageContent() {
     setPanelOpen(true);
   };
 
-  const openEdit = (c: any) => {
+  const openEdit = (c: AdminCustomerRow) => {
     setEditingCustomer(c);
     setForm({
       accountId: c.id || "",
@@ -366,7 +374,11 @@ function CustomersPageContent() {
    * leaves the account and its history intact.
    */
   const [revokingId, setRevokingId] = useState<string | null>(null);
-  const handleRevokeSessions = async (customer: { id: string; full_name?: string; email?: string }) => {
+  const handleRevokeSessions = async (customer: {
+    id: string;
+    full_name?: string | null;
+    email?: string | null;
+  }) => {
     if (revokingId) return;
     setRevokingId(customer.id);
     try {

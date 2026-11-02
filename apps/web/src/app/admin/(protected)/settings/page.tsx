@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -125,8 +126,8 @@ export default function SettingsPage() {
     }
   };
 
-  useEffect(() => {
-    if (activeTab === "System Health") runHealthCheck();
+  useLoaderEffect(() => {
+    if (activeTab === "System Health") return runHealthCheck();
   }, [activeTab]);
 
   const handlePasswordChange = async () => {
@@ -150,18 +151,6 @@ export default function SettingsPage() {
       setSaveMessage({ type: "success", text: "Admin password updated successfully." });
     }
   };
-
-  useEffect(() => {
-    if (activeTab === "Currency") {
-      fetchExchangeRate();
-    }
-    if (activeTab === "Staff") {
-      fetchStaff();
-    }
-    if (activeTab === "Shipping") {
-      fetchShipping();
-    }
-  }, [activeTab]);
 
   // Deep link from /admin/rates ("?tab=currency"). location.search is read on the
   // client instead of useSearchParams so the static prerender of this route does
@@ -304,7 +293,9 @@ export default function SettingsPage() {
       if (Array.isArray(parsed)) {
         setMethods((prev) =>
           prev.map((m) => {
-            const saved = parsed.find((s: any) => s?.id === m.id);
+            const saved = parsed.find(
+              (s: { id?: string; baseRate?: unknown; estimatedDays?: unknown }) => s?.id === m.id
+            );
             return saved
               ? {
                   ...m,
@@ -319,6 +310,17 @@ export default function SettingsPage() {
       // Malformed stored value — leave the defaults untouched.
     }
   };
+
+  /* Load the tab's data on first open, and again whenever the operator comes
+   * back to that tab. Declared AFTER the three loaders so it never references a
+   * `const` in its temporal dead zone — it only ran correctly before because
+   * effects fire post-render, and any future call outside an effect would have
+   * thrown ReferenceError. */
+  useLoaderEffect(() => {
+    if (activeTab === "Currency") return fetchExchangeRate();
+    if (activeTab === "Staff") return fetchStaff();
+    if (activeTab === "Shipping") return fetchShipping();
+  }, [activeTab]);
 
   const handleSaveShipping = async () => {
     setIsSaving(true);

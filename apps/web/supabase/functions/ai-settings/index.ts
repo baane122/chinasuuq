@@ -20,7 +20,7 @@ import { requireRole, requireStaffOrAdmin, unauthorized } from "../_shared/auth.
 import { validateProviderBaseUrl, type AiTask } from "../_shared/ai-provider.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const VALID_TASKS: AiTask[] = ["copilot", "translation", "vision", "extraction"];
+const VALID_TASKS: AiTask[] = ["copilot", "translation", "vision", "extraction", "image"];
 
 // Matches the live user_role enum; 'admin' does not exist (202609210001).
 const SUPER_ADMIN_ONLY = ["super_admin"];

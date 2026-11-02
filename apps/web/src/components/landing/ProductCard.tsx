@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, useInView, useReducedMotion } from "framer-motion";
-import { Layers, PackageOpen, Flame, Star, Ban, BadgeCheck, MessageCircle } from "lucide-react";
+import { Layers, PackageOpen, Flame, Star, Ban, BadgeCheck } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { pickTitle, recordProductEvent, type CatalogProduct } from "@/lib/catalog";
 import { formatUsd, usdFromCny, useFx, type FxRates } from "@/lib/fx";

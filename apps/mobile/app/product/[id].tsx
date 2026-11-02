@@ -18,6 +18,8 @@ import {
   ChevronDown,
   ChevronUp,
   Heart,
+  Flame,
+  Package,
   RefreshCw,
   SearchX,
   WifiOff,
@@ -485,6 +487,24 @@ function ProductDetailScreenContent() {
         {/* Price card */}
         <ScreenReveal delay={60}>
           <View style={styles.infoCard}>
+            {/* Provenance row — which marketplace this price came from, before
+                the name, because it explains where every number below comes from. */}
+            <View style={styles.provenanceRow}>
+              <View style={styles.platformBadge}>
+                <ShieldCheck size={12} color={COLORS.primaryDark} />
+                <Text style={styles.platformText}>
+                  {t("product.platform")}: {product.marketplace}
+                </Text>
+              </View>
+              {Boolean(product.category) && (
+                <View style={styles.categoryPill}>
+                  <Text style={styles.categoryPillText} numberOfLines={1}>
+                    {product.category}
+                  </Text>
+                </View>
+              )}
+            </View>
+
             <Text style={styles.productName} numberOfLines={3}>
               {displayTitle(product, locale)}
             </Text>
@@ -492,11 +512,11 @@ function ProductDetailScreenContent() {
             <View style={styles.priceRow}>
               <View style={styles.priceBlock}>
                 <View style={styles.usdLine}>
-                  <Text style={styles.price}>≈ {formatUSD(usdPrice)}</Text>
+                  <Text style={styles.price}>{formatUSD(usdPrice)}</Text>
                   <Text style={styles.estTag}>{locale === "so" ? "qiyaas" : "est."}</Text>
                 </View>
                 <Text style={styles.priceCNY}>
-                  {product.price_cny_min > 0 ? cnyRange : "—"}
+                  {product.price_cny_min > 0 ? cnyRange : "—"} · {locale === "so" ? "qiimaha warshadda" : "supplier price"}
                 </Text>
               </View>
               <View style={styles.stockWrap}>
@@ -507,23 +527,48 @@ function ProductDetailScreenContent() {
               </View>
             </View>
 
-            <View style={styles.metaRow}>
-              <View style={styles.ratingBadge}>
-                <Star size={14} color={COLORS.primary} fill={COLORS.primary} />
-                <Text style={styles.ratingText}>
-                  {product.supplier_rating ? product.supplier_rating.toFixed(1) : "—"}
+            {/* Stat strip: rating, marketplace sales, MOQ. Each is labelled by
+                what it actually measures — "sold" is the SOURCE marketplace. */}
+            <View style={styles.statStrip}>
+              <View style={styles.statCell}>
+                <View style={styles.statValueRow}>
+                  <Star size={13} color="#F5A623" fill="#F5A623" />
+                  <Text style={styles.statValue}>
+                    {product.supplier_rating ? product.supplier_rating.toFixed(1) : "—"}
+                  </Text>
+                </View>
+                <Text style={styles.statLabel}>{locale === "so" ? "Qiimeyn" : "Rating"}</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <View style={styles.statValueRow}>
+                  <Flame size={13} color={COLORS.primary} />
+                  <Text style={styles.statValue}>
+                    {product.sales_count
+                      ? product.sales_count > 999
+                        ? `${Math.round(product.sales_count / 100) / 10}k`
+                        : String(product.sales_count)
+                      : "—"}
+                  </Text>
+                </View>
+                <Text style={styles.statLabel} numberOfLines={1}>
+                  {locale === "so" ? "Iib" : "Sold"}
                 </Text>
               </View>
-              {/* Sales is marketplace provenance ("sold on 1688"), not local popularity. */}
-              <Text style={styles.metaText}>{salesLabel}</Text>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <View style={styles.statValueRow}>
+                  <Package size={13} color={COLORS.info} />
+                  <Text style={styles.statValue}>
+                    {resolution?.displayMoq && resolution.displayMoq > 1 ? resolution.displayMoq : "1"}
+                  </Text>
+                </View>
+                <Text style={styles.statLabel}>{locale === "so" ? "Ugu yar" : "Min order"}</Text>
+              </View>
             </View>
 
-            <View style={styles.platformBadge}>
-              <ShieldCheck size={14} color={COLORS.primary} />
-              <Text style={styles.platformText}>
-                {t("product.platform")}: {product.marketplace}
-              </Text>
-            </View>
+            {/* Sales provenance, in words, because the strip above cannot say it. */}
+            <Text style={styles.provenanceNote}>{salesLabel}</Text>
 
             <View style={styles.shippingCard}>
               <View style={styles.shippingRow}>
@@ -620,17 +665,20 @@ function ProductDetailScreenContent() {
           <ScreenReveal delay={160}>
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>{locale === "so" ? "Faahfaahin dheeraad ah" : "Details"}</Text>
-              {attributes.map(([key, val], i) => (
-                <View
-                  key={key}
-                  style={[styles.attrRow, i === attributes.length - 1 && styles.attrRowLast]}
-                >
-                  <Text style={styles.attrKey}>{key}</Text>
-                  <Text style={styles.attrValue} numberOfLines={3}>
-                    {val}
-                  </Text>
-                </View>
-              ))}
+              <View style={styles.attrGrid}>
+                {attributes.map(([key, val]) => (
+                  <View key={key} style={styles.attrRow}>
+                    <View style={styles.attrTile}>
+                      <Text style={styles.attrKey} numberOfLines={1}>
+                        {key}
+                      </Text>
+                      <Text style={styles.attrValue} numberOfLines={3}>
+                        {val}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
             </View>
           </ScreenReveal>
         )}
@@ -726,8 +774,48 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 16, fontFamily: FONTS.bold, color: COLORS.black, flexShrink: 1, marginHorizontal: SPACING.sm },
   scroll: { flex: 1 },
   scrollContent: {},
-  infoCard: { padding: SPACING.lg, backgroundColor: COLORS.white, marginTop: SPACING.sm },
-  productName: { fontSize: 18, fontFamily: FONTS.bold, color: COLORS.black, lineHeight: 25 },
+  infoCard: {
+    padding: SPACING.lg,
+    backgroundColor: COLORS.white,
+    marginTop: SPACING.sm,
+    marginHorizontal: SPACING.md,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: COLORS.black,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  productName: {
+    fontSize: 19,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+    lineHeight: 26,
+    letterSpacing: -0.2,
+    marginTop: SPACING.sm,
+  },
+  provenanceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    flexWrap: "wrap",
+  },
+  categoryPill: {
+    backgroundColor: COLORS.gray50,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 4,
+    maxWidth: "55%",
+  },
+  categoryPillText: {
+    fontSize: 10,
+    fontFamily: FONTS.semibold,
+    color: COLORS.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
   priceRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -736,43 +824,42 @@ const styles = StyleSheet.create({
   },
   priceBlock: { flexDirection: "column", flexShrink: 1 },
   usdLine: { flexDirection: "row", alignItems: "baseline", gap: SPACING.xs },
-  price: { fontSize: 26, fontFamily: FONTS.bold, color: COLORS.primary },
+  price: { fontSize: 28, fontFamily: FONTS.bold, color: COLORS.primary, letterSpacing: -0.6 },
   estTag: { fontSize: 11, fontFamily: FONTS.medium, color: COLORS.textMuted },
   priceCNY: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
   stockWrap: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 3 },
   stockDot: { width: 7, height: 7, borderRadius: 3.5 },
   stockText: { fontSize: 12, fontFamily: FONTS.semibold },
-  metaRow: {
+  statStrip: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: SPACING.md,
-    gap: SPACING.sm,
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.gray50,
+    borderRadius: RADIUS.lg,
+    paddingVertical: SPACING.md,
   },
-  ratingBadge: {
+  statCell: { flex: 1, alignItems: "center", gap: 2 },
+  statDivider: { width: StyleSheet.hairlineWidth, height: 26, backgroundColor: COLORS.gray300 },
+  statValueRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  statValue: { fontSize: 15, fontFamily: FONTS.bold, color: COLORS.black },
+  statLabel: { fontSize: 10, fontFamily: FONTS.medium, color: COLORS.textMuted },
+  provenanceNote: {
+    fontSize: 11,
+    fontFamily: FONTS.regular,
+    color: COLORS.textMuted,
+    marginTop: SPACING.sm,
+    textAlign: "center",
+  },
+  platformBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     backgroundColor: COLORS.softOrange,
     paddingHorizontal: SPACING.sm,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: RADIUS.pill,
   },
-  ratingText: { fontSize: 13, fontFamily: FONTS.semibold, color: COLORS.primary },
-  metaText: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.textSecondary, flexShrink: 1 },
-  platformBadge: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: SPACING.xs,
-    marginTop: SPACING.md,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: 6,
-    borderRadius: RADIUS.pill,
-  },
-  platformText: { fontSize: 12, fontFamily: FONTS.semibold, color: COLORS.textSecondary },
+  platformText: { fontSize: 10, fontFamily: FONTS.bold, color: COLORS.primaryDark, textTransform: "uppercase", letterSpacing: 0.4 },
   shippingCard: {
     marginTop: SPACING.md,
     padding: SPACING.md,
@@ -797,12 +884,18 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: RADIUS.lg,
+    borderRadius: RADIUS.xl,
     padding: SPACING.lg,
     marginHorizontal: SPACING.md,
     marginTop: SPACING.md,
   },
-  sectionTitle: { fontSize: 15, fontFamily: FONTS.bold, color: COLORS.black, marginBottom: SPACING.md },
+  sectionTitle: {
+    fontSize: 15,
+    fontFamily: FONTS.bold,
+    color: COLORS.black,
+    marginBottom: SPACING.md,
+    letterSpacing: -0.1,
+  },
   qtyHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -845,17 +938,25 @@ const styles = StyleSheet.create({
   qtyQuickText: { fontSize: 14, fontFamily: FONTS.semibold, color: COLORS.black },
   qtyQuickTextActive: { color: COLORS.primaryDark },
   packNote: { fontSize: 12, fontFamily: FONTS.medium, color: COLORS.info, marginBottom: SPACING.md },
-  attrRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
+  attrRow: { width: "50%", paddingRight: SPACING.sm, marginBottom: SPACING.sm },
+  attrGrid: { flexDirection: "row", flexWrap: "wrap" },
+  attrTile: {
+    backgroundColor: COLORS.gray50,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.border,
-    gap: SPACING.md,
+    minHeight: 52,
+    justifyContent: "center",
   },
-  attrRowLast: { borderBottomWidth: 0 },
-  attrKey: { fontSize: 12, color: COLORS.textMuted, fontFamily: FONTS.medium, width: 120 },
-  attrValue: { fontSize: 13, color: COLORS.black, fontFamily: FONTS.medium, flex: 1 },
+  attrKey: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+    fontFamily: FONTS.semibold,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  attrValue: { fontSize: 13, color: COLORS.black, fontFamily: FONTS.medium, lineHeight: 18 },
   descText: { fontSize: 14, color: COLORS.textSecondary, lineHeight: 22 },
   expandBtn: {
     flexDirection: "row",

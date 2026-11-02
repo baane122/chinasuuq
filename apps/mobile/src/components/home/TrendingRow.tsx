@@ -11,9 +11,10 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { Plus, Package, ShoppingCart, Sparkles } from "lucide-react-native";
+import { Plus, Package, ShoppingCart, Sparkles, Flame, TrendingUp } from "lucide-react-native";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import { useI18n } from "@/lib/i18n";
 import { useCartStore } from "@/store/cart";
@@ -26,9 +27,9 @@ import type { TrendingItem } from "@/api/trending";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
-// Image-forward card: square photo, price, marketplace, one-tap add.
-const CARD_W = 172;
-const PHOTO_H = 172;
+// Image-forward card: tall photo, title over the scrim, price, one-tap add.
+const CARD_W = 176;
+const PHOTO_H = 208;
 const GAP = SPACING.md;
 const PITCH = CARD_W + GAP;
 
@@ -241,6 +242,16 @@ const TrendingCard = React.memo(
           </View>
         )}
 
+        {/* Scrim so the rank/price overlay stays readable on any photo. */}
+        {showPhoto && (
+          <LinearGradient
+            colors={["rgba(0,0,0,0.35)", "transparent", "rgba(0,0,0,0.62)"]}
+            locations={[0, 0.42, 1]}
+            style={styles.photoScrim}
+            pointerEvents="none"
+          />
+        )}
+
         <View style={styles.marketBadge}>
           <Text style={styles.marketBadgeText}>{item.marketplace}</Text>
         </View>
@@ -267,24 +278,34 @@ const TrendingCard = React.memo(
             <Text style={styles.rankBadgeText}>#{rank}</Text>
           </View>
         )}
-      </View>
 
-      <Text style={styles.title} numberOfLines={2}>
-        {item.name}
-      </Text>
+        {/* Title over the photo — the card carries more picture and less text
+            below, which is what makes a trending shelf feel like a shelf. */}
+        <Text style={styles.photoTitle} numberOfLines={2}>
+          {item.name}
+        </Text>
+      </View>
 
       {/* A USD price and a wholesale CNY price are different facts, so the card
           prints whichever it has with the matching symbol rather than dressing
           ¥12.50 up as $12.50. */}
-      <Text style={styles.price}>
-        {item.priceUsd !== null && item.priceUsd > 0
-          ? formatUSD(item.priceUsd)
-          : item.priceCny !== null && item.priceCny > 0
-            ? formatCNY(item.priceCny)
-            : locale === "so"
-              ? "Waydii qiimaha"
-              : "Price on request"}
-      </Text>
+      <View style={styles.priceRow}>
+        <Text style={styles.price}>
+          {item.priceUsd !== null && item.priceUsd > 0
+            ? formatUSD(item.priceUsd)
+            : item.priceCny !== null && item.priceCny > 0
+              ? formatCNY(item.priceCny)
+              : locale === "so"
+                ? "Waydii qiimaha"
+                : "Price on request"}
+        </Text>
+        {item.source === "behaviour" && item.eventCount > 0 && (
+          <View style={styles.heatChip}>
+            <TrendingUp size={10} color={COLORS.primary} />
+            <Text style={styles.heatChipText}>{item.eventCount}</Text>
+          </View>
+        )}
+      </View>
 
       {item.quantity > 1 && (
         <Text style={styles.moq} numberOfLines={1}>
@@ -348,13 +369,14 @@ const styles = StyleSheet.create({
   card: {
     width: CARD_W,
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
     padding: SPACING.sm,
+    paddingBottom: SPACING.sm + 2,
     shadowColor: COLORS.black,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 4,
   },
   photoBox: {
     width: CARD_W - SPACING.sm * 2,
@@ -366,6 +388,26 @@ const styles = StyleSheet.create({
   photo: {
     width: "100%",
     height: "100%",
+  },
+  photoScrim: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  photoTitle: {
+    position: "absolute",
+    left: SPACING.sm,
+    right: SPACING.sm,
+    bottom: SPACING.sm,
+    fontSize: 12,
+    fontFamily: FONTS.semibold,
+    color: COLORS.white,
+    lineHeight: 16,
+    textShadowColor: "rgba(0,0,0,0.35)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   photoFallback: {
     flex: 1,
@@ -387,7 +429,7 @@ const styles = StyleSheet.create({
     left: SPACING.sm,
     paddingHorizontal: SPACING.sm,
     paddingVertical: 3,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.pill,
     backgroundColor: COLORS.primary,
   },
   marketBadgeText: {
@@ -400,11 +442,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: SPACING.sm,
     right: SPACING.sm,
-    minWidth: 26,
+    minWidth: 28,
     alignItems: "center",
-    paddingHorizontal: SPACING.xs,
+    paddingHorizontal: 6,
     paddingVertical: 3,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.pill,
     backgroundColor: COLORS.white,
   },
   rankBadgeText: {
@@ -420,9 +462,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 3,
     maxWidth: CARD_W - SPACING.sm * 4,
-    paddingHorizontal: SPACING.xs,
+    paddingHorizontal: 6,
     paddingVertical: 3,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.pill,
     backgroundColor: COLORS.white,
   },
   pickBadgeText: {
@@ -430,18 +472,33 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.bold,
     color: COLORS.primary,
   },
-  title: {
-    fontSize: 12,
-    fontFamily: FONTS.medium,
-    color: COLORS.black,
-    lineHeight: 16,
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 4,
     marginTop: SPACING.sm,
   },
   price: {
-    fontSize: 15,
+    flexShrink: 1,
+    fontSize: 16,
     fontFamily: FONTS.bold,
     color: COLORS.primary,
-    marginTop: 2,
+    letterSpacing: -0.3,
+  },
+  heatChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    backgroundColor: COLORS.softOrange,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  heatChipText: {
+    fontSize: 9,
+    fontFamily: FONTS.bold,
+    color: COLORS.primaryDark,
   },
   moq: {
     fontSize: 10,

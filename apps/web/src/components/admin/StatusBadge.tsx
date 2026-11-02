@@ -71,7 +71,34 @@ const LABEL_MAP: Record<string, string> = {
   individual: "Individual",
 };
 
-export function StatusBadge({ status, className }: { status: string; className?: string }) {
+/**
+ * A status pill.
+ *
+ * `status` may be null: view rows genuinely carry nulls (an order with no
+ * `shipping_method` yet, a payment with no `method`), and the old `status: string`
+ * signature made those callers either lie with a cast or crash — `status.replace`
+ * throws on null, which took the whole row down. A null now renders a neutral
+ * "—" pill, because "not set yet" is a real, displayable state.
+ */
+export function StatusBadge({
+  status,
+  className,
+}: {
+  status: string | null | undefined;
+  className?: string;
+}) {
+  if (!status) {
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center rounded-full border border-dark-100 bg-dark-50 px-2.5 py-0.5 text-[11px] font-semibold text-dark-400",
+          className
+        )}
+      >
+        —
+      </span>
+    );
+  }
   const label = LABEL_MAP[status] || status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const style = STATUS_STYLES[status] || "bg-gray-100 text-gray-600";
   return (

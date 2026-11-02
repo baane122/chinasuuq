@@ -2,12 +2,12 @@
   "_comment": "Provenance of apps/web/public/app/chinasuuq.apk. Written by `npm run apk:stamp` (apps/web/scripts/stamp-apk.mjs) and enforced by `npm run verify:apk`. sourceDigest covers only the files Metro bundles (apps/mobile/{app,src,assets} + configs), so docs and tooling edits do not force a rebuild.",
   "appVersion": "1.0.0",
   "androidVersionCode": "4",
-  "easBuildId": "1313818d-2f67-4d02-99cf-9b0e97c409bd",
-  "gitCommit": "2f73ca830d5ddbfe2c325bfb4fad9333a528ddd7",
-  "sha256": "5d86a0c2edd4171dc949ae6f82f5cda43514c16c3e8f4661c4c73a80d9547271",
-  "bytes": 66726621,
+  "easBuildId": "6bfc02b8-8353-4a17-9e6b-878c092566ae",
+  "gitCommit": "e0320be6a7ef9148815365ec5a6247fd88ba793c",
+  "sha256": "e58bbccfa29fad894718eeb48c90190751a5f49d2c4f8767de30a6594d16dbbe",
+  "bytes": 66731841,
   "entries": 1288,
-  "sourceDigest": "0d12634d62fdb78855fe4d0f38afb8e499849824ccf5ce67c543b71ff4de44ec",
-  "stampedAt": "2026-11-01T13:31:31.098Z",
+  "sourceDigest": "5ee2354ee5a025475daf2a45828daafb4fcd22ad50e4bd4ad752dba3dff2ae7d",
+  "stampedAt": "2026-11-01T15:48:48.770Z",
   "reason": null
 }

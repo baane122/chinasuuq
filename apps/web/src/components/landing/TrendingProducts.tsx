@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * The home trending shelf — rewritten on top of `fetchTrendingFeed()`.
  *
@@ -22,8 +23,7 @@
  * behaviour ledger really returned an event count.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { useCallback, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Flame, ArrowRight, Loader2, RefreshCw, WifiOff, DatabaseBackup } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
@@ -92,9 +92,7 @@ export default function TrendingProducts() {
     [locale]
   );
 
-  useEffect(() => {
-    void load(false);
-  }, [load]);
+  useLoaderEffect(() => load(false), [load]);
 
   const sourceLabel = (item: TrendingItem): string => {
     if (item.source === "pinned") return t("trending.selectedForYou");

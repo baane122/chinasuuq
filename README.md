@@ -16,7 +16,7 @@ chinasuuq/
 ├── apps/
 │   ├── web/                Next.js 16 static-export site (public pages + /admin console)
 │   │   ├── supabase/
-│   │   │   ├── functions/  Edge Functions (Deno): 8 functions + _shared/
+│   │   │   ├── functions/  Edge Functions (Deno): 13 functions + _shared/
 │   │   │   └── migrations/ Postgres schema + RLS (68 migrations)
 │   │   └── public/app/     chinasuuq.apk — served at https://chinasuuq.com/app/chinasuuq.apk
 │   └── mobile/             Expo SDK 58 app (Expo Router, React Native 0.88)
@@ -67,7 +67,7 @@ No `.env` file is required to build or run either app — the public-by-design S
 | `NEXT_PUBLIC_DEV_BUILD` | local `.env.local` only | Dev-only switch that enables the admin fallback/recovery entry point (`apps/web/src/lib/adminSession.ts`). Absent in production builds, where every fallback path is inert. |
 | `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` | `apps/mobile/app.config.js` | Optional overrides; defaults are the same baked values, exposed to the app via `expo-constants` (`extra.supabaseUrl` / `extra.supabaseAnonKey`) |
 
-Edge Functions read `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` from Supabase runtime env — never from the client bundle. AI provider credentials are **not** runtime env: they live in the single-row table `public.ai_provider_config` (global default) plus `public.ai_provider_tasks` (optional per-task overrides for `copilot` / `translation` / `vision` / `extraction`), editable only through `ai-settings` (admin). Every AI function resolves its provider through `loadAiProviderForTask()`: a configured task override wins, otherwise the global row applies. The old `settings` key `ai_provider` is gone, and a trigger now refuses secret-looking keys in `settings` (see Security model).
+Edge Functions read `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` from Supabase runtime env — never from the client bundle. AI provider credentials are **not** runtime env: they live in the single-row table `public.ai_provider_config` (global default) plus `public.ai_provider_tasks` (optional per-task overrides for `copilot` / `translation` / `vision` / `extraction` / `image`), editable only through `ai-settings` (admin). Every AI function resolves its provider through `loadAiProviderForTask()`: a configured task override wins, otherwise the global row applies. The old `settings` key `ai_provider` is gone, and a trigger now refuses secret-looking keys in `settings` (see Security model).
 
 ## Deployment (web + APK)
 
@@ -130,18 +130,20 @@ supabase functions deploy <name> --project-ref athkmrvsaijwgsyvwrbp
 
 | Function | Auth required | Purpose |
 |----------|---------------|---------|
-| `ai-settings` | admin | Read/save the AI provider config — global `public.ai_provider_config` row + per-task overrides in `public.ai_provider_tasks` (`copilot`/`translation`/`vision`/`extraction`); keys masked on read, `base_url` vetted at save time, `DELETE ?task=` resets a task to the global provider |
+| `ai-settings` | admin | Read/save the AI provider config — global `public.ai_provider_config` row + per-task overrides in `public.ai_provider_tasks` (`copilot`/`translation`/`vision`/`extraction`/`image`); keys masked on read, `base_url` vetted at save time, `DELETE ?task=` resets a task to the global provider |
 | `ai-proxy` | staff/admin | Server-side chat completions through the `copilot`-task provider (fallback to global) — Mission Control Copilot never holds a provider key in the browser |
 | `ai-vision` | any signed-in role | Vision extraction through the `vision`-task provider (fallback to global); mobile AI Scan calls it first and falls back to the bundled direct endpoint |
 | `ai-test-connection` | admin | Probe an OpenAI-compatible provider's `/models` endpoint |
 | `ai-extraction` | staff/admin | Real provider call against the admin-configured credential, behind a prompt-injection guardrail and strict schema validation; called by the admin Products page |
 | `ai-translate` | any signed-in role | `POST {texts, target_lang}`: duplicates collapsed, the `translations` cache answers hits, only misses reach the provider → `{ok, results:[{source, translated, cached}], target_lang, counts}` |
 | `product-enrich` | any signed-in role | `POST {title, product_id?, marketplace?, evidence}`: MOQ / price / variant fallback. A reported MOQ must appear **verbatim** in the submitted evidence or it is rejected, and confidence is assigned server-side, never taken from the model; writes through `record_moq_candidate` with the service role → `{moq, moq_confidence, moq_raw_text, price_cny, variant_hints, notes, recorded, model}` |
+| `product-import` | staff/admin | `POST {links: string[]}` (≤4): reads each 1688 / Taobao / Tmall / YiwuGo / ChinaGoods listing page with the staff-synced marketplace session, extracts title, price range, MOQ wording, gallery and meta description, translates them, and returns **drafts only** — nothing is written to `source_products`. Reports a link it could not read instead of a half-filled product |
+| `ai-image` | staff/admin | `POST {mode, prompt, image?}`: `restyle` runs the `image`-task provider's `/images/edits` on an existing product photo, `generate` runs `/images/generations`; the result is uploaded to the `product-images` bucket and returned as a URL. Explicit error codes (`bucket_missing`, `provider_no_edit`, `provider_error`) — a provider that cannot edit images is named, not silently skipped |
 | `cart-validate` | none (anon OK) | Server-side MOQ/stock validation against `source_products` (there is no `products` table) |
 | `operational-queue` | staff/admin | Mission-control actionable queue from admin views |
 | `quotes-validate` | none (anon OK) | Server-authoritative price/total validation; never trusts client totals |
 
-Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffOrAdmin` — verify the caller JWT and `profiles.role`), `_shared/cors.ts`, and `_shared/ai-provider.ts` (`loadAiProviderConfig` plus an SSRF guard on `base_url`: https-only, port 443-only, and private / CGNAT / link-local / multicast / IPv6-ULA hosts rejected). Functions that touch privileged data run with `SUPABASE_SERVICE_ROLE_KEY` **inside** the function only, after caller verification.
+Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffOrAdmin` — verify the caller JWT and `profiles.role`), `_shared/cors.ts`, `_shared/listing.ts` (the marketplace reader behind `product-import`: https/443-only, an allowlisted host, redirects re-checked after the fact, every field null when the page did not carry it), `_shared/copywriter.ts` (grounded English + Somali product copy — an attribute value that does not appear in the evidence is dropped, never invented), and `_shared/ai-provider.ts` (`loadAiProviderConfig` plus an SSRF guard on `base_url`: https-only, port 443-only, and private / CGNAT / link-local / multicast / IPv6-ULA hosts rejected). Functions that touch privileged data run with `SUPABASE_SERVICE_ROLE_KEY` **inside** the function only, after caller verification.
 
 ## Live data paths
 
@@ -164,13 +166,13 @@ Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffO
 
 `.github/workflows/ci.yml` runs on push/PR to `main` (Node 22):
 
-1. **web-build** — `tsc --noEmit`, `eslint` (non-blocking; see gaps below), `next build`, then verifies `out/index.html` and `out/app/chinasuuq.apk` exist, that the APK is a complete zip archive (≥500 central-directory entries, `cmp`'d against the exported copy), and that the landing page still references the APK path.
+1. **web-build** — `tsc --noEmit`, `eslint` (hard gate), `next build`, then verifies `out/index.html` and `out/app/chinasuuq.apk` exist, that the APK is a complete zip archive (≥500 central-directory entries, `cmp`'d against the exported copy), and that the landing page still references the APK path.
 2. **mobile-config** — JSON validation of `apps/mobile/app.json` and `eas.json`, YAML validation of `apps/mobile/.eas/workflows/*.yml`, then `npm ci` + `tsc --noEmit` (hard gate) + `npx expo export --platform ios` in `apps/mobile`. The export proves every `require()`'d asset path and native-module shim resolves — the one check that catches what `tsc` can't see. There are no unit tests in this repo, so this is the whole mobile safety net.
 3. **guard** — fails if agent/tool state dirs or junk files (`.agent-teams/`, `.DS_Store`, `supabase/.temp/`, …) are tracked in git.
 
 ## Known gaps & follow-ups
 
-- **Orphan Edge Functions**: `quotes-validate` and `operational-queue` are deployed with **no callers** in either app. Every other function has one: `ai-settings` / `ai-test-connection` from the admin AI tab, `ai-extraction` from the admin Products page, `ai-proxy` from the admin AI Copilot page, `ai-vision` from mobile AI Scan (`apps/mobile/src/lib/aiVision.ts`, server-first), `cart-validate` from mobile checkout (`apps/mobile/src/lib/cartValidateRemote.ts`), `product-enrich` from `apps/mobile/src/db/index.ts` — and `ai-translate` only from the unwired client in the next bullet.
+- **Orphan Edge Functions**: `quotes-validate` and `operational-queue` are deployed with **no callers** in either app. Every other function has one: `ai-settings` / `ai-test-connection` from the admin AI tab, `ai-extraction` from the admin Products page, `ai-proxy` from the admin AI Copilot page, `ai-vision` from mobile AI Scan (`apps/mobile/src/lib/aiVision.ts`, server-first), `cart-validate` from mobile checkout (`apps/mobile/src/lib/cartValidateRemote.ts`), `product-enrich` from `apps/mobile/src/db/index.ts`, `product-import` from the admin Products → Import links studio (`apps/web/src/lib/admin/productImport.ts`), `ai-image` from the product form's AI Image studio (`AiImageStudio.tsx`) — and `ai-translate` only from the unwired client in the next bullet.
 - **Completed but not yet consumed**: `apps/mobile/src/api/translate.ts` (the only `ai-translate` client — no screen imports it), `apps/mobile/src/config/marketplaceRegistry.ts`, `productEvents.getTrendingProducts()` (superseded by `src/api/trending.ts`), and the `moq_review_queue`, `translations_view` / `admin_product_events_view` views are all in place with nothing reading them.
 - **`admin_orders_view` exposes no items JSONB** — the view selects `NULL::jsonb AS items` — so the dashboard's recent-orders and derivation paths read `orders` (plus `admin_order_items_view`) directly.
 - **~33 MB of legacy PNG/JPG artwork** still sits unreferenced in `apps/web/public/images/` (`hero/hero1-3.png`, `how/`, `marketing/`, `categories/*.jpg`, `onboarding/slide3.png`) — kept until product sign-off, not deleted.
@@ -180,7 +182,7 @@ Shared helpers: `_shared/auth.ts` (`requireAdmin`, `requireRole`, `requireStaffO
 - **Guest order tracking**: orders with `user_id IS NULL` are anon-readable via the `orders_select_own` policy (pending replacement with tokenized reference lookup + app change — documented in the `202609210001` migration footer).
 - **`quote_items.cost_price`** is visible to quote owners through RLS (business-sensitive; migration footer proposes moving supplier costs to `supplier_options`).
 - **Unvalidated CHECK constraints**: the money-integrity constraints were added `NOT VALID`; run `ALTER TABLE ... VALIDATE CONSTRAINT ...` once data is confirmed clean.
-- **ESLint debt**: `apps/web` carries ~77 pre-existing lint errors (mostly `@typescript-eslint/no-explicit-any` and react-hooks rules in admin pages). CI runs lint non-blocking; **typecheck and build are the hard gates**.
+- **Lint**: `apps/web` lints **clean** (0 errors, 0 warnings) as of 2026-11-02, and lint is a **hard CI gate**. The former debt (128 errors / 40 warnings) was fixed rather than suppressed — see `doc.md` §12 item 12 for the file-by-file detail.
 - **TypeScript version drift**: `apps/web` uses TS ^5, `apps/mobile` ~6.0.3.
 - **Unused mobile dependency**: `expo-secure-store` is declared but never imported.
 - **Legacy admin mock store**: `apps/web/src/lib/admin/store.ts` + `seed*.ts` (localStorage-backed demo data, `useAdminData`) are no longer imported by any page — candidate for deletion.

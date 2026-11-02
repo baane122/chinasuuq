@@ -130,8 +130,6 @@ export default function TrackPage() {
       // ever allows a signed-in owner or staff, so a guest hitting the table got
       // zero rows and every real tracking number reported "not found". The view
       // exposes non-PII columns only and treats the reference as the bearer token.
-      const COLS_LEGACY = COLS_LIVE;
-
       type TrackedRow = {
         id: string;
         order_number?: string;
@@ -482,7 +480,6 @@ export default function TrackPage() {
               transition={{ delay: 0.3 }}
               className="mx-auto max-w-md rounded-3xl border border-dark-900/[0.06] bg-white p-8 text-center shadow-sm"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/images/how-v2/06-receive.webp"
                 alt="Track your delivery"

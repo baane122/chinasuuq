@@ -10,7 +10,7 @@
  * there is no per-product public page, so preview renders the customer card itself.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import {
   GripVertical,
@@ -68,10 +68,15 @@ export default function ShelfCard({
   const [noteDraft, setNoteDraft] = useState(product.curation.note ?? "");
   const [busy, setBusy] = useState<null | "note" | "unpin">(null);
 
-  // Re-sync the draft when a different product lands in this slot or after a save.
-  useEffect(() => {
+  /* Reset the draft when the SAVED note changes underneath us (a reload, or our
+   * own save landing). Done during render via the "adjust state when a prop
+   * changes" pattern instead of an effect: an effect would paint one frame with
+   * the stale draft before correcting it, and re-render the whole card twice. */
+  const [draftSource, setDraftSource] = useState(product.curation.note ?? "");
+  if (draftSource !== (product.curation.note ?? "")) {
+    setDraftSource(product.curation.note ?? "");
     setNoteDraft(product.curation.note ?? "");
-  }, [product.id, product.curation.note]);
+  }
 
   const { text: price, approx } = priceLabel(product);
   const title = pickDisplayTitle(product, "en");

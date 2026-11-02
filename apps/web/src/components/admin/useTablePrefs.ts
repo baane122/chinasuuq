@@ -9,15 +9,16 @@
  *
  * SSR / HYDRATION: apps/web prerenders these pages, so localStorage cannot be
  * read during the first render — that would ship one markup and hydrate another
- * (a real React mismatch, not a style flicker). State therefore starts at the
- * default and is replaced in an effect. `ready` is exposed for anything that
- * must not act before the stored preference has landed.
+ * (a real React mismatch, not a style flicker). The stored value is read through
+ * useSyncExternalStore, whose server snapshot is the default, so hydration is
+ * consistent and the stored preference lands on the first client render.
+ * `ready` is exposed for anything that must not act before then.
  *
  * Hand-rolled on purpose: @tanstack/table is not installed and nothing can be
  * added to this app (offline build).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 export type Density = "comfortable" | "compact";
 
@@ -52,39 +53,66 @@ export interface TablePreferenceApi {
   headClassName: string;
 }
 
-export function useTablePrefs(tableId: string): TablePreferenceApi {
-  const [prefs, setPrefs] = useState<TablePrefs>(DEFAULTS);
-  const [ready, setReady] = useState(false);
+/** Parse one table's stored preferences, tolerating anything corrupt. */
+function readPrefs(tableId: string): TablePrefs {
+  try {
+    const raw = window.localStorage.getItem(storageKey(tableId));
+    if (!raw) return DEFAULTS;
+    const parsed = JSON.parse(raw) as Partial<TablePrefs>;
+    return {
+      density: parsed.density === "compact" ? "compact" : "comfortable",
+      hidden: Array.isArray(parsed.hidden)
+        ? parsed.hidden.filter((k): k is string => typeof k === "string")
+        : [],
+    };
+  } catch {
+    // A corrupt or unreadable preference must not break the list: fall back.
+    return DEFAULTS;
+  }
+}
 
-  useEffect(() => {
-    let stored: TablePrefs = DEFAULTS;
-    try {
-      const raw = window.localStorage.getItem(storageKey(tableId));
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<TablePrefs>;
-        stored = {
-          density: parsed.density === "compact" ? "compact" : "comfortable",
-          hidden: Array.isArray(parsed.hidden)
-            ? parsed.hidden.filter((k): k is string => typeof k === "string")
-            : [],
-        };
-      }
-    } catch {
-      // A corrupt or unreadable preference must not break the list: fall back.
-      stored = DEFAULTS;
-    }
-    setPrefs(stored);
-    setReady(true);
-  }, [tableId]);
+/** Notifies mounted tables after a write, including writes from another tab. */
+const prefListeners = new Set<() => void>();
+
+function subscribePrefs(onChange: () => void) {
+  prefListeners.add(onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    prefListeners.delete(onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+export function useTablePrefs(tableId: string): TablePreferenceApi {
+  /* Preferences live in localStorage, an external store, so they are read
+   * through useSyncExternalStore instead of being mirrored into component
+   * state. There is deliberately NO local copy: one source of truth means a
+   * write can never be applied twice or drift from what is persisted.
+   *
+   * `ready` distinguishes "this is the stored value" from "this is the
+   * server-render default" — some screens use it to hold off column-dependent
+   * decisions until the real preferences have landed. */
+  const prefs = useSyncExternalStore(
+    subscribePrefs,
+    () => readPrefs(tableId),
+    () => DEFAULTS
+  );
+  const ready = useSyncExternalStore(
+    subscribePrefs,
+    () => true, // on the client the read above is already the stored value
+    () => false // prerender: only defaults exist
+  );
 
   const persist = useCallback(
     (next: TablePrefs) => {
-      setPrefs(next);
       try {
         window.localStorage.setItem(storageKey(tableId), JSON.stringify(next));
       } catch {
         // Private mode / quota: the table still works, it just won't remember.
       }
+      // Notify this tab's subscribers (the `storage` event only fires for other
+      // tabs).
+      for (const listener of prefListeners) listener();
     },
     [tableId]
   );

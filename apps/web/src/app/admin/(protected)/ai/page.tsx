@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Sparkles, Send, Trash2, Loader2, Bot, User, FileText, Languages, PackageSearch, MessageSquareText } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { supabase, edgeFetch } from "@/lib/supabase";
 
 // Copilot chat goes through the ai-proxy edge function: staff-gated, and the
@@ -47,7 +48,7 @@ const SYSTEM_PROMPT =
   "Be concise and business-focused. When asked to write Somali (af-Soomaali), use natural Somali, not machine-literal. " +
   "Prices are USD; supplier prices CNY. Reply in plain text, no markdown headers.";
 
-const TASKS: { key: Exclude<TaskKey, null>; label: string; icon: any; placeholder: string; build: (input: string) => string }[] = [
+const TASKS: { key: Exclude<TaskKey, null>; label: string; icon: LucideIcon; placeholder: string; build: (input: string) => string }[] = [
   {
     key: "translate",
     label: "Translate to Somali",

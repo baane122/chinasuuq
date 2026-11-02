@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useCallback,
+  useEffect,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import en from "@/i18n/en.json";
 import so from "@/i18n/so.json";
 
@@ -18,42 +25,63 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  // First render is always "en" so SSR and hydration match; the saved choice
-  // is restored right after mount (it used to be written but never read).
-  const [locale, setLocaleState] = useState<Locale>("en");
+/* ── The stored locale, as an external store ──────────────────────
+ * localStorage is external state, so it is read with useSyncExternalStore
+ * rather than copied into component state from an effect. The server snapshot
+ * is "en", which is what the static export prerenders, so hydration matches and
+ * the stored choice lands on the first client render. */
+const localeListeners = new Set<() => void>();
 
+function readLocale(): Locale {
+  try {
+    const saved = localStorage.getItem(LOCALE_KEY);
+    if (saved === "so" || saved === "en") return saved;
+  } catch {
+    /* private mode / storage disabled — stay on English */
+  }
+  return "en";
+}
+
+function subscribeLocale(onChange: () => void) {
+  localeListeners.add(onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    localeListeners.delete(onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const locale = useSyncExternalStore(subscribeLocale, readLocale, () => "en" as const);
+
+  // Keep <html lang> in sync so screen readers and translation tools follow.
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(LOCALE_KEY);
-      if (saved === "so" || saved === "en") {
-        setLocaleState(saved);
-        document.documentElement.lang = saved === "so" ? "so" : "en";
-      }
-    } catch {
-      /* private mode / storage disabled — stay on English */
-    }
-  }, []);
+    document.documentElement.lang = locale === "so" ? "so" : "en";
+  }, [locale]);
 
   const setLocale = useCallback((newLocale: Locale) => {
-    setLocaleState(newLocale);
     try {
       localStorage.setItem(LOCALE_KEY, newLocale);
     } catch {
       /* ignore */
     }
-    // Keep <html lang> in sync so screen readers and translation tools follow.
-    document.documentElement.lang = newLocale === "so" ? "so" : "en";
+    // Notify subscribers so every consumer re-renders with the new locale.
+    for (const listener of localeListeners) listener();
   }, []);
 
   const t = useCallback(
     (key: string): string => {
+      // Walk the nested dictionary without `any`: each step is either another
+      // branch (an object) or a leaf string, and anything else means the key is
+      // wrong — in which case the key itself is returned so a missing
+      // translation is visible instead of rendering "undefined".
       const keys = key.split(".");
-      let value: any = translations[locale];
+      let value: unknown = translations[locale];
       for (const k of keys) {
-        value = value?.[k];
+        if (typeof value !== "object" || value === null) return key;
+        value = (value as Record<string, unknown>)[k];
       }
-      return (typeof value === "string" ? value : key) as string;
+      return typeof value === "string" ? value : key;
     },
     [locale]
   );

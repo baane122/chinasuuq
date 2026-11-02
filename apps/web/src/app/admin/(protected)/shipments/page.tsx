@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate } from "@/lib/utils";
@@ -137,7 +138,7 @@ export default function ShipmentsPage() {
           // and every shipment rendered with no order link at all.
           const { rows: ords, failedBatches, batches } = await getOrderRefsByIds(ids);
           const map: Record<string, string> = {};
-          for (const o of (ords as any[]) || []) {
+          for (const o of ords) {
             map[o.id] = o.order_number || o.reference || String(o.id).slice(0, 8);
           }
           setOrderRefs(map);
@@ -158,7 +159,7 @@ export default function ShipmentsPage() {
     }
   }, []);
 
-  useEffect(() => { fetchShipments(); }, [fetchShipments]);
+  useLoaderEffect(() => fetchShipments(), [fetchShipments]);
 
   /* ── Filter ─────────────────────────────────────────────────── */
 

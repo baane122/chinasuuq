@@ -2,7 +2,7 @@
 
 import { useI18n } from "@/lib/i18n";
 import { motion } from "framer-motion";
-import { Smartphone, ArrowRight, CheckCircle2, MessageCircle } from "lucide-react";
+import { Smartphone, CheckCircle2, MessageCircle } from "lucide-react";
 import { waLink } from "@/lib/whatsapp";
 
 export default function AppDownload() {

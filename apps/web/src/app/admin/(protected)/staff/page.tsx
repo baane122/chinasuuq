@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate } from "@/lib/utils";
 import {
@@ -89,6 +90,40 @@ const ROLES = [
 const PERMISSIONS_NOTE =
   "Per-member permissions are not recorded in the database — access is derived from the role alone.";
 
+/**
+ * Department input for the create/edit panels.
+ *
+ * Declared at module scope on purpose. As a component created inside the page's
+ * render body it was a NEW component type on every keystroke, so React unmounted
+ * and remounted the <input> each time — the field lost focus after one character.
+ */
+function DepartmentField({
+  value,
+  onChange,
+  id,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  id: string;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="admin-label">
+        Department
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="e.g. Sourcing"
+        className="admin-input"
+      />
+      <p className="mt-1.5 text-[11px] text-dark-900/40">{PERMISSIONS_NOTE}</p>
+    </div>
+  );
+}
+
+
 export default function StaffPage() {
   const { toast } = useToast();
   const perms = useAdminPermissions();
@@ -154,9 +189,7 @@ export default function StaffPage() {
     }
   };
 
-  useEffect(() => {
-    fetchStaff();
-  }, []);
+  useLoaderEffect(() => fetchStaff(), []);
 
   const openInvite = () => {
     resetCreate();
@@ -340,30 +373,6 @@ export default function StaffPage() {
       setDeleting(false);
     }
   };
-
-  const DepartmentField = ({
-    value,
-    onChange,
-    id,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-    id: string;
-  }) => (
-    <div>
-      <label htmlFor={id} className="admin-label">
-        Department
-      </label>
-      <input
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="e.g. Sourcing"
-        className="admin-input"
-      />
-      <p className="mt-1.5 text-[11px] text-dark-900/40">{PERMISSIONS_NOTE}</p>
-    </div>
-  );
 
   const totalStaff = staff.length;
   const activeStaff = staff.filter((s) => s.is_active).length;

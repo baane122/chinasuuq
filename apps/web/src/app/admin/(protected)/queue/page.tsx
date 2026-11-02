@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Operational Queue — Mission Control.
  *
@@ -16,7 +17,7 @@
  *  - Dismiss is client-side only: no persistence, items reappear after reload.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -112,8 +113,8 @@ export default function OperationalQueuePage() {
         const userIds = [
           ...new Set(
             [...(pendingOrders.data || []), ...(pendingSourcing.data || [])]
-              .map((r: any) => r.user_id)
-              .filter(Boolean)
+              .map((r) => (r as { user_id?: string | null }).user_id)
+              .filter((v): v is string => !!v)
           ),
         ] as string[];
         const nameById = new Map<string, string>();
@@ -122,14 +123,18 @@ export default function OperationalQueuePage() {
             .from("profiles")
             .select("id, full_name")
             .in("id", userIds.slice(0, 200));
-          for (const p of (profs as any[]) || []) {
+          const names = Array.isArray(profs)
+            ? (profs as { id?: string | null; full_name?: string | null }[])
+            : [];
+          for (const p of names) {
             if (p?.id) nameById.set(p.id, p.full_name || "");
           }
         }
-        const customerName = (row: any) => nameById.get(row.user_id) || "";
+        const customerName = (row: { user_id?: string | null }) =>
+          (row.user_id ? nameById.get(row.user_id) : "") || "";
 
         const queueItems: QueueItem[] = [
-          ...(pendingOrders.data || []).map((o: any) => {
+          ...(pendingOrders.data || []).map((o) => {
             const name = customerName(o);
             return {
               id: o.id,
@@ -144,7 +149,7 @@ export default function OperationalQueuePage() {
               createdAt: o.created_at,
             };
           }),
-          ...(pendingSourcing.data || []).map((s: any) => {
+          ...(pendingSourcing.data || []).map((s) => {
             const name = customerName(s);
             return {
               id: s.id,
@@ -172,9 +177,7 @@ export default function OperationalQueuePage() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useLoaderEffect(() => load(), [load]);
 
   const approve = useCallback(
     async (item: QueueItem) => {

@@ -278,7 +278,6 @@ export function EmptyState({
 }) {
   return (
     <div className={cn("flex flex-col items-center px-6 text-center", compact ? "py-8" : "py-14")}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={image}
         alt=""

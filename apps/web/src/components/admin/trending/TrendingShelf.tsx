@@ -10,7 +10,7 @@
  * exactly the kind of silent lie this console was rebuilt to stop.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ArrowUpDown, Loader2, Plus, RotateCcw, Save, AlertTriangle, X } from "lucide-react";
 import type { CatalogProduct } from "@/lib/catalog";
 import { cn } from "@/lib/utils";
@@ -51,19 +51,30 @@ export default function TrendingShelf({
   const [savedSnapshot, setSavedSnapshot] = useState<CatalogProduct[]>(items);
   const [saving, setSaving] = useState(false);
   const [failedIds, setFailedIds] = useState<string[]>([]);
+  /* `dragIndex` tracks the drag in event handlers only — it must not be read
+     while rendering. The card that is being dragged also needs to be styled, so
+     that one bit is mirrored into state, which is legal to read during render. */
   const dragIndex = useRef<number | null>(null);
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
 
-  // When the persisted truth changes (after a save or an external pin/unpin),
-  // re-sync the working copy — unless there are unsaved local moves to protect.
-  useEffect(() => {
-    if (sameOrder(savedSnapshot, items)) return; // external change only
-    if (sameOrder(order, items)) return; // we already match
-    setOrder(items);
-    setSavedSnapshot(items);
-    // Intentionally not resetting failedIds here — the operator dismisses those.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items]);
+  /* When the persisted truth changes (after a save or an external pin/unpin),
+   * re-sync the working copy — unless there are unsaved local moves to protect.
+   *
+   * Adjusted during render instead of in an effect: the effect version painted
+   * the stale order for one frame after every save, and the operator could grab
+   * a card that was about to move. `items` is compared by IDENTITY here (the
+   * parent hands a new array whenever it reloads), which is what the old
+   * exhaustive-deps suppression was working around. */
+  const [syncedItems, setSyncedItems] = useState(items);
+  if (syncedItems !== items) {
+    setSyncedItems(items);
+    if (!sameOrder(savedSnapshot, items) && !sameOrder(order, items)) {
+      setOrder(items);
+      setSavedSnapshot(items);
+      // failedIds is intentionally kept — the operator dismisses those.
+    }
+  }
 
   const dirty = !sameOrder(order, savedSnapshot);
 
@@ -84,15 +95,18 @@ export default function TrendingShelf({
 
   const handleDragStart = (index: number) => {
     dragIndex.current = index;
+    setDraggingIndex(index);
   };
   const handleDragEnter = (index: number) => {
     if (dragIndex.current === null || dragIndex.current === index) return;
     setDragOver(index);
     move(dragIndex.current, index);
     dragIndex.current = index;
+    setDraggingIndex(index);
   };
   const handleDragEnd = () => {
     dragIndex.current = null;
+    setDraggingIndex(null);
     setDragOver(null);
   };
 
@@ -202,7 +216,7 @@ export default function TrendingShelf({
               index={i}
               count={order.length}
               disabled={saving}
-              dragging={dragIndex.current === i}
+              dragging={draggingIndex === i}
               dragOver={dragOver === i}
               onMoveUp={(idx) => move(idx, idx - 1)}
               onMoveDown={(idx) => move(idx, idx + 1)}

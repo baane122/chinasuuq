@@ -45,9 +45,15 @@ export function isSuperAdminRole(role: string | null | undefined): boolean {
  * "this user is not staff" and sign a legitimate staff member out.
  */
 export function isNetworkError(error: unknown): boolean {
-  const msg = String(
-    (error as any)?.message ?? (error as any)?.code ?? error ?? ""
-  ).toLowerCase();
+  // Narrowing through `unknown` rather than `any`: the object may be a thrown
+  // Error, a PostgREST-style `{ message, code }`, a bare string, or null.
+  const parts: unknown[] = [];
+  if (typeof error === "string") parts.push(error);
+  else if (error && typeof error === "object") {
+    const e = error as { message?: unknown; code?: unknown };
+    parts.push(e.message, e.code);
+  }
+  const msg = parts.filter((p): p is string => typeof p === "string").join(" ").toLowerCase();
   return (
     msg.includes("failed to fetch") ||
     msg.includes("network") ||

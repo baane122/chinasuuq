@@ -28,7 +28,7 @@
  * No network. Non-zero exit on any mismatch.
  */
 
-import { readFileSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join, dirname, relative } from "node:path";
@@ -54,7 +54,7 @@ if (!statSync(APK, { throwIfNoEntry: false })) {
 let manifest;
 try {
   manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
-} catch (e) {
+} catch {
   console.log(`  x ${relative(REPO_ROOT, MANIFEST)} is missing or unreadable`);
   console.log("    Every shipped APK needs provenance. Run `npm run apk:stamp` in apps/web.");
   process.exit(1);

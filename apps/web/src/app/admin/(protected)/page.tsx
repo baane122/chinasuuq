@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity,
   AlertCircle,
-  ArrowDownRight,
-  ArrowUpRight,
   Boxes,
   Calendar,
-  CheckCircle2,
   ChevronRight,
   Clock3,
   CreditCard,
@@ -21,15 +19,14 @@ import {
   Package,
   Plus,
   RefreshCw,
-  Search,
   Settings,
   ShoppingCart,
   Ship,
   TrendingUp,
   Users,
   Zap,
-  Pin,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { PageHeader, StatCard, PageGrid, SectionCard, FilterChips } from "@/components/admin/ui";
 import { STATUS_COLORS, chartPalette, marketplaceStyle } from "@/lib/admin/theme";
 import { StatusBadge } from "@/components/admin/StatusBadge";
@@ -46,7 +43,6 @@ import {
   getAdminRevenueDaily,
   kpiValue,
   listOrders,
-  listProducts,
   mapDbStatusToMobile,
   type KpiMap,
 } from "@/lib/admin/supabase-data";
@@ -237,27 +233,35 @@ function mergeStatusCounts(
 }
 
 /* ─── Animated counter hook ─────────────────────────────────────── */
+/**
+ * Counts up to `end` over `duration` ms.
+ *
+ * The painted number is mirrored into `valueRef` so the animation loop can
+ * resume from it without reading `value` from state: an effect that both reads
+ * and writes the same state either loops forever (if it depends on it) or works
+ * off a stale value (if it doesn't). Every path that calls setValue also updates
+ * the ref, so the two can never drift.
+ */
 function useAnimatedCounter(end: number, duration = 1200, decimals = 0) {
   const [value, setValue] = useState(0);
+  const valueRef = useRef(0);
   const rafRef = useRef<number | null>(null);
-  const startRef = useRef<number | null>(null);
-  const fromRef = useRef(0);
 
   useEffect(() => {
-    fromRef.current = value;
-    startRef.current = null;
+    const from = valueRef.current;
+    let startedAt: number | null = null;
+
     const step = (ts: number) => {
-      if (startRef.current === null) startRef.current = ts;
-      const elapsed = ts - startRef.current;
-      const progress = Math.min(elapsed / duration, 1);
+      if (startedAt === null) startedAt = ts;
+      const progress = Math.min((ts - startedAt) / duration, 1);
       // ease-out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
-      const current = fromRef.current + (end - fromRef.current) * eased;
+      const current = from + (end - from) * eased;
+      valueRef.current = current;
       setValue(current);
-      if (progress < 1) {
-        rafRef.current = requestAnimationFrame(step);
-      }
+      if (progress < 1) rafRef.current = requestAnimationFrame(step);
     };
+
     rafRef.current = requestAnimationFrame(step);
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -265,47 +269,6 @@ function useAnimatedCounter(end: number, duration = 1200, decimals = 0) {
   }, [end, duration]);
 
   return decimals > 0 ? value.toFixed(decimals) : Math.round(value);
-}
-
-/* ─── Mini sparkline (SVG) ──────────────────────────────────────── */
-function MiniSparkline({
-  data,
-  color = chartPalette.brand,
-}: {
-  data: number[];
-  color?: string;
-}) {
-  const max = Math.max(...data, 1);
-  const points = data
-    .map(
-      (v, i) =>
-        `${(i / Math.max(data.length - 1, 1)) * 100},${100 - (v / max) * 80}`
-    )
-    .join(" ");
-  return (
-    <svg
-      viewBox="0 0 100 100"
-      className="w-full h-8"
-      preserveAspectRatio="none"
-    >
-      <defs>
-        <linearGradient id={`spark-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polyline
-        fill="none"
-        stroke={color}
-        strokeWidth="2"
-        points={points}
-      />
-      <polygon
-        fill={`url(#spark-${color.replace("#", "")})`}
-        points={`0,100 ${points} 100,100`}
-      />
-    </svg>
-  );
 }
 
 /* ─── Revenue bar chart (pure CSS/SVG) ──────────────────────────── */
@@ -367,7 +330,28 @@ function OrderStatusDonut({ data }: { data: OrderStatusCount[] }) {
   const radius = 58;
   const stroke = 22;
   const circumference = 2 * Math.PI * radius;
-  let accumulated = 0;
+
+  /* Offsets are derived up front, not accumulated inside the render pass: the
+     old `accumulated += pct` mutates a local while JSX is being produced, so a
+     second render (hover, a realtime bump) restarted the ring at a stale sum
+     and every slice shifted. */
+  const slices = data.reduce<{
+    rows: { key: string; color: string; dashLen: number; dashOff: number }[];
+    consumed: number;
+  }>(
+    (acc, d) => {
+      const pct = d.count / total;
+      acc.rows.push({
+        key: d.status,
+        color: d.color,
+        dashLen: circumference * pct,
+        dashOff: circumference * acc.consumed,
+      });
+      acc.consumed += pct;
+      return acc;
+    },
+    { rows: [], consumed: 0 }
+  ).rows;
 
   return (
     <div className="flex items-center gap-6">
@@ -380,27 +364,21 @@ function OrderStatusDonut({ data }: { data: OrderStatusCount[] }) {
         className="relative block shrink-0 cursor-pointer transition-opacity hover:opacity-85"
       >
         <svg width={size} height={size} className="transform -rotate-90">
-          {data.map((d) => {
-            const pct = d.count / total;
-            const dashLen = circumference * pct;
-            const dashOff = circumference * accumulated;
-            accumulated += pct;
-            return (
-              <circle
-                key={d.status}
-                cx={cx}
-                cy={cy}
-                r={radius}
-                fill="none"
-                stroke={d.color}
-                strokeWidth={stroke}
-                strokeDasharray={`${dashLen} ${circumference - dashLen}`}
-                strokeDashoffset={-dashOff}
-                strokeLinecap="butt"
-                className="transition-all duration-700 ease-out"
-              />
-            );
-          })}
+          {slices.map((d) => (
+            <circle
+              key={d.key}
+              cx={cx}
+              cy={cy}
+              r={radius}
+              fill="none"
+              stroke={d.color}
+              strokeWidth={stroke}
+              strokeDasharray={`${d.dashLen} ${circumference - d.dashLen}`}
+              strokeDashoffset={-d.dashOff}
+              strokeLinecap="butt"
+              className="transition-all duration-700 ease-out"
+            />
+          ))}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-2xl font-bold text-dark-900">{total}</span>
@@ -485,25 +463,34 @@ function MarketplaceBreakdown({ data }: { data: MarketplaceRevenue[] }) {
 }
 
 /* ─── Live activity feed ────────────────────────────────────────── */
-function ActivityFeed({ events }: { events: ActivityEvent[] }) {
-  const typeIcons: Record<string, { icon: any; color: string }> = {
-    order: { icon: ShoppingCart, color: "bg-brand-50 text-brand-600" },
-    payment: { icon: CreditCard, color: "bg-emerald-50 text-emerald-600" },
-    shipment: { icon: Ship, color: "bg-sky-50 text-sky-600" },
-    customer: { icon: Users, color: "bg-violet-50 text-violet-600" },
-    product: { icon: Package, color: "bg-amber-50 text-amber-600" },
-    system: { icon: Zap, color: "bg-gray-100 text-gray-600" },
-  };
+const ACTIVITY_ICONS: Record<string, { icon: LucideIcon; color: string }> = {
+  order: { icon: ShoppingCart, color: "bg-brand-50 text-brand-600" },
+  payment: { icon: CreditCard, color: "bg-emerald-50 text-emerald-600" },
+  shipment: { icon: Ship, color: "bg-sky-50 text-sky-600" },
+  customer: { icon: Users, color: "bg-violet-50 text-violet-600" },
+  product: { icon: Package, color: "bg-amber-50 text-amber-600" },
+  system: { icon: Zap, color: "bg-gray-100 text-gray-600" },
+};
 
-  function timeAgo(dateStr: string) {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  }
+/** "3m ago" from an ISO timestamp, given the render's clock. */
+function timeAgo(dateStr: string, now: number) {
+  const diff = now - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function ActivityFeed({ events }: { events: ActivityEvent[] }) {
+  /* `now` is sampled once per render instead of calling Date.now() inside the
+     row renderer. Reading the clock while rendering is not pure — two rows in
+     the same pass could disagree, and React may re-render a component on a
+     different tick than its parent and print a different age for one event.
+     Sampling here keeps the whole list on one timestamp. */
+  const [now] = useState(() => Date.now());
+  const typeIcons = ACTIVITY_ICONS;
 
   return (
     <div className="space-y-1 max-h-[380px] overflow-y-auto pr-1">
@@ -531,7 +518,7 @@ function ActivityFeed({ events }: { events: ActivityEvent[] }) {
             <div className="min-w-0 flex-1">
               <p className="text-sm text-dark-900 leading-tight">{e.title}</p>
               <p className="text-[11px] text-dark-900/40 mt-0.5">
-                {timeAgo(e.created_at)}
+                {timeAgo(e.created_at, now)}
               </p>
             </div>
           </motion.div>
@@ -724,7 +711,15 @@ export default function AdminDashboard() {
       /* Activity feed from notifications */
       if (!notifRes.error && notifRes.data) {
         setActivities(
-          (notifRes.data as any[]).map((n) => ({
+          (
+            notifRes.data as {
+              id: string;
+              title: string | null;
+              body: string | null;
+              type: string | null;
+              created_at: string;
+            }[]
+          ).map((n) => ({
             id: n.id,
             title: n.title || n.body || "System event",
             type: n.type || "system",
@@ -738,8 +733,8 @@ export default function AdminDashboard() {
       /* One banner for the whole load, after every part has reported. */
       if (failed.length) setError(failed.join(" | "));
       else autoRetriesRef.current = 0;
-    } catch (e: any) {
-      setError(e?.message || "Failed to load dashboard");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load dashboard");
     } finally {
       setLoading(false);
     }
@@ -747,9 +742,7 @@ export default function AdminDashboard() {
      * constant, so switching the segmented control re-runs the whole load. */
   }, [rangeDays]);
 
-  useEffect(() => {
-    void load();
-  }, [load, liveVersion]);
+  useLoaderEffect(() => load(), [load, liveVersion]);
 
   /* load() used to run only on mount and on a realtime bump, so one 502 or a
    * schema cache that had not caught up with the migration pinned the banner
@@ -782,14 +775,19 @@ export default function AdminDashboard() {
         // debounced realtime burst, which showed as a stall on any write.
         supabase.rpc("admin_category_product_counts"),
       ]);
+      // Read the fresh count from this response, not from `ops`: setOps above
+      // does not update the closed-over state object, so `ops.lowStock` here is
+      // still the PREVIOUS render's value. That made the warning panel appear
+      // one realtime burst late and disappear as soon as the count dropped to 0.
+      const lowStockCount = stock.error ? null : (stock.count ?? 0);
       setOps({
         inTransit: ship.error ? null : (ship.count ?? 0),
-        lowStock: stock.error ? null : (stock.count ?? 0),
+        lowStock: lowStockCount,
         pendingSourcing: src.error ? null : (src.count ?? 0),
         unreadNotifications: notif.error ? null : (notif.count ?? 0),
       });
       /* Fetch the actual low-stock products for the warning panel */
-      if (!stock.error && ops.lowStock! > 0) {
+      if (lowStockCount !== null && lowStockCount > 0) {
         const lpRes = await supabase
           .from("source_products")
           .select("id, title_english, marketplace, stock_status, images")
@@ -797,7 +795,15 @@ export default function AdminDashboard() {
           .limit(8);
         if (!lpRes.error && lpRes.data) {
           setLowStockProducts(
-            lpRes.data.map((p: any) => ({
+            (
+              lpRes.data as {
+                id: string;
+                title_english: string | null;
+                marketplace: string | null;
+                stock_status: string | null;
+                images: string[] | null;
+              }[]
+            ).map((p) => ({
               id: p.id,
               title: p.title_english || "",
               title_english: p.title_english || "",
@@ -1096,7 +1102,7 @@ export default function AdminDashboard() {
                     className="flex items-center gap-3 rounded-xl border border-amber-200/60 bg-amber-50/50 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10"
                   >
                     {p.source_images?.[0] ? (
-                      // eslint-disable-next-line @next/next/no-img-element
+
                       <img
                         src={p.source_images[0]}
                         alt={p.title_english || p.title}
@@ -1357,7 +1363,7 @@ export default function AdminDashboard() {
                 >
                   <div className="relative h-24 overflow-hidden rounded-2xl bg-gradient-to-br from-brand-50 to-warm-100 ring-1 ring-dark-900/[0.04]">
                     {c.image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
+
                       <img
                         src={c.image_url}
                         alt={c.name}
@@ -1445,7 +1451,7 @@ export default function AdminDashboard() {
                       {p.curation.rank ?? i + 1}
                     </span>
                     {p.primaryImage ? (
-                      // eslint-disable-next-line @next/next/no-img-element
+
                       <img
                         src={p.primaryImage}
                         alt={p.title}
@@ -1498,7 +1504,7 @@ export default function AdminDashboard() {
                     {i + 1}
                   </span>
                   {img ? (
-                    // eslint-disable-next-line @next/next/no-img-element
+
                     <img
                       src={img}
                       alt={p.title_english || p.title}

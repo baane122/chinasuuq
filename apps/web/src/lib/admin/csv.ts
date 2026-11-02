@@ -16,10 +16,13 @@ function escapeCell(value: unknown): string {
   return /[",\n\r]/.test(body) ? `"${body.replace(/"/g, '""')}"` : body;
 }
 
-export function toCsv(
-  columns: { header: string; value: (row: any) => unknown }[],
-  rows: any[]
-): string {
+/** One spreadsheet column: a header and how to pull its cell out of a row. */
+export interface CsvColumn<T> {
+  header: string;
+  value: (row: T) => unknown;
+}
+
+export function toCsv<T>(columns: CsvColumn<T>[], rows: T[]): string {
   const head = columns.map((c) => escapeCell(c.header)).join(",");
   const body = rows.map((row) =>
     columns.map((c) => escapeCell(c.value(row))).join(",")
@@ -45,7 +48,35 @@ export function downloadCsv(filename: string, csv: string) {
  * Shared by the dashboard and the orders list so both export the same shape —
  * a staff member opening either file should not have to relearn the columns.
  */
-export const ORDERS_CSV_COLUMNS: { header: string; value: (row: any) => unknown }[] = [
+/**
+ * The row shape ORDERS_CSV_COLUMNS reads. Deliberately loose (every field
+ * optional) because the dashboard feeds it its own `RecentOrder` and the orders
+ * page feeds it full view rows; both are structurally compatible, and a missing
+ * field must export as an empty cell rather than be invented.
+ */
+export interface OrdersCsvRow {
+  id?: string | null;
+  order_number?: string | null;
+  reference?: string | null;
+  created_at?: string | null;
+  customer_name?: string | null;
+  recipient_name?: string | null;
+  phone?: string | null;
+  customer_phone?: string | null;
+  city?: string | null;
+  status?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  shipping_method?: string | null;
+  apps?: string[] | null;
+  target_marketplace?: string | null;
+  total?: number | null;
+  subtotal?: number | null;
+  shipping_cost?: number | null;
+  service_fee?: number | null;
+}
+
+export const ORDERS_CSV_COLUMNS: CsvColumn<OrdersCsvRow>[] = [
   { header: "Order", value: (r) => r.order_number || r.reference || r.id },
   { header: "Placed (UTC)", value: (r) => r.created_at },
   { header: "Customer", value: (r) => r.customer_name || r.recipient_name || "" },

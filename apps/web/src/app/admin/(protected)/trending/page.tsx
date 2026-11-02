@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Trending — Mission Control.
  *
@@ -60,6 +61,7 @@ import {
   RefreshCw,
   Store,
   Tag,
+  TrendingUp,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -104,8 +106,10 @@ import PinPicker from "@/components/admin/trending/PinPicker";
 import BehaviourLeaderboard from "@/components/admin/trending/BehaviourLeaderboard";
 import EventLedger from "@/components/admin/trending/EventLedger";
 import PublishPreview from "@/components/admin/trending/PublishPreview";
+import TrendingInsights from "@/components/admin/trending/TrendingInsights";
+import { SHELF_TARGET } from "@/lib/admin/trendingInsights";
 
-type Tab = "shelf" | "behaviour" | "ledger" | "preview";
+type Tab = "shelf" | "behaviour" | "insights" | "ledger" | "preview";
 
 /** Module scope keeps `useUrlFilters` from re-parsing on every render. */
 const FILTER_DEFAULTS: Record<string, string> = {
@@ -121,6 +125,7 @@ const HOME_LIMIT = 12;
 const TABS: { value: Tab; label: string; icon: typeof Pin; hint: string }[] = [
   { value: "shelf", label: "Shelf", icon: Pin, hint: "The ordered staff-picked list customers see first" },
   { value: "behaviour", label: "Behaviour", icon: Flame, hint: "The live ranking over product_events" },
+  { value: "insights", label: "Insights", icon: TrendingUp, hint: "Fill, demand mix and momentum, from the same rows" },
   { value: "ledger", label: "Event ledger", icon: ListChecks, hint: "Raw recorded customer actions" },
   { value: "preview", label: "Publish preview", icon: Eye, hint: "Exactly what the home page renders now" },
 ];
@@ -229,9 +234,7 @@ function TrendingScreen() {
     setPinsLoading(false);
   }, []);
 
-  useEffect(() => {
-    void loadPins(locale);
-  }, [loadPins, locale, refreshKey, liveVersion]);
+  useLoaderEffect(() => loadPins(locale), [loadPins, locale, refreshKey, liveVersion]);
 
   useEffect(() => {
     let alive = true;
@@ -247,41 +250,35 @@ function TrendingScreen() {
 
   /* Events in the selected window — a head-count, because the ledger table caps
    * its rows and a cap is not a total. */
-  useEffect(() => {
-    let alive = true;
-    setEventsCount(null);
-    setEventsCountFailed(false);
-    (async () => {
+  useLoaderEffect(
+    async ({ cancelled }) => {
+      setEventsCount(null);
+      setEventsCountFailed(false);
       const { count, error } = await supabase
         .from("admin_product_events_view")
         .select("id", { count: "exact", head: true })
         .gte("created_at", windowStartIso(days));
-      if (!alive) return;
+      if (cancelled()) return;
       if (error) {
         setEventsCountFailed(true);
         setEventsCount(null);
       } else {
         setEventsCount(count ?? 0);
       }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [days, refreshKey]);
+    },
+    [days, refreshKey]
+  );
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
+  useLoaderEffect(
+    async ({ cancelled }) => {
       const res = await fetchBehaviourTrending(days, 5);
-      if (!alive) return;
+      if (cancelled()) return;
       setBehaviourError(res.error);
       const top = res.rows[0];
       setBehaviourTop(top ? { name: top.name, score: top.score } : null);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [days, refreshKey]);
+    },
+    [days, refreshKey]
+  );
 
   /* The served shelf. Same call, same settings as the home section, so the
    * Publish preview below and the KPI strip cannot disagree with each other. */
@@ -298,9 +295,7 @@ function TrendingScreen() {
     setFeed(res.data);
   }, [days, limit, locale]);
 
-  useEffect(() => {
-    void loadFeed();
-  }, [loadFeed, refreshKey]);
+  useLoaderEffect(() => loadFeed(), [loadFeed, refreshKey]);
 
   /* ─── Writes ──────────────────────────────────────────────────── */
   const pinnedRank = useMemo(() => {
@@ -565,7 +560,7 @@ function TrendingScreen() {
             count:
               t.value === "shelf"
                 ? pins.length
-                : t.value === "behaviour"
+                : t.value === "behaviour" || t.value === "insights"
                   ? undefined
                   : t.value === "ledger"
                     ? (eventsCount ?? undefined)
@@ -630,6 +625,27 @@ function TrendingScreen() {
             refreshKey={refreshKey}
             pinnedRank={pinnedRank}
             onPin={handlePinById}
+          />
+        </SectionCard>
+      )}
+
+      {/* ─── INSIGHTS ─────────────────────────────────────────────── */}
+      {tab === "insights" && (
+        <SectionCard
+          title="Shelf health and demand"
+          subtitle={`Read from the same ledger and ranking this page already shows — ${windowCaption(days)}. Opening a product here writes nothing; a real customer visit is still what records a view.`}
+        >
+          <TrendingInsights
+            pins={pins}
+            availableOrganic={feedItems.filter((i) => i.source !== "pinned").length}
+            organicCapped={limit < SHELF_TARGET}
+            pinsLoading={pinsLoading}
+            days={days}
+            refreshKey={refreshKey}
+            locale={locale}
+            onPreviewProduct={(product) =>
+              setPreviewItem({ product, source: "pinned", score: null, eventCount: null, rank: product.curation.rank })
+            }
           />
         </SectionCard>
       )}

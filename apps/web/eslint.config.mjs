@@ -16,6 +16,28 @@ const eslintConfig = defineConfig([
     // by the Node ESLint toolchain (Deno-style imports would false-positive).
     "supabase/functions/**",
   ]),
+
+  {
+    rules: {
+      /**
+       * `<img>` over `next/image` is deliberate here, not an oversight.
+       *
+       * The app is a STATIC EXPORT (`output: "export"` in next.config.ts) and
+       * every product image is a hotlink to a marketplace CDN (1688, Taobao,
+       * Yiwugo). With `images.unoptimized: true` there is no optimizer at
+       * runtime, so <Image> would emit the same <img> plus a client wrapper and
+       * a runtime width/height contract those URLs cannot satisfy.
+       *
+       * The three things this rule protects are handled explicitly at each call
+       * site instead: `loading="lazy"` + `decoding="async"` on every list image,
+       * an `onError` handler so an expired 1688 URL renders a placeholder rather
+       * than a broken-image icon, and `referrerPolicy="no-referrer"` so the
+       * marketplace CDNs serve the asset at all. Turn this back on only if the
+       * site ever moves to a server renderer with an image loader.
+       */
+      "@next/next/no-img-element": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

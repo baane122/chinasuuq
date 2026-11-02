@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Sourcing board — every order LINE through the five steps the team actually
  * performs, click-to-advance.
@@ -177,9 +178,7 @@ export default function SourcingBoard({
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load, liveVersion]);
+  useLoaderEffect(() => load(), [load, liveVersion]);
 
   /* ── Columns ─────────────────────────────────────────────────── */
 
@@ -436,7 +435,7 @@ const LineCard = memo(function LineCard({
       <div className="flex gap-2">
         <div className="shrink-0">
           {line.image_url && !imgFailed ? (
-            // eslint-disable-next-line @next/next/no-img-element
+
             <img
               src={line.image_url}
               alt=""

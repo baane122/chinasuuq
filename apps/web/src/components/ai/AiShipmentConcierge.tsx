@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Loader2, Languages, AlertTriangle } from "lucide-react";
+import { Sparkles, Loader2, AlertTriangle } from "lucide-react";
 import { aiChat } from "@/lib/ai/client";
 import { useI18n } from "@/lib/i18n";
 

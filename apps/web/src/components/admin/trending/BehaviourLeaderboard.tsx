@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Live behaviour leaderboard — `fn_trending_products` over the real event ledger.
  *
@@ -16,7 +17,7 @@
  * chart or a score out of an empty table.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { Check, Loader2, Pin, RefreshCw, Flame } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -137,9 +138,7 @@ export default function BehaviourLeaderboard({
     setMix(acc);
   }, [days]);
 
-  useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
+  useLoaderEffect(() => load(), [load, refreshKey]);
 
   const emptyForWindow = !loading && !error && rows.length === 0;
 
@@ -241,7 +240,7 @@ export default function BehaviourLeaderboard({
                       <td>
                         <div className="flex items-center gap-2.5">
                           {r.image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
+
                             <img
                               src={r.image_url}
                               alt={r.name}

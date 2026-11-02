@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState } from "react";
 import { WHATSAPP_LINK } from "@/lib/whatsapp";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -24,7 +25,10 @@ export default function AdminLoginPage() {
   const canSubmit = isEmailValid && isPasswordValid && !isLoading;
 
   // Already in a fallback session? go straight to admin. (Dev builds only.)
-  useEffect(() => {
+  /* Two one-time browser-only reads on mount: the dev fallback session (a
+   * redirect) and the last-used email box. Neither can run during render — the
+   * static export prerenders this page with an empty email field. */
+  useLoaderEffect(() => {
     if (isDevBuild && hasAdminFallbackSession()) {
       router.replace("/admin");
     }
@@ -95,7 +99,12 @@ export default function AdminLoginPage() {
         router.push("/admin");
         router.refresh();
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      // Only to explain the failure to the operator, never to branch on
+      // string contents: a 400 from the auth service and a dead network both
+      // land here, and the message below covers the transport case only when
+      // nothing more specific came back.
+      console.warn("[admin/login] sign-in failed", err);
       setErrorType("network");
       setError(isDevBuild
         ? "Could not reach the authentication service. Use the recovery code to access Mission Control."
@@ -128,7 +137,6 @@ export default function AdminLoginPage() {
         {/* Logo row */}
         <div className="relative flex items-center gap-3">
           <div className="flex h-11 items-center justify-center rounded-xl bg-white/15 p-1.5 backdrop-blur">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/admin/logo.jpg" alt="ChinaSuuq" className="h-full w-auto object-contain" />
           </div>
           <div>
@@ -171,7 +179,6 @@ export default function AdminLoginPage() {
 
         {/* Hero + footer */}
         <div className="relative mt-auto pt-12">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/admin/login_hero.webp"
             alt="ChinaSuuq Mission Control"
@@ -189,7 +196,6 @@ export default function AdminLoginPage() {
           {/* Mobile brand strip */}
           <div className="mb-8 flex items-center justify-center gap-3 lg:hidden">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 p-1.5 shadow-sm ring-1 ring-dark-900/10">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/admin/logo.jpg" alt="ChinaSuuq" className="h-full w-full object-contain" />
             </div>
             <div>
@@ -203,7 +209,6 @@ export default function AdminLoginPage() {
             {/* Logo + heading */}
             <div className="mb-8 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-warm-50 p-2 shadow ring-1 ring-dark-900/10">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/admin/logo.jpg" alt="ChinaSuuq" className="h-full w-full object-contain" />
               </div>
               <h1 className="mt-5 text-2xl font-bold tracking-tight text-dark-900">Mission Control</h1>

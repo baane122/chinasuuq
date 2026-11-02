@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { X, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface ModalProps {
   open: boolean;
@@ -25,11 +24,6 @@ export default function Modal({
   confirmText = "Save",
   confirmLoading,
 }: ModalProps) {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    if (open) setMounted(true);
-  }, [open]);
 
   // Close on Escape
   useEffect(() => {
@@ -41,7 +35,11 @@ export default function Modal({
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
-  if (!open && !mounted) return null;
+  /* The old version kept a `mounted` flag and flipped it in an effect so the
+   * exit animation could play. That cost an extra render pass on every open and
+   * was flagged as a cascading-render pattern. Nothing here animates the
+   * unmount, so the state is simply gone: closed means unmounted. */
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

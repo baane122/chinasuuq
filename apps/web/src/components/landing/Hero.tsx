@@ -1,7 +1,7 @@
 "use client";
 
 import { useI18n } from "@/lib/i18n";
-import { motion, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion } from "framer-motion";
 import SearchBar from "./SearchBar";
 import {
   ShieldCheck,
@@ -19,7 +19,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { waLink } from "@/lib/whatsapp";
 
 const trustItems = [
@@ -62,10 +62,16 @@ function CountUp({ target, duration = 2 }: { target: string; duration?: number }
   const numericPart = match ? match[1] : null;
   const suffix = match ? match[2] ?? "" : "";
 
+  /* Targets that are not a clean number ("7–35", "24/7") are shown verbatim.
+   * That is a DERIVATION of `target`, so it happens below in the return value —
+   * the old version set it from inside the effect, which painted "0" first and
+   * then the real label on a second pass. Only the numeric case needs an effect,
+   * and it only writes from a timer callback, never synchronously. */
+  const animatable = numericPart !== null && !Number.isNaN(parseInt(numericPart));
+
   useEffect(() => {
-    if (numericPart === null) { setDisplay(target); return; }
+    if (!animatable || !numericPart) return;
     const end = parseInt(numericPart);
-    if (isNaN(end)) { setDisplay(target); return; }
     let start = 0;
     const increment = end / (duration * 60);
     const timer = setInterval(() => {
@@ -78,13 +84,13 @@ function CountUp({ target, duration = 2 }: { target: string; duration?: number }
       }
     }, 1000 / 60);
     return () => clearInterval(timer);
-  }, [target, numericPart, suffix, duration]);
+  }, [animatable, target, numericPart, suffix, duration]);
 
-  return <span>{display}</span>;
+  return <span>{animatable ? display : target}</span>;
 }
 
 export default function Hero() {
-  const { t, locale } = useI18n();
+  const { locale } = useI18n();
   const [hoveredStep, setHoveredStep] = useState<number | null>(null);
 
   return (

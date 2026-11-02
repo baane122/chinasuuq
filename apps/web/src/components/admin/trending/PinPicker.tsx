@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Pin picker — search the LIVE catalogue and drop products onto the shelf.
  *
@@ -94,9 +95,7 @@ export default function PinPicker({ open, onClose, pinnedRank, onPin }: PinPicke
     setLoading(false);
   }, [open, search, categoryId, marketplace, page]);
 
-  useEffect(() => {
-    void run();
-  }, [run]);
+  useLoaderEffect(() => run(), [run]);
 
   const handlePin = async (product: CatalogProduct) => {
     setPendingId(product.id);

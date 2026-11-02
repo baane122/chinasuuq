@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Event ledger — the raw `product_events` feed behind the trending ranking.
  *
@@ -17,7 +18,7 @@
  *  - No event is drawn as a chart or turned into a number the row does not carry.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { RefreshCw, Loader2, ListChecks } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -109,9 +110,7 @@ export default function EventLedger({
     setLoading(false);
   }, [days, typeFilter]);
 
-  useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
+  useLoaderEffect(() => load(), [load, refreshKey]);
 
   const emptyForWindow = !loading && !error && rows.length === 0;
 

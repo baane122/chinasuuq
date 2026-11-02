@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate } from "@/lib/utils";
 import { Package, CheckCircle2, AlertCircle, Plus, Pencil, Trash2, Loader2 } from "lucide-react";
@@ -132,9 +133,7 @@ export default function WarehousePage() {
     }
   };
 
-  useEffect(() => {
-    fetchPackages();
-  }, []);
+  useLoaderEffect(() => fetchPackages(), []);
 
   const filteredPackages = useMemo(() => {
     return packages.filter((pkg) => {

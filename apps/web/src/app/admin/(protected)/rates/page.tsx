@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDateTime } from "@/lib/utils";
@@ -177,9 +178,7 @@ export default function RatesPage() {
 
   // One read on mount: this is a history view and Settings is the only writer,
   // so there is nothing here to keep live.
-  useEffect(() => {
-    fetchRates();
-  }, []);
+  useLoaderEffect(() => fetchRates(), []);
 
   const filteredRates = useMemo(() => {
     if (!search) return rates;

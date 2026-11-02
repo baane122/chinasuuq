@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatCNY, formatUSD, formatDate } from "@/lib/utils";
 import { BadgeDollarSign, Loader2, Plus, Pencil, Trash2, Send } from "lucide-react";
@@ -149,9 +150,7 @@ export default function QuotesPage() {
     }
   };
 
-  useEffect(() => {
-    fetchQuotes();
-  }, []);
+  useLoaderEffect(() => fetchQuotes(), []);
 
   /* request_id is nullable — a quote raised from the Sourcing page has none — so
    * every string in this filter is read through text(), never .toLowerCase(). */

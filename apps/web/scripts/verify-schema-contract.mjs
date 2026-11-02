@@ -103,7 +103,6 @@ function checkColumns(table, list, file, line, { allowEmbed = true } = {}) {
 const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 
 const RE_FROM = /\.from\(\s*"([a-z_][a-z0-9_]*)"\s*\)/g;
-const RE_SELECT = /\.select\(\s*("([^"]*)"|`([^`]*)`)/g;
 const RE_ORDER = /\.order\(\s*"([a-z_][a-z0-9_]*)"((?:\s*,\s*\{[^}]*\})?)/g;
 
 console.log(`Scanning ${files.length} files against ${Object.keys(SNAPSHOT).length} tables…`);

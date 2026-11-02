@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState, useCallback } from "react";
 import {
   listMarketplaceAccounts,
   saveMarketplaceAccount,
@@ -151,7 +152,7 @@ export default function AdminMarketplacesPage() {
     }
   }, []);
 
-  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+  useLoaderEffect(() => fetchAccounts(), [fetchAccounts]);
 
   const resetForm = () => {
     setForm(emptyForm);

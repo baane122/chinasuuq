@@ -123,7 +123,14 @@ async function loadRates(): Promise<{ rates: FxRates; reachedDb: boolean }> {
 
     let cnyRaw: number | null = null;
     let sosRaw: number | null = null;
-    for (const row of (data as any[]) || []) {
+    const rateRows = Array.isArray(data)
+      ? (data as {
+          from_currency?: string | null;
+          to_currency?: string | null;
+          rate?: number | string | null;
+        }[])
+      : [];
+    for (const row of rateRows) {
       const from = String(row?.from_currency ?? "").toUpperCase();
       const to = String(row?.to_currency ?? "").toUpperCase();
       const rate = positiveNumber(row?.rate);
@@ -146,7 +153,9 @@ async function loadRates(): Promise<{ rates: FxRates; reachedDb: boolean }> {
     // from that RPC payload. Unreachable RPC keeps the last known fee; the
     // rates themselves already came back above.
     const { data: fxPayload, error: rpcError } = await supabase.rpc("fx_rates");
-    const rpcFee = rpcError ? null : positiveNumber((fxPayload as any)?.service_fee_pct);
+    const rpcFee = rpcError
+      ? null
+      : positiveNumber((fxPayload as { service_fee_pct?: number | string | null } | null)?.service_fee_pct);
     const serviceFeePct = rpcFee ?? lastGood.serviceFeePct;
 
     // `fromLiveRow` is only true when an active CNY→USD row was actually read and

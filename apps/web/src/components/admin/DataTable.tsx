@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useCallback, useEffect, ReactNode } from "react";
+import { useState, useMemo, useCallback, ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -102,13 +102,15 @@ export function DataTable<T extends { id: string }>({
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  // Reset to the first page whenever the result set changes shape, and clamp if
-  // a shrink (filter edit / page-size bump) left `page` out of range.
-  useEffect(() => {
-    setPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [totalPages, searchValue, sortKey, sortDir, pageSize]);
+  /* Clamping is DERIVED, not stored: a shrink (filter edit, page-size bump)
+   * must never leave the view on a page that no longer exists, but writing that
+   * back into state from an effect costs a second render pass and leaves one
+   * frame showing an empty page. `safePage` is the page actually rendered, and
+   * the setter still accepts anything so a later expand returns to the user's
+   * page when it is valid again. */
+  const safePage = Math.min(Math.max(1, page), totalPages);
 
-  const start = (page - 1) * pageSize;
+  const start = (safePage - 1) * pageSize;
   const paged = useMemo(
     () => filtered.slice(start, start + pageSize),
     [filtered, start, pageSize]
@@ -244,18 +246,18 @@ export function DataTable<T extends { id: string }>({
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
+                disabled={safePage <= 1}
                 className="inline-flex h-7 items-center gap-0.5 rounded-lg border border-dark-900/10 px-2 font-medium transition hover:bg-dark-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
                 aria-label="Previous page"
               >
                 <ChevronLeft className="h-3.5 w-3.5" /> Prev
               </button>
               <span className="px-2 tabular-nums">
-                Page {page} / {totalPages}
+                Page {safePage} / {totalPages}
               </span>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
+                disabled={safePage >= totalPages}
                 className="inline-flex h-7 items-center gap-0.5 rounded-lg border border-dark-900/10 px-2 font-medium transition hover:bg-dark-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
                 aria-label="Next page"
               >

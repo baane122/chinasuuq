@@ -129,9 +129,14 @@ export function useDebouncedFilterValue(
 ): [string, (value: string) => void] {
   const [draft, setDraft] = useState(urlValue);
 
-  useEffect(() => {
+  /* Adopt the URL value when it changes for a reason other than our own commit
+   * (back/forward, a Reset button, another control). Adjusted during render so
+   * the box never paints the previous query for a frame. */
+  const [adoptedFrom, setAdoptedFrom] = useState(urlValue);
+  if (adoptedFrom !== urlValue) {
+    setAdoptedFrom(urlValue);
     setDraft(urlValue);
-  }, [urlValue]);
+  }
 
   useEffect(() => {
     if (draft === urlValue) return;

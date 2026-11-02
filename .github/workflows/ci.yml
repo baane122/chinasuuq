@@ -153,10 +153,29 @@ jobs:
 
       - name: Lint
         working-directory: apps/web
-        # Non-blocking: the codebase carries pre-existing lint debt
-        # (~77 `no-explicit-any`/react-hooks findings in admin pages, tracked
-        # for cleanup). Typecheck + build are the hard gates.
-        continue-on-error: true
+        # HARD GATE since the 2026-11 cleanup: the debt this step used to carry
+        # (128 errors / 40 warnings) is gone, so a new finding now fails CI
+        # instead of accumulating invisibly.
+        #
+        # What was fixed rather than silenced:
+        #  · 78 `no-explicit-any` → real row/payload interfaces in
+        #    src/lib/admin/supabase-data.ts and the pages that consume them
+        #  · 40 `set-state-in-effect` → derived values computed during render
+        #    (DataTable page clamp, layout search, Hero counter, ShelfCard draft),
+        #    useSyncExternalStore for the theme/locale/table-preference stores,
+        #    and one documented hook (src/lib/useLoaderEffect.ts) for genuine
+        #    fetch-on-mount, which is what the React docs still prescribe
+        #  · React correctness: donut chart no longer mutates during render,
+        #    today's clock is sampled once outside the row renderer, the staff
+        #    DepartmentField is no longer redefined every render (it remounted
+        #    its <input> on each keystroke), the dragging card's index is state
+        #    instead of a ref read during render, and /error uses <Link>
+        #  · 31 unused imports/locals removed; the Orders page keeps its
+        #    previously-dead select-all control, now wired up
+        #
+        # `no-img-element` is off in eslint.config.mjs with the reason (static
+        # export + hotlinked marketplace CDNs); the per-image guarantees it
+        # stands in for are asserted at each call site.
         run: npm run lint
 
       - name: Unit tests

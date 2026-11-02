@@ -7,7 +7,8 @@ import {
   Animated,
 } from "react-native";
 import { Image } from "expo-image";
-import { Plus, Package } from "lucide-react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { Plus, Package, Star, Flame, Images } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { COLORS, SPACING, RADIUS, FONTS } from "@/lib/theme";
 import type { Product } from "@/types";
@@ -32,6 +33,9 @@ interface ProductCardProps {
 
 /** Bundled gray placeholder — replaces the old external picsum.photos URL. */
 const PLACEHOLDER_IMAGE = require("../../../assets/images/placeholder.png");
+
+/** RN's typings here lack absoluteFillObject; the scrim needs the four sides. */
+const FILL = { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as const;
 
 // Module-level so a memoized card doesn't allocate a new lookup object on
 // every render of every visible card while the list scrolls.
@@ -139,6 +143,7 @@ export const ProductCard = React.memo(
     }, [addItem, product, smartMOQ]);
 
     const featured = product.curation?.featured === true;
+    const lowStock = product.stock_status !== "in_stock";
 
     return (
     <Animated.View style={[styles.cardOuter, { transform: [{ scale: pressScale }] }]}>
@@ -170,6 +175,17 @@ export const ProductCard = React.memo(
             </View>
           )}
 
+          {/* Bottom scrim: the title overlays the photo, so a bright product
+              shot can never make white text unreadable. */}
+          {showPhoto && (
+            <LinearGradient
+              colors={["transparent", "rgba(0,0,0,0.55)"]}
+              locations={[0.55, 1]}
+              style={styles.scrim}
+              pointerEvents="none"
+            />
+          )}
+
           {/* Second-photo peek: a slim strip of images[1] on the right edge,
               reading as a stacked deck. Static — costs nothing while scrolling. */}
           {second && showPhoto && (
@@ -188,7 +204,8 @@ export const ProductCard = React.memo(
           {/* Photo count: the peek alone cannot say how deep the stack is. */}
           {photos.length > 1 && (
             <View style={styles.imageCountPill}>
-              <Text style={styles.imageCountText}>1/{photos.length}</Text>
+              <Images size={10} color={COLORS.white} />
+              <Text style={styles.imageCountText}>{photos.length}</Text>
             </View>
           )}
 
@@ -202,10 +219,26 @@ export const ProductCard = React.memo(
             <Text style={styles.marketBadgeText}>{product.marketplace}</Text>
           </View>
 
+          {/* Stock, only when it is not the ordinary case. */}
+          {lowStock && (
+            <View style={styles.stockBadge}>
+              <Text style={styles.stockBadgeText}>
+                {product.stock_status === "out_of_stock"
+                  ? locale === "so"
+                    ? "Dhammaaday"
+                    : "Sold out"
+                  : locale === "so"
+                    ? "Yar"
+                    : "Low stock"}
+              </Text>
+            </View>
+          )}
+
           {/* Featured ribbon — the staff pick the website's Mission Control
               pins via the reserved `_curation` attribute; rank 1 reads "#1 pick". */}
           {featured && (
             <View style={styles.ribbonWrap}>
+              <Star size={9} color={COLORS.black} fill={COLORS.black} />
               <Text style={styles.ribbonText}>
                 {product.curation?.rank
                   ? `${locale === "so" ? "Dooro" : "Pick"} #${product.curation.rank}`
@@ -247,14 +280,20 @@ export const ProductCard = React.memo(
           {(product.sales_count > 0 || product.supplier_rating > 0) && (
             <View style={styles.statsRow}>
               {product.sales_count > 0 && (
-                <Text style={styles.stat}>
-                  {locale === "so"
-                    ? `🔥 ${product.sales_count}+ la iibsaday`
-                    : `🔥 ${product.sales_count}+ sold`}
-                </Text>
+                <View style={styles.statChip}>
+                  <Flame size={10} color={COLORS.primary} />
+                  <Text style={styles.stat}>
+                    {product.sales_count > 999
+                      ? `${Math.round(product.sales_count / 100) / 10}k`
+                      : `${product.sales_count}+`}
+                  </Text>
+                </View>
               )}
               {product.supplier_rating > 0 && (
-                <Text style={styles.stat}>⭐ {product.supplier_rating.toFixed(1)}</Text>
+                <View style={styles.statChip}>
+                  <Star size={10} color="#F5A623" fill="#F5A623" />
+                  <Text style={styles.stat}>{product.supplier_rating.toFixed(1)}</Text>
+                </View>
               )}
             </View>
           )}
@@ -276,6 +315,8 @@ export const ProductCard = React.memo(
           activeOpacity={0.7}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           onPress={handleAdd}
+          accessibilityRole="button"
+          accessibilityLabel={locale === "so" ? "Ku dar gaariga" : "Add to cart"}
         >
           <Plus size={19} color={COLORS.white} strokeWidth={2.5} />
         </TouchableOpacity>
@@ -301,25 +342,28 @@ const styles = StyleSheet.create({
   card: {
     flex: 1,
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
+    borderRadius: RADIUS.xl,
     borderWidth: 1,
     borderColor: COLORS.border,
     overflow: "hidden",
     shadowColor: COLORS.black,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.09,
+    shadowRadius: 12,
+    elevation: 4,
   },
   photoBox: {
     width: "100%",
-    height: 170,
+    height: 178,
     backgroundColor: COLORS.gray100,
     position: "relative",
   },
   image: {
     width: "100%",
     height: "100%",
+  },
+  scrim: {
+    ...FILL,
   },
   imageFallback: {
     flex: 1,
@@ -353,15 +397,16 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: SPACING.sm,
     left: SPACING.sm,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: RADIUS.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.pill,
   },
   marketBadgeText: {
     fontSize: 9,
     fontFamily: FONTS.semibold,
     color: COLORS.white,
     textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   ribbonWrap: {
     position: "absolute",
@@ -373,6 +418,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderWidth: 1.5,
     borderColor: COLORS.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
   },
   ribbonText: {
     fontSize: 9,
@@ -380,14 +428,31 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     letterSpacing: 0.3,
   },
+  stockBadge: {
+    position: "absolute",
+    bottom: SPACING.sm,
+    left: SPACING.sm,
+    backgroundColor: "rgba(17,17,17,0.72)",
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  stockBadgeText: {
+    fontSize: 9,
+    fontFamily: FONTS.semibold,
+    color: COLORS.white,
+  },
   imageCountPill: {
     position: "absolute",
     bottom: SPACING.sm,
-    right: 30,
+    right: SPACING.sm,
     backgroundColor: "rgba(17,17,17,0.65)",
     borderRadius: RADIUS.pill,
     paddingHorizontal: 8,
     paddingVertical: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
   },
   imageCountText: {
     fontSize: 10,
@@ -396,13 +461,13 @@ const styles = StyleSheet.create({
   },
   info: {
     padding: SPACING.md,
-    gap: 4,
+    gap: 5,
   },
   title: {
     fontSize: 13,
-    fontFamily: FONTS.medium,
+    fontFamily: FONTS.semibold,
     color: COLORS.black,
-    lineHeight: 18,
+    lineHeight: 17.5,
   },
   priceRow: {
     flexDirection: "row",
@@ -410,14 +475,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   price: {
-    fontSize: 16,
+    fontSize: 17,
     fontFamily: FONTS.bold,
     color: COLORS.primary,
+    letterSpacing: -0.3,
   },
   stockDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   cnyRange: {
     fontSize: 10,
@@ -425,11 +491,22 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: "row",
-    gap: 8,
-    marginTop: 2,
+    alignItems: "center",
+    gap: 6,
+    marginTop: 1,
+  },
+  statChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: COLORS.gray50,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   stat: {
-    fontSize: 11,
+    fontSize: 10,
+    fontFamily: FONTS.medium,
     color: COLORS.textSecondary,
   },
   metaRow: {
@@ -444,6 +521,8 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     paddingHorizontal: 8,
     paddingVertical: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,90,10,0.25)",
   },
   moqChipText: {
     fontSize: 10,
@@ -452,24 +531,26 @@ const styles = StyleSheet.create({
   },
   categoryChip: {
     flex: 1,
-    fontSize: 10,
+    fontSize: 9.5,
     fontFamily: FONTS.regular,
     color: COLORS.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
   addButton: {
     position: "absolute",
     bottom: 12,
     right: 12,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: COLORS.primary,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
     elevation: 4,
   },
 });

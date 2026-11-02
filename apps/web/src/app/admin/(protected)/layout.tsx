@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { LucideIcon } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { hasAdminFallbackSession, isDevBuild } from "@/lib/adminSession";
 import { isStaffRole, isNetworkError } from "@/lib/roles";
@@ -44,7 +45,7 @@ import { ThemeToggle } from "@/components/admin/ThemeToggle";
 interface NavItem {
   href: string;
   label: string;
-  icon: any;
+  icon: LucideIcon;
   match?: string[];
   badge: number | null;
 }
@@ -92,7 +93,7 @@ interface SearchResult {
   href: string;
   label: string;
   section: string;
-  icon: any;
+  icon: LucideIcon;
 }
 
 const ALL_ROUTES: SearchResult[] = NAV_ITEMS_BASE.map((item) => ({
@@ -152,7 +153,6 @@ export default function ProtectedLayout({
   const [notifCount, setNotifCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [adminName, setAdminName] = useState("Admin");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminRole, setAdminRole] = useState("admin");
@@ -465,17 +465,14 @@ export default function ProtectedLayout({
     return () => clearInterval(interval);
   }, [isAuthenticated, liveConnected]);
 
-  /* ─── Search logic ───────────────────────────────────────── */
-  useEffect(() => {
-    if (searchQuery.length < 1) {
-      setSearchResults([]);
-      return;
-    }
+  /* ─── Search logic ─────────────────────────────────────────
+   * Derived during render, not stored in state from an effect. The old version
+   * ran a second render pass on every keystroke just to copy the same answer
+   * into state, and could briefly show results for the previous query. */
+  const searchResults = useMemo(() => {
+    if (searchQuery.length < 1) return [];
     const q = searchQuery.toLowerCase();
-    const results = ALL_ROUTES.filter((r) =>
-      r.label.toLowerCase().includes(q)
-    ).slice(0, 6);
-    setSearchResults(results);
+    return ALL_ROUTES.filter((r) => r.label.toLowerCase().includes(q)).slice(0, 6);
   }, [searchQuery]);
 
   // Close search on outside click
@@ -585,7 +582,6 @@ export default function ProtectedLayout({
             )}
           >
             <div className="flex h-10 shrink-0 items-center justify-center rounded-xl bg-white/10 px-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/admin/logo.jpg"
                 alt="ChinaSuuq"

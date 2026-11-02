@@ -544,6 +544,11 @@ export default function ProductFormPanel({
           images={form.images}
           onChange={(imgs) => set("images", imgs)}
           productId={product?.id ?? null}
+          productTitle={form.title_english.trim() || form.title_original.trim() || form.title_somali.trim()}
+          categoryName={
+            categories.find((c) => c.id === form.categoryId)?.name_en ?? form.categoryText
+          }
+          attributeRows={form.attributes}
           disabled={readOnly}
         />
 

@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
+
 export default function PublicError({
-  error,
   reset,
 }: {
   error: Error & { digest?: string };
@@ -26,12 +27,12 @@ export default function PublicError({
           >
             Try Again
           </button>
-          <a
+          <Link
             href="/"
             className="px-5 py-2.5 rounded-xl border border-dark-200 text-dark-600 text-sm font-semibold hover:bg-dark-50 transition-all"
           >
             Go Home
-          </a>
+          </Link>
         </div>
       </div>
     </div>

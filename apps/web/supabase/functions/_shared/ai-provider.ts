@@ -113,7 +113,7 @@ export async function loadAiProviderConfig(client: {
  *   copilot                → global config
  * `client` must be a service-role client (both tables deny anon/authenticated).
  */
-export type AiTask = "copilot" | "translation" | "vision" | "extraction";
+export type AiTask = "copilot" | "translation" | "vision" | "extraction" | "image";
 
 export async function loadAiProviderForTask(
   client: {

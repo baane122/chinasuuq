@@ -1,7 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Loader2, Save, RefreshCw, Key, Globe, Cpu, CheckCircle, XCircle, Trash2, MessageSquare, Eye, PackageSearch, Server } from "lucide-react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState, useCallback } from "react";
+import {
+  Loader2,
+  Save,
+  RefreshCw,
+  Key,
+  Globe,
+  Cpu,
+  CheckCircle,
+  XCircle,
+  Trash2,
+  MessageSquare,
+  Eye,
+  PackageSearch,
+  Server,
+  Image as ImageIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { supabase, edgeFetch } from "@/lib/supabase";
 import {
   useAdminPermissions,
@@ -46,10 +63,11 @@ interface AiTestResponse {
   error?: string;
 }
 
-const TASK_META: Record<string, { label: string; icon: any; blurb: string }> = {
+const TASK_META: Record<string, { label: string; icon: LucideIcon; blurb: string }> = {
   copilot: { label: "Copilot", icon: MessageSquare, blurb: "Mission Control chat, summaries, drafts" },
   vision: { label: "Vision", icon: Eye, blurb: "Image understanding (AI Scan fallback)" },
   extraction: { label: "Extraction", icon: PackageSearch, blurb: "Product extraction & enrichment (strict JSON)" },
+  image: { label: "Image", icon: ImageIcon, blurb: "Product photo generation (Import Studio, image manager)" },
 };
 // NOTE: there is deliberately no `translation` task here.
 // Translation runs on Google's free gtx endpoint (src/api/translate.ts in the
@@ -72,7 +90,7 @@ function ProviderCard({
 }: {
   title: string;
   subtitle: string;
-  icon: any;
+  icon: LucideIcon;
   state: {
     baseUrl: string;
     model: string;
@@ -90,12 +108,20 @@ function ProviderCard({
   const [busy, setBusy] = useState<null | "save" | "test" | "reset">(null);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  // Re-sync local fields when the parent reloads state.
-  useEffect(() => {
+  /* Re-sync the local fields when the parent reloads its state, done during
+   * render. This is the documented "adjust state when a prop changes" pattern:
+   * an effect would render the stale values first, then correct them on a
+   * second pass — visible as the form flickering after every save. */
+  const [syncedFrom, setSyncedFrom] = useState(
+    `${state.baseUrl ?? ""}|${state.model ?? ""}|${state.apiKeyMasked ?? ""}`
+  );
+  const syncKey = `${state.baseUrl ?? ""}|${state.model ?? ""}|${state.apiKeyMasked ?? ""}`;
+  if (syncedFrom !== syncKey) {
+    setSyncedFrom(syncKey);
     setBaseUrl(state.baseUrl || "https://api.openai.com/v1");
     setModel(state.model || "");
     setApiKey("");
-  }, [state.baseUrl, state.model, state.apiKeyMasked]);
+  }
 
   const current = () => ({
     baseUrl: baseUrl.trim().replace(/\/+$/, ""),
@@ -295,7 +321,7 @@ export function AiSettingsTab() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useLoaderEffect(() => load(), [load]);
 
   const saveGlobal = async (v: { baseUrl: string; model: string; apiKey: string }) => {
     const data = await edgeFetch<{ ok: boolean; message?: string; errors?: string[]; error?: string }>("ai-settings", {

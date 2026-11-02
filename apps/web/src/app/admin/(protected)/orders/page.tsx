@@ -1,5 +1,7 @@
 "use client";
-import { Suspense, useState, useEffect, useMemo, useCallback, useRef } from "react";
+
+import { Suspense, useState, useMemo, useCallback, useRef } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { DataTable, Column } from "@/components/admin/DataTable";
 import { StatusBadge } from "@/components/admin/StatusBadge";
@@ -13,10 +15,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Package, CreditCard, MapPin, Clock3, Loader2,
   CheckSquare, Square, Printer, Truck, User, Phone, CalendarDays,
-  ChevronRight, ExternalLink, RefreshCw, Check, ArrowRight, Download, RotateCcw
+  RefreshCw, Check, ArrowRight, Download, RotateCcw
 } from "lucide-react";
-import { cn, formatUSD, formatDate, formatDateTime } from "@/lib/utils";
-import { listOrders, updateOrder, getOrderItems } from "@/lib/admin/supabase-data";
+import { cn, formatUSD, formatDateTime } from "@/lib/utils";
+import {
+  listOrders,
+  updateOrder,
+  getOrderItems,
+  type AdminOrderRow,
+  type AdminOrderItem,
+} from "@/lib/admin/supabase-data";
 import { PartialJoinNotice } from "@/components/admin/PartialJoinNotice";
 import { chartPalette } from "@/lib/admin/theme";
 import { ORDERS_CSV_COLUMNS, downloadCsv, stamp, toCsv } from "@/lib/admin/csv";
@@ -76,14 +84,23 @@ function getProgressPercent(status: string): number {
    with a view fallback so rows render under either shape. Fields that exist in
    NEITHER shape (recipient_name, phone, shipping_cost) fall back to a real
    sibling column instead of a dead one. */
-const orderRef = (o: any) =>
+type OrderShape = AdminOrderRow & {
+  /** base-table aliases the view does not expose */
+  total_usd?: number | null;
+  subtotal_usd?: number | null;
+  service_fee_usd?: number | null;
+  balance_due_usd?: number | null;
+  destination_city?: string | null;
+};
+
+const orderRef = (o: OrderShape | null) =>
   o?.reference || o?.order_number || (o?.id ? String(o.id).slice(0, 8) : "—");
-const orderTotal = (o: any) => Number(o?.total_usd ?? o?.total ?? 0) || 0;
-const orderSubtotal = (o: any) => Number(o?.subtotal_usd ?? o?.subtotal ?? 0) || 0;
-const orderServiceFee = (o: any) => Number(o?.service_fee_usd ?? o?.service_fee ?? 0) || 0;
-const orderBalanceDue = (o: any) => Number(o?.balance_due_usd ?? o?.balance_due ?? 0) || 0;
-const orderCity = (o: any) => o?.destination_city || o?.city || "—";
-const orderPhone = (o: any) => o?.customer_phone || o?.phone || "";
+const orderTotal = (o: OrderShape | null) => Number(o?.total_usd ?? o?.total ?? 0) || 0;
+const orderSubtotal = (o: OrderShape | null) => Number(o?.subtotal_usd ?? o?.subtotal ?? 0) || 0;
+const orderServiceFee = (o: OrderShape | null) => Number(o?.service_fee_usd ?? o?.service_fee ?? 0) || 0;
+const orderBalanceDue = (o: OrderShape | null) => Number(o?.balance_due_usd ?? o?.balance_due ?? 0) || 0;
+const orderCity = (o: OrderShape | null) => o?.destination_city || o?.city || "—";
+const orderPhone = (o: OrderShape | null) => o?.customer_phone || o?.phone || "";
 
 /* ── Component ────────────────────────────────────────────────── */
 
@@ -126,19 +143,19 @@ export default function OrdersPage() {
 function OrdersPageContent() {
   const { success, error: toastError } = useToast();
 
-  const { values, set, setMany, reset, isFiltered } = useUrlFilters(FILTER_DEFAULTS);
+  const { values, set, reset, isFiltered } = useUrlFilters(FILTER_DEFAULTS);
   const tablePrefs = useTablePrefs("orders");
   // Orders list only needs order writes; payments and notifications used to
   // re-pull this whole table on every burst.
   const liveVersion = useLiveVersion(["orders"]);
 
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orders, setOrders] = useState<OrderShape[]>([]);
   const [total, setTotal] = useState(0);
   // Warnings from decorative joins that only partly resolved (see `load`).
   const [joinNotices, setJoinNotices] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<any | null>(null);
+  const [selected, setSelected] = useState<OrderShape | null>(null);
   const [customer360, setCustomer360] = useState<{ id: string; name?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const statusFilter = values.status;
@@ -188,10 +205,11 @@ function OrdersPageContent() {
     }
   }, []);
 
-  useEffect(() => {
-    load(statusFilter, committedSearch);
-    // liveVersion re-reads the list when realtime confirms a write elsewhere.
-  }, [statusFilter, committedSearch, load, liveVersion]);
+  // liveVersion re-reads the list when realtime confirms a write elsewhere.
+  useLoaderEffect(
+    () => load(statusFilter, committedSearch),
+    [statusFilter, committedSearch, load, liveVersion]
+  );
 
   /* ── Deep link: ?open=<id> opens a specific order's drawer ─────
      Shipment rows link to their order with /admin/orders?open=<id>. Once the
@@ -202,7 +220,7 @@ function OrdersPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const handledOpen = useRef<string | null>(null);
-  useEffect(() => {
+  useLoaderEffect(() => {
     const openId = searchParams.get("open");
     if (!openId || loading) return;
     if (handledOpen.current === openId) return;
@@ -287,7 +305,7 @@ function OrdersPageContent() {
    * exposes it as profile_id. An order with no linked profile says so instead of
    * matching on a name, which is how two customers called Abdi got mixed.
    */
-  const openCustomer = (order: any) => {
+  const openCustomer = (order: OrderShape) => {
     // user_id is the live FK on orders; admin_orders_view aliases it profile_id.
     const id = order?.profile_id || order?.user_id;
     if (id) setCustomer360({ id, name: order.customer_name || undefined });
@@ -358,7 +376,7 @@ function OrdersPageContent() {
 
   /* ── Print Invoice ─────────────────────────────────────────── */
 
-  const printInvoice = async (order: any) => {
+  const printInvoice = async (order: OrderShape) => {
     const w = window.open("", "_blank");
     if (!w) return;
 
@@ -366,7 +384,7 @@ function OrdersPageContent() {
     // fabricated "target_marketplace × 1" row. If the items view is unavailable
     // or the order predates line capture, we say so explicitly rather than
     // printing a made-up item — the money summary below is still the real one.
-    let items: any[] = [];
+    let items: AdminOrderItem[] = [];
     let itemsNote = "";
     try {
       const res = await getOrderItems(order.id);
@@ -458,7 +476,7 @@ function OrdersPageContent() {
 
   /* ── Table columns ─────────────────────────────────────────── */
 
-  const columns: Column<any>[] = [
+  const columns: Column<OrderShape>[] = [
     {
       key: "reference",
       label: "Order",
@@ -681,6 +699,15 @@ function OrdersPageContent() {
           >
             <CheckSquare className="h-5 w-5 text-brand-500" />
             <span className="text-sm font-semibold text-brand-700">{selectedIds.size} selected</span>
+            {/* Bulk status writes hit every selected row, so the set needs a
+                visible bound: selecting 200 orders and pressing Update is a
+                different action from picking three. */}
+            <button
+              onClick={toggleSelectAll}
+              className="rounded-lg border border-brand-300 bg-white px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-100"
+            >
+              {allVisibleSelected ? "Clear selection" : `Select all ${filtered.length}`}
+            </button>
             <div className="ml-auto flex items-center gap-2">
               <div className="relative">
                 <button

@@ -150,7 +150,7 @@ export default function CategoryPicker({
                 >
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-dark-900/5 text-xs font-bold text-dark-900/60 dark:bg-white/10 dark:text-neutral-300">
                     {c.icon ? (
-                      // eslint-disable-next-line @next/next/no-img-element
+
                       <img src={c.icon} alt="" className="h-5 w-5 object-contain" />
                     ) : (
                       (c.name_en ?? c.name_so ?? "?").slice(0, 1)

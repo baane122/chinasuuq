@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Customer 360 — one customer's real history, in one drawer.
  *
@@ -23,10 +24,10 @@
  * mistaken for a lifetime total.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  X, Loader2, MapPin, Phone, Mail, ExternalLink, ShoppingBag,
+  X, MapPin, Phone, Mail, ExternalLink, ShoppingBag,
   ChevronDown, ImageOff, Users,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -191,14 +192,16 @@ export default function Customer360Drawer({
     [customerId]
   );
 
-  useEffect(() => {
+  /* Collapse every expanded line when a DIFFERENT customer is opened. Adjusted
+   * during render rather than in an effect so the drawer never paints the old
+   * customer's expanded rows for a frame. */
+  const [expandedFor, setExpandedFor] = useState(customerId);
+  if (expandedFor !== customerId) {
+    setExpandedFor(customerId);
     setExpanded(null);
-    let cancelled = false;
-    load(() => cancelled);
-    return () => {
-      cancelled = true;
-    };
-  }, [load]);
+  }
+
+  useLoaderEffect(() => load(() => false), [load]);
 
   /* ── Derived, from the rows above and nothing else ───────────── */
 

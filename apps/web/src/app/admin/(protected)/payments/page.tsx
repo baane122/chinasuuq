@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 import { formatSos, formatUsd } from "@/lib/fx";
@@ -175,7 +176,7 @@ export default function PaymentsPage() {
     }
   };
 
-  useEffect(() => { fetchPayments(); }, []);
+  useLoaderEffect(() => fetchPayments(), []);
 
   /* ── Filter ─────────────────────────────────────────────────── */
 

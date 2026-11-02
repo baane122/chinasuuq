@@ -28,6 +28,26 @@ import { useCallback, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { isMissingColumnError, sanitizeOrFilter } from "@/lib/admin/supabase-data";
+import type { LucideIcon } from "lucide-react";
+
+/**
+ * The notification row this screen WRITES, in the live column vocabulary the
+ * mobile inbox reads (user_id / body / read).
+ *
+ * The legacy generation (profile_id / message / is_read / channel) is still
+ * tried when the live insert reports a missing column — see the file header.
+ * Those rows are produced by buildLegacyRow() and reach the client through one
+ * documented cast at the fallback, because the untyped Supabase client infers
+ * its insert overload from the first call site and cannot describe both.
+ */
+type NotificationInsertRow = {
+  user_id: string;
+  title: string;
+  body: string;
+  type: string;
+  read: boolean;
+  created_at: string;
+};
 import {
   PageHeader,
   SectionCard,
@@ -207,7 +227,9 @@ export default function NotificationsComposerPage() {
           .select("id", { count: "exact" })
           .limit(RECIPIENT_READ_CAP);
         if (error) throw error;
-        recipients = ((data as any[]) || []).map((r) => r.id).filter(Boolean);
+        recipients = (Array.isArray(data) ? (data as { id?: string | null }[]) : [])
+          .map((r) => r.id)
+          .filter((v): v is string => !!v);
 
         // A count that didn't come back is NOT "zero customers" — combined with a
         // read that filled the cap it means the audience size is unverified.
@@ -259,16 +281,20 @@ export default function NotificationsComposerPage() {
     try {
       for (let i = 0; i < recipients.length; i += BATCH) {
         const chunk = recipients.slice(i, i + BATCH);
-        // Keep this batch on a single concrete column shape (any[]) so the typed
-        // insert() overload doesn't widen a live|legacy union it can't check.
-        let rows: any[] =
-          shape === "live" ? chunk.map(buildLiveRow) : chunk.map(buildLegacyRow);
+        // Keep this batch on one concrete row type so the typed insert()
+        // overload doesn't have to widen a live|legacy union it can't check.
+        let rows: NotificationInsertRow[] =
+          shape === "live"
+            ? chunk.map(buildLiveRow)
+            : (chunk.map(buildLegacyRow) as unknown as NotificationInsertRow[]);
         let res = await supabase.from("notifications").insert(rows).select("id");
 
         // Older schema: flip the shape once and retry this batch in legacy columns.
         if (res.error && shape === "live" && isMissingColumnError(res.error)) {
           shape = "legacy";
-          rows = chunk.map(buildLegacyRow);
+          // The one cast: legacy columns are real in the older schema generation,
+          // but the client's insert type only ever describes the live one.
+          rows = chunk.map(buildLegacyRow) as unknown as NotificationInsertRow[];
           res = await supabase.from("notifications").insert(rows).select("id");
         }
 
@@ -351,7 +377,7 @@ export default function NotificationsComposerPage() {
     }
   }, [canSend, audience, selectedCustomer, profileId, buildLiveRow, buildLegacyRow, title, body, type, success, toastError, info]);
 
-  const audienceTabs: { value: Audience; label: string; icon: any }[] = useMemo(
+  const audienceTabs: { value: Audience; label: string; icon: LucideIcon }[] = useMemo(
     () => [
       { value: "all", label: "All customers", icon: Users },
       { value: "customer", label: "Specific customer", icon: User },

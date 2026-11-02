@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
 /**
  * Products — Mission Control product console.
  *
@@ -54,6 +55,7 @@ import {
   RefreshCw,
   RotateCcw,
   Rows3,
+  Sparkles,
   Square,
   Link2,
   Trash2,
@@ -101,6 +103,8 @@ import {
   TableShell,
 } from "@/components/admin/ui";
 import ProductFormPanel from "@/components/admin/products/ProductFormPanel";
+import ImportStudio from "@/components/admin/products/ImportStudio";
+import { ProductGridCard } from "@/components/admin/products/ProductGridCard";
 import { useToast } from "@/components/admin/Toast";
 import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import Modal from "@/components/admin/Modal";
@@ -286,6 +290,9 @@ function ProductsConsole() {
   const [panelProduct, setPanelProduct] = useState<CatalogProduct | null>(null);
   const [panelNonce, setPanelNonce] = useState(0);
 
+  /* ── Import Studio (paste links → drafts) ── */
+  const [importOpen, setImportOpen] = useState(false);
+
   /* ── Delete confirm ── */
   const [deleteTarget, setDeleteTarget] = useState<CatalogProduct | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -299,44 +306,32 @@ function ProductsConsole() {
 
   /* ── pinnedBy for curation writes ── */
   const [pinnedBy, setPinnedBy] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!alive) return;
+  useLoaderEffect(
+    async ({ cancelled }) => {
+      const { data } = await supabase.auth.getSession();
+      if (cancelled()) return;
       const u = data.session?.user;
       setPinnedBy(u?.email ?? u?.id ?? null);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  /* ── Esc closes the drawer ── */
-  useEffect(() => {
-    if (!panelOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closePanel();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [panelOpen]);
+    },
+    []
+  );
 
   /* ── Page read (server-side; NEVER client-side filtered) ── */
-  useEffect(() => {
-    let alive = true;
-    setRowsLoading(true);
-    setRowsError(null);
-    fetchAdminProducts({
-      status,
-      stock,
-      marketplace: app,
-      category,
-      search: values.q,
-      sort,
-      page,
-      pageSize: size,
-    }).then((res) => {
-      if (!alive) return;
+  useLoaderEffect(
+    async ({ cancelled }) => {
+      setRowsLoading(true);
+      setRowsError(null);
+      const res = await fetchAdminProducts({
+        status,
+        stock,
+        marketplace: app,
+        category,
+        search: values.q,
+        sort,
+        page,
+        pageSize: size,
+      });
+      if (cancelled()) return;
       if (res.ok) {
         setPageData(res.data);
       } else {
@@ -344,26 +339,21 @@ function ProductsConsole() {
         setRowsError(res.reason);
       }
       setRowsLoading(false);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [status, stock, app, category, values.q, sort, page, size, liveVersion, reloadToken]);
+    },
+    [status, stock, app, category, values.q, sort, page, size, liveVersion, reloadToken]
+  );
 
   /* ── KPI read (whole catalogue) ── */
-  useEffect(() => {
-    let alive = true;
-    setKpiLoading(true);
-    fetchCatalogKpis().then((k) => {
-      if (alive) {
-        setKpis(k);
-        setKpiLoading(false);
-      }
-    });
-    return () => {
-      alive = false;
-    };
-  }, [liveVersion, reloadToken]);
+  useLoaderEffect(
+    async ({ cancelled }) => {
+      setKpiLoading(true);
+      const k = await fetchCatalogKpis();
+      if (cancelled()) return;
+      setKpis(k);
+      setKpiLoading(false);
+    },
+    [liveVersion, reloadToken]
+  );
 
   /* ── Categories + per-category counts ── */
   const loadCategories = useCallback(() => {
@@ -435,10 +425,42 @@ function ProductsConsole() {
     setPanelNonce((n) => n + 1);
     setPanelOpen(true);
   };
-  const closePanel = () => {
+  const closePanel = useCallback(() => {
     setPanelOpen(false);
     setPanelProduct(null);
-  };
+  }, []);
+
+  /**
+   * Esc closes the drawer.
+   *
+   * Declared AFTER `closePanel`, not before: the previous placement referenced
+   * the handler above its `const`, which the React compiler lint rejects as
+   * "cannot access variable before it is declared" and which would have been a
+   * real TDZ crash the moment the hook ran with the drawer already open.
+   */
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closePanel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panelOpen, closePanel]);
+
+  /**
+   * An imported draft already exists in the table (status `draft`), so it may or
+   * may not match the current filter/page. Re-running the read is the only
+   * honest way to place it — guessing would put a row on a page it does not
+   * belong to.
+   */
+  const handleImported = useCallback((saved: CatalogProduct) => {
+    // A draft may already be visible on this page; patch it in place so the row
+    // is not a phantom until the next refetch. The refetch still runs, because
+    // the new draft may equally belong on another page or match no filter.
+    patchRow(saved.id, saved);
+    loadCategories();
+    refresh();
+  }, [patchRow, refresh, loadCategories]);
 
   /* ── onSaved: refresh the row in place ── */
   const handleSaved = useCallback(
@@ -460,7 +482,7 @@ function ProductsConsole() {
         setPanelNonce((n) => n + 1);
       }
     },
-    [patchRow, toast, refresh, loadCategories, panelOpen]
+    [patchRow, toast, refresh, loadCategories, panelOpen, closePanel]
   );
 
   /* ── Row actions ── */
@@ -708,6 +730,16 @@ function ProductsConsole() {
               <button onClick={openSync} className="admin-btn-outline h-9 px-3 text-xs" title="Preview, then optionally apply, the category_id backfill">
                 <Link2 className="h-4 w-4" />
                 Wire categories
+              </button>
+            )}
+            {canEdit && (
+              <button
+                onClick={() => setImportOpen(true)}
+                className="admin-btn-outline h-9 px-3 text-xs"
+                title="Paste 1688 / Taobao / Tmall / YiwuGo / ChinaGoods links and build drafts"
+              >
+                <Sparkles className="h-4 w-4" />
+                Import links
               </button>
             )}
             {canEdit && (
@@ -1106,66 +1138,27 @@ function ProductsConsole() {
             </table>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {currentRows.map((p) => {
-              const { primary, secondary } = titlePair(p);
               const money = priceView(p, fx);
               const isSelected = selected.has(p.id);
               return (
-                <motion.div
-                  layout
+                <ProductGridCard
                   key={p.id}
-                  className={cn(
-                    "relative flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow hover:shadow-md dark:bg-dark-900",
-                    isSelected ? "border-brand-500/50" : "border-dark-900/[0.06] dark:border-white/[0.08]"
-                  )}
-                >
-                  <div className="flex items-start gap-3 p-3">
-                    {canEdit && (
-                      <button onClick={() => toggleSelect(p.id)} className="mt-1 shrink-0 text-dark-900/40 hover:text-brand-500 dark:text-neutral-500" aria-label={`Select ${primary}`}>
-                        {isSelected ? <CheckSquare className="h-4 w-4 text-brand-500" /> : <Square className="h-4 w-4" />}
-                      </button>
-                    )}
-                    <TrendingThumb product={p} className="h-16 w-16 shrink-0" rounded="rounded-xl" alt={primary} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="truncate font-semibold text-dark-900 dark:text-neutral-100">{primary}</p>
-                        {p.curation.featured && (
-                          <span title="Staff pick on Trending" className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-[10px] font-bold text-brand-700 dark:text-brand-300">
-                            <Pin className="h-2.5 w-2.5" /> Pick
-                          </span>
-                        )}
-                      </div>
-                      {secondary && <p className="truncate text-xs text-dark-900/45 dark:text-neutral-500">{secondary}</p>}
-                      <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-dark-900/45 dark:text-neutral-500">
-                        <span className={cn("rounded-full border px-1.5 py-px font-semibold", MARKETPLACE_TINT[p.marketplace ?? ""] ?? "border-dark-900/10 bg-dark-50 text-dark-900/55 dark:bg-white/5 dark:text-neutral-400")}>
-                          {marketplaceLabel(p.marketplace ?? "")}
-                        </span>
-                        <span>{p.categoryName ?? "uncategorised"}</span>
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 px-3 pb-2 text-[11px]">
-                    <div>
-                      <p className="text-dark-900/40 dark:text-neutral-500">Price</p>
-                      <p className="truncate font-semibold text-dark-900 dark:text-neutral-100">{money.cny}</p>
-                      {money.usd && <p className="truncate text-dark-900/45 dark:text-neutral-500">{money.usd} {money.usdKind === "stored" ? "est." : "conv."}</p>}
-                    </div>
-                    <div>
-                      <p className="text-dark-900/40 dark:text-neutral-500">Stock</p>
-                      <StatusChip value={p.stock_status ?? "unknown"} />
-                    </div>
-                    <div>
-                      <p className="text-dark-900/40 dark:text-neutral-500">Status</p>
-                      <StatusChip value={p.status ?? "unknown"} lifecycle />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-t border-dark-900/[0.05] px-3 py-2 dark:border-white/[0.06]">
-                    <span className="truncate text-[11px] text-dark-900/40 dark:text-neutral-500">
-                      {p.updated_at ? `Updated ${timeAgo(p.updated_at)}` : `Sales ${formatNumber(p.sales_count ?? 0)}`}
-                    </span>
+                  product={p}
+                  selected={isSelected}
+                  canEdit={canEdit}
+                  priceCny={money.cny}
+                  priceUsd={money.usd}
+                  usdKind={money.usdKind}
+                  marketplaceTint={
+                    MARKETPLACE_TINT[p.marketplace ?? ""] ??
+                    "border-dark-900/10 bg-dark-50/90 text-dark-900/55 dark:bg-white/10 dark:text-neutral-300"
+                  }
+                  marketplaceLabel={marketplaceLabel(p.marketplace ?? "")}
+                  onToggleSelect={() => toggleSelect(p.id)}
+                  onOpen={() => openEdit(p)}
+                  actions={
                     <RowActions
                       compact
                       product={p}
@@ -1176,8 +1169,8 @@ function ProductsConsole() {
                       onFeature={() => handleFeature(p)}
                       onDelete={() => setDeleteTarget(p)}
                     />
-                  </div>
-                </motion.div>
+                  }
+                />
               );
             })}
           </div>
@@ -1206,6 +1199,15 @@ function ProductsConsole() {
       </TableShell>
 
       {/* ── Add / Edit drawer (remounts per product via key) ── */}
+      <ImportStudio
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        categories={categories}
+        canEdit={canEdit}
+        restrictedNotice={restrictedNotice}
+        onImported={handleImported}
+      />
+
       {panelOpen && (
         <ProductFormPanel
           key={panelNonce}

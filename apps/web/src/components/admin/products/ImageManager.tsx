@@ -40,6 +40,7 @@ import {
 import { probeImageUrl, uploadProductImage, PRODUCT_IMAGE_BUCKET } from "@/lib/catalog";
 import { useToast } from "@/components/admin/Toast";
 import { cn } from "@/lib/utils";
+import AiImageStudio from "@/components/admin/products/AiImageStudio";
 
 /** Same ceiling as `normalizeImages` in lib/catalog.ts — never accept more. */
 export const MAX_PRODUCT_IMAGES = 24;
@@ -77,11 +78,20 @@ export default function ImageManager({
   images,
   onChange,
   productId,
+  productTitle,
+  categoryName,
+  attributeRows,
   disabled = false,
 }: {
   images: string[];
   onChange: (next: string[]) => void;
   productId: string | null;
+  /** Product name the AI photo prompt is built from ("" while a draft is blank). */
+  productTitle: string;
+  /** Live category NAME, when the editor has one picked. */
+  categoryName: string | null;
+  /** Current spec rows — the prompt respects them instead of inventing values. */
+  attributeRows: Array<{ key: string; value: string }>;
   disabled?: boolean;
 }) {
   const { success, error: toastError } = useToast();
@@ -192,6 +202,22 @@ export default function ImageManager({
         Reorder with the arrows or drag a thumbnail onto another.
       </p>
 
+      {/* AI photo — the honest fallback for an expired 1688/Taobao CDN photo. */}
+      <div className="mb-3">
+        <AiImageStudio
+          title={productTitle}
+          productId={productId}
+          category={categoryName}
+          attributes={attributeRows}
+          existingImages={images}
+          disabled={disabled}
+          onUseImage={(url) => {
+            if (images.includes(url)) return;
+            onChange([...images, url].slice(0, MAX_PRODUCT_IMAGES));
+          }}
+        />
+      </div>
+
       {images.length === 0 ? (
         <div className="mb-3 flex items-center gap-2 rounded-xl border border-dashed border-dark-900/15 px-4 py-5 text-sm text-dark-900/40 dark:border-white/15 dark:text-neutral-500">
           <ImageOff className="h-4 w-4" /> No images on this product yet — the shop shows a placeholder.
@@ -218,7 +244,6 @@ export default function ImageManager({
                 )}
               >
                 <div className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={url}
                     alt={`Image ${i + 1}`}

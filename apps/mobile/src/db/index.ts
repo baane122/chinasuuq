@@ -730,6 +730,35 @@ async function writeProductCache(rows: Product[]): Promise<void> {
   await safeSet(PRODUCTS_KEY, JSON.stringify({ rows, fetchedAt: Date.now() }));
 }
 
+/**
+ * Give every product whose row carries only the FK a readable category NAME.
+ *
+ * WHY: `source_products.category` is the free-text column every browse surface
+ * still matches on, and it is empty on rows wired through `category_id` alone
+ * (the admin form writes both, the import writes both, but a row synced from an
+ * older importer carries only the FK). Those products rendered "uncategorised",
+ * fell out of every category chip, and — because `productInCategory` needs one
+ * of the two — could not be found by browsing at all.
+ *
+ * The `categories` table is read from its own cache, so this costs no network
+ * call on the common path and simply leaves the row alone when the table has
+ * never been read (the caller still gets its products).
+ */
+async function fillCategoryNamesFromCache(rows: Product[]): Promise<Product[]> {
+  if (rows.length === 0) return rows;
+  const missing = rows.some((p) => p.category_id && !(p.category || "").trim());
+  if (!missing) return rows;
+  const cache = await readCategoryCache();
+  if (!cache || cache.rows.length === 0) return rows;
+  const byId = new Map(cache.rows.map((c) => [c.id, c]));
+  return rows.map((p) => {
+    if (!p.category_id || (p.category || "").trim()) return p;
+    const cat = byId.get(p.category_id);
+    const name = cat?.name_en || cat?.name_so || cat?.slug || "";
+    return name ? { ...p, category: name } : p;
+  });
+}
+
 /** Shared getProducts() calls for concurrent readers (home + trending hydrate + search). */
 let productsInFlight: Promise<Product[]> | null = null;
 
@@ -742,7 +771,7 @@ export async function getProducts(force = false): Promise<Product[]> {
 
     // Fresh cache wins the round — same instant paint as always.
     if (!force && fresh && cached) {
-      const live = cached.rows.map(withLivePrice);
+      const live = await fillCategoryNamesFromCache(cached.rows.map(withLivePrice));
       // Persist only when the live rate actually moved a figure.
       if (live.some((p, i) => p.price_usd_estimated !== cached.rows[i]?.price_usd_estimated)) {
         await writeProductCache(live);
@@ -758,7 +787,7 @@ export async function getProducts(force = false): Promise<Product[]> {
       if (await isBackendOnline()) {
         const { data, error } = await supabase.from("source_products").select("*").limit(200);
         if (!error && data && data.length) {
-          const mapped = data.map((p: any) => mapRowToProduct(p));
+          const mapped = await fillCategoryNamesFromCache(data.map((p: any) => mapRowToProduct(p)));
           await writeProductCache(mapped);
           return mapped;
         }
@@ -770,7 +799,7 @@ export async function getProducts(force = false): Promise<Product[]> {
 
     // The refresh did not answer: serve the stale cache (repriced), never [].
     if (cached && cached.rows.length > 0) {
-      return cached.rows.map(withLivePrice);
+      return fillCategoryNamesFromCache(cached.rows.map(withLivePrice));
     }
     return [];
   })();
@@ -904,7 +933,11 @@ export async function getProductById(id: string): Promise<Product | null> {
           .eq("id", id)
           .limit(1);
         if (!error && data && data.length > 0) {
-          return withLivePrice(mapRowToProduct(data[0] as any));
+          // Same category-name resolution the list paths get: a row wired only
+          // through `category_id` would otherwise render a detail page with no
+          // category pill while the very same product shows one in the grid.
+          const [row] = await fillCategoryNamesFromCache([mapRowToProduct(data[0] as any)]);
+          return withLivePrice(row);
         }
         if (error) {
           console.warn("[db]", "getProductById remote read, serving from cache:", error.message);

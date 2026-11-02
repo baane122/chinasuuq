@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useLoaderEffect } from "@/lib/useLoaderEffect";
+import { useState } from "react";
 import { ExternalLink, ImageOff, PackageSearch } from "lucide-react";
-import { getOrderItems } from "@/lib/admin/supabase-data";
+import { getOrderItems, type AdminOrderItem } from "@/lib/admin/supabase-data";
 import { usdFromCny } from "@/lib/fx";
 import { cn, formatUSD } from "@/lib/utils";
 
@@ -43,7 +44,7 @@ function toNumber(v: unknown): number | null {
  * the conversion goes through usdFromCny() rather than today's live rate: a line
  * bought at 7.2 ¥/$ must not be re-priced by a later Settings change.
  */
-function unitCostUsd(item: any): number | null {
+function unitCostUsd(item: AdminOrderItem): number | null {
   const cost = toNumber(item.cost_price);
   if (cost !== null) return cost;
   const cny = toNumber(item.unit_price_cny);
@@ -60,24 +61,22 @@ const PIPELINE_STEPS = [
 ] as const;
 
 export default function OrderProvenance({ orderId }: { orderId: string }) {
-  const [items, setItems] = useState<any[]>([]);
+  const [items, setItems] = useState<AdminOrderItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getOrderItems(orderId).then((res) => {
-      if (cancelled) return;
+  useLoaderEffect(
+    async ({ cancelled }) => {
+      setLoading(true);
+      setError(null);
+      const res = await getOrderItems(orderId);
+      if (cancelled()) return;
       if (res.ok) setItems(res.items);
       else setError(res.error || "Could not load line items");
       setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [orderId]);
+    },
+    [orderId]
+  );
 
   const apps = distinctApps(items);
 
@@ -274,7 +273,7 @@ export default function OrderProvenance({ orderId }: { orderId: string }) {
   );
 }
 
-function distinctApps(items: any[]): string[] {
+function distinctApps(items: AdminOrderItem[]): string[] {
   const seen = new Set<string>();
   for (const item of items) {
     const key = item.marketplace_key;
